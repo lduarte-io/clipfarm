@@ -87,17 +87,21 @@ Not one timeline. Multiple views over the same underlying clips:
 
 ### Build candidate videos as "attempts"
 - Multiple parallel attempts at the same project — named, switchable, persistent.
-- **AI premade attempts**: the system auto-generates several candidates up front. The goal is for the names to feel like *how I'd describe what I just watched*, not generic editor lingo:
-  - *"the 3 times you said it in almost one take"* — near-complete end-to-end deliveries grouped together, low restart count, low filler.
-  - *"versions where you started with [first sentence X]"* — clustered by which line opened the take.
-  - *"versions where you skipped line 4"* — what you said when you dropped a beat.
-  - *"takes where you ad-libbed extra material"* — best on-script delivery padded with the bonus off-script content from that same take.
+- **AI premade attempts** are auto-generated up front and **split into two surfaced-separately buckets**. Names should feel like *how I'd describe what I just watched*, not generic editor lingo. Each attempt carries a **continuity score** (0.0–1.0) shown as a visual indicator on the card — how much of the attempt comes from one contiguous take vs. how many distinct source-takes got assembled together.
+
+  **Best plausible videos (3–5)** — actually-good candidates worth shipping or polishing. These are what I scan first when I want a starting point:
+  - *"best take of each line, assembled in script order"* — the greatest-hits version. Usually low continuity, high completeness.
+  - *"longest contiguous take"* — the closest I got to nailing it in one. High continuity by definition.
+  - *"the 3 times I said it in almost one take"* — near-complete end-to-end deliveries grouped together, low restart count, low filler. Highest-continuity straight-throughs.
   - *"shortest complete take of the full script"* — for length-constrained cuts and shorts.
-  - *"best take of each line, assembled in script order"* — the greatest-hits version.
-  - *"longest contiguous take"* — the closest you got to nailing it in one.
-  - *"the take where the energy picked up"* — heuristics on pace / volume change across the recording.
-  
-  Naming matters: I want to scan the list and immediately know which premade is which. Generic labels are useless when there are six of them. Premades are *named filters* over the take library — easy to add new ones as I notice patterns in how I record.
+  - *"the take where the energy picked up"* — heuristics on pace / volume change.
+
+  **Diagnostic groupings** — useful for browsing the material, not for shipping. Surfaced in a secondary panel rather than mixed in with shippable candidates:
+  - *"versions where I started with [first sentence X]"* — clustered by which line opened the take.
+  - *"versions where I skipped line 4"* — what I said when I dropped a beat.
+  - *"takes where I ad-libbed extra material"* — best on-script delivery padded with bonus off-script content from that same take.
+
+  Premades are *named filters* over the take library — easy to add new ones as I notice patterns in how I record. New filters can land in either bucket.
 - **Hand-built attempts**: start empty and compose clip by clip.
 - **Fork any attempt**: I like attempt 4 overall but I want 4 segments from attempt 7 → fork attempt 4, swap those four clips, save as attempt 8.
 - **Replace one clip with another**: every clip in an attempt has a "show other options for this line" action that pops up siblings (other takes of the same script line). One click swaps.
@@ -273,7 +277,7 @@ This is what makes the polish layer worth building as part of ClipFarm rather th
 
 ### Stack (locked)
 
-- **Backend**: Python 3.11 + FastAPI + uvicorn. Serves the API and hosts the frontend on `localhost:8765`.
+- **Backend**: Python 3.12 + FastAPI + uvicorn. Serves the API and hosts the frontend on `localhost:8765`.
 - **Storage**: a single `clipfarm.json` at the project root. **The JSON is the source of truth** — human-readable, hand-editable, git-diffable. The app loads it, builds in-memory indexes on startup, writes atomically (`tmp` → `fsync` → `rename`) on save, and watches for external edits via `watchdog` (prompts on conflict if there are unsaved in-memory changes). **Scale caveat**: a 30-min recording produces ~350 clips; the `05.19.26/mp4/` folder alone (~18 recordings) hits ~6k clips. The atomic-write-on-every-debounced-save story holds into the low thousands; beyond that, full-file rewrite cost grows fast. Budget the SQLite migration sooner than "eventually" — see Future Ideas.
 - **Snapshots / undo**: every destructive operation (split, merge, delete, retag-clobber) writes a copy of `clipfarm.json` to `.clipfarm/snapshots/<ISO-timestamp>.json` *before* the operation runs. Last 50 retained, older auto-pruned. No formal undo system — just file-level revert from the snapshots directory (via a "Restore snapshot" affordance in Settings, or by hand-copying the file). Cheap insurance against bad splits.
 - **Schema versioning**: every `clipfarm.json` carries `"version": N`. A `clipfarm/migrations/` directory holds one function per bump (`v1_to_v2.py`, etc.) that mutates an in-memory dict. On load, if the file's version is older than current, migrations run sequentially and the file is saved back at the new version. Scaffold the directory and an empty `v1_to_v2.py` placeholder at v0 — cheap now, expensive to retrofit.
@@ -360,11 +364,14 @@ When you write a brief for a new project, the LLM scans the *existing library* a
       "name": "the 3 times you said it in almost one take",
       "parent_attempt_id": null,
       "source": "ai-premade",
+      "premade_bucket": "best",
+      "continuity_score": 0.92,
       "clips": [
         {
           "clip_id": "btc.0.4__00-01-12.345__00-01-18.220",
           "trim_start_offset": 0.0,
           "trim_end_offset": 0.0,
+          "internal_pause_max_sec": null,
           "notes": ""
         }
       ],
@@ -390,6 +397,9 @@ Notes on the shape:
 - **`clip_project_tags` is the many-to-many bridge.** A clip can be tagged in N projects with different `(section, line, category)` triples in each. The `stale: true` flag is set when a project's brief changes, prompting the user to re-tag explicitly.
 - **`attempts[id].clips[i].trim_*_offset`** carries per-attempt trim — negative extends, positive shrinks. Derived clips only get created if the user "promotes" a trimmed range to a reusable base.
 - **`attempts[id].parent_attempt_id`** tracks forks: "Attempt 8 is a fork of Attempt 4." Lets you compare lineages.
+- **`attempts[id].continuity_score`** — fraction (0.0–1.0) of the attempt's runtime sourced from one contiguous span in one source video. 1.0 = entirely one take, 0.0 = every clip from a different source-take. Computed at attempt-generation time and recomputed when the attempt's clip list changes. Displayed on attempt cards as a visual indicator so you can tell straight-through assemblies apart from heavily-Frankensteined ones at a glance.
+- **`attempts[id].premade_bucket`** — `"best"`, `"diagnostic"`, or `null`. Drives the two-bucket UI layout for premade attempts: ship-worthy candidates in the primary panel, browse-only groupings in a secondary panel. Hand-built attempts and forks have `null`.
+- **`attempts[id].clips[i].internal_pause_max_sec`** — when non-null, the preview and export collapse any inter-word gap longer than this value down to this value. Per-attempt-clip, never mutates the base. The resolver produces multiple `(start, end)` sub-ranges from a single attempt-clip when this is set; the seek-on-`ended` trick handles them transparently. v0 ships a single "tighten internal pauses" toggle with a sensible default (e.g. 0.5s); the full per-segment aggressiveness slider is v1 polish layer.
 - **All IDs are strings** in JSON (since object keys must be strings). The app coerces them consistently on load.
 - **Clip IDs are opaque after creation.** At creation, the ID encodes `source__start__end` (`btc.0.4__00-01-12.345__00-01-18.220`) for human readability. After that, the ID is treated as a stable handle — `start_sec` / `end_sec` can change via boundary correction without changing the ID. The UI always shows current `start_sec` / `end_sec`, not the encoded values in the ID. This keeps cross-references (tags, attempts, voice annotations) stable across boundary edits.
 - **`derived_from_clip_id`** points back to a parent clip when a trimmed range gets "promoted" from a per-attempt trim into a reusable base clip — e.g. you've trimmed this clip three different ways across three attempts and want one of those trimmed ranges to become a first-class library entry instead of staying scoped to an attempt. Most clips have this as `null` (originals from ingest or boundary correction). Filled when you save-as-clip from an attempt-level trim.
@@ -406,9 +416,53 @@ Notes on the shape:
   The hook is in the schema now so adding any of the three Per-clip-media-composition operations later is additive — no migration of existing clip records. v0 readers can ignore the field; v0 writers leave it `null`.
 - **Editing by hand is supported.** Open `clipfarm.json` in any editor, change a value, save. The app's file watcher picks it up and reloads. If you've made unsaved in-memory edits, you'll be prompted before either side overwrites the other.
 
+### Whisper transcript schema (consumed, not produced)
+
+ClipFarm reads `.whisper.json` sidecars produced by the existing `transcribe.py`. The shape is pinned and verified against all 18 files in `~/Desktop/.../05.19.26/`:
+
+```json
+{
+  "schema_version": 1,
+  "source_filename": "btc.0.4.mov",
+  "language": "en",
+  "language_probability": 0.9804,
+  "duration": 2059.84,
+  "model": "small",
+  "transcribed_at": "2026-05-19T...",
+  "segments": [
+    {
+      "id": 1,
+      "start": 4.37,
+      "end": 27.39,
+      "text": " She makes me smile all the time...",
+      "words": [
+        { "start": 4.37, "end": 4.69, "word": " She", "probability": 0.4681 },
+        { "start": 4.69, "end": 4.93, "word": " makes", "probability": 0.9718 }
+      ]
+    }
+  ]
+}
+```
+
+Fields ClipFarm depends on: top-level `schema_version`, `duration`, `segments`; per-segment `start`, `end`, `words`; per-word `start`, `end`, `word`. Other fields are tolerated but ignored. **Word strings carry a leading space when present** (faster_whisper convention) — concatenate raw, don't add separators.
+
+On load, ClipFarm checks `schema_version == 1` and refuses (with a clear error pointing at `transcribe.py`) if it sees a higher version. A `WhisperTranscript` Pydantic model validates the shape at ingest. If `transcribe.py` ever bumps its schema, ClipFarm needs a matching adapter — but it never silently consumes an unknown shape.
+
 ### Pipelines
 
-**1. Ingest sources.** Point at a folder of `.mov` files, each accompanied by a Whisper word-level JSON transcript (generated upstream by the existing `transcribe.py` — ClipFarm does **not** run Whisper itself in v0). ClipFarm reads each pair → adds entries to `sources` and `transcripts`, segments each transcript into candidate `clips` by silence boundary (gap ≥ 2 sec between words). On every subsequent startup, source paths are re-verified; missing files mark the source `unavailable: true` and grey-out in the UI rather than crashing the load. No LLM yet, no project yet.
+**1. Ingest sources.** Point at a folder of `.mov` files, each ideally accompanied by a Whisper word-level JSON transcript (`<filename>.whisper.json` sibling, generated upstream by the existing `transcribe.py` — ClipFarm does **not** run Whisper itself in v0). For each pair, ClipFarm:
+
+- Adds an entry to `sources` with `transcript_path` pointing at the sidecar on disk (transcripts are **not** embedded in `clipfarm.json` — they stay as separate files and are read on demand).
+- Probes `fps` and `duration_sec` via `ffprobe` (we already ship FFmpeg). If probing fails for any reason, fps is recorded as `null` and frame-precise operations later fall back to 30 fps with a one-time UI warning.
+- Validates the source filename — names containing `__` (the clip-ID separator) are rejected with a clear error and an offer to rename. See the source-filename constraint in "Decisions locked."
+- Segments the transcript into candidate `clips` by silence boundary (gap ≥ 2 sec between words).
+
+On every subsequent startup, source paths are re-verified; missing files mark the source `unavailable: true` and grey-out in the UI rather than crashing the load. No LLM yet, no project yet.
+
+**Transcript-less sources are still ingestable.** A `.mov` without a sibling `.whisper.json` is added to `sources` with `transcript_path: null` and **no auto-detected clips**. It shows in the Library with a "no transcript — footage only" badge. Still useful as:
+- A source for **manual clip creation** via direct timestamp entry (`00:01:12.345 → 00:01:18.220`) — no transcript to drag-select on, so the create-from-scratch operation falls back to numeric range input (or, eventually, visual timeline scrubbing).
+- A target for the future **per-clip media composition** features (see Future Ideas) — when you want to use footage *visually* (B-roll, video swap, cutaways) without caring about its audio or whether anyone spoke during it. Pairs naturally with the `tracks.video_override` schema hook already reserved on every clip.
+- **Re-ingestable later**: run `transcribe.py` on the file, restart ingest, and the source picks up its transcript with full clip detection. Existing manual clips on that source are preserved.
 
 **After ingest, the Library is immediately useful.** You can browse raw transcripts, see all auto-detected clips, run boundary correction, and create new clips by hand — without creating a project. Project + brief + tagging are layered on top whenever you're ready, not required to start.
 
@@ -465,7 +519,11 @@ A persistent **live-preview pane** (resizable, dismissable) follows whatever cli
 - **Retagging is explicit**: editing a brief sets `stale: true` on affected `clip_project_tags` entries, surfaced as a UI indicator. User clicks "retag" to actually re-run the LLM. No auto-retag.
 - **Cross-project clip surfacing**: data model supports it from day one (the many-to-many `clip_project_tags` array makes the query trivial), but the **UI affordance is Stage 2, not v0**. Don't slow down v0 for it.
 - **Source file integrity**: missing `.mov`s mark the source `unavailable: true` and grey out in UI rather than crashing. Tags and attempts referencing the source are preserved.
-- **Cross-source preview latency**: an attempt that mixes clips from different source files will have a perceptible (~100–300ms) gap at each source boundary, since the alternating `<video>` elements have to load a different file path. Single-source transitions stay smooth. Accepted v0 tradeoff.
+- **Cross-source preview latency**: an attempt that mixes clips from different source files will have a perceptible (~100–300ms) gap at each source boundary, since the alternating `<video>` elements have to load a different file path. Single-source transitions stay smooth. Accepted v0 tradeoff. **Blind-spot watch**: the dogfood video (btc.0.4) is single-source, so v0 won't exercise this gap until the first multi-source assembly — that's the truth test for whether MSE needs to come sooner than Stage 2.
+- **Conflict policy on external edit**: if `watchdog` detects an external `clipfarm.json` change while there are unsaved in-memory edits, the app **freezes all writes**, surfaces a conflict modal showing the diff between in-memory and on-disk state, and waits for the user to choose "keep mine" / "use file" / "merge manually." **No auto-resolution under any circumstances.** Phase 1 detects + logs the conflict event; the UX modal lands in Phase 2 alongside the first user-facing routes.
+- **Unknown-key tolerance**: `clipfarm.json` is hand-editable by design. Unknown keys at any level are **logged with a warning and dropped on load**, never rejected. Pydantic models use `extra="ignore"`; `load_state()` does a pre-validation diff and emits one warning per dropped key so we know it happened. Our own writers can't produce extra keys (they round-trip through validated models), so the on-write surface is clean by construction — `extra="forbid"` would only ever fire on hand-edits, which is the wrong tradeoff for a file the spec explicitly invites users to edit.
+- **Source filename constraint**: source filenames containing `__` are **rejected at ingest** with a clear error and an offered sanitized rename ("`my__file.mov` → `my_file.mov`?"). The `__` substring is reserved as the clip-ID separator. Even though IDs are opaque post-creation, an unparseable ID space hurts debugging and future tooling — cheaper to constrain filenames than to escape the separator.
+- **Source fps detection**: at ingest, each source's frame rate is probed via `ffprobe`. On failure, `fps` is recorded as `null` and frame-precise nudge operations (Phase 10, `Cmd+Alt = ±1 frame`) fall back to 30 fps with a one-time UI warning per source. Decision sealed in Phase 2; enforcement in Phase 10.
 
 ---
 
@@ -536,6 +594,8 @@ The migration is mechanical, not a rewrite: every top-level object in the JSON m
 
 A linear path through the spec. Each step delivers something verifiable. Designed so a fresh Claude session (or future-you) can read the spec, pick the next unchecked step, and know what to build without rebuilding context.
 
+**This list is canonical.** `PHASES.md` references these steps by number and adds the per-phase plan + verification artifact — it does **not** duplicate the step descriptions. If a step here changes, `PHASES.md` reflects the change; if `PHASES.md` plan work surfaces a missing decision, the resolution lands here, not in the plan. One source of truth for *what*, one place for *how*.
+
 **0. Environment setup.**
 Install Ollama (`brew install ollama`), start the service, pull Llama 3.1 8B (`ollama pull llama3.1:8b`), confirm `localhost:11434` responds and can return JSON-mode output to a test prompt. Confirm at least one finished Whisper word-level JSON exists in `~/Desktop/AdAstra/2ndMind/.../05.19.26/mp4/` to use as test data. Not "build" work but unblocks everything downstream.
 
@@ -560,20 +620,23 @@ Batched calls (~10 clips per call) with the brief as shared system prompt. JSON-
 **7. Take grid view.**
 Per-line rows. Take cards with source-name + timestamp on every card. Soft category buckets (on-script, related, standalone, fragment). **This is the moment editing btc.0.4 actually gets fast** — scan 10 deliveries of line 3 side by side.
 
+**7b. Script TOC view (primary assembly workflow).**
+Same data as the take grid, different layout. Script displayed as a reorderable outline with collapsible nodes; each line expands to show its clip options inline; one-click "use this take for this line" assembles the active attempt incrementally. **Chipotle-line style — pick one take per line, top to bottom, you're done.** The take grid (7) is for review across all lines at once; the TOC view (7b) is the actual assembly workflow. Promoted to v0 from v0.5 because assembly is the primary task, not a follow-on.
+
 **8. Premade attempts generation.**
-3–5 named attempts auto-built by filtering `clip_project_tags` in memory. Single LLM call per attempt to name it naturally ("the 3 times you said it in almost one take"). Attempts persist in `clipfarm.json`.
+Generates **two buckets** of named attempts by filtering `clip_project_tags` in memory: **best plausible videos** (3–5 ship-worthy candidates — best-per-line, longest-contiguous, near-one-take, shortest-complete, energy-shift) and **diagnostic groupings** (browse-only — started-with-X, skipped-line-N, ad-lib-heavy). Each attempt has a computed `continuity_score` shown on the card. Single LLM call per attempt to name it naturally ("the 3 times you said it in almost one take"). Attempts persist in `clipfarm.json` with their `premade_bucket` field set.
 
 **9. Live preview.**
 Two alternating `<video>` elements with preloading the next clip at `effective_start`. Click any clip → plays from its range. Click an attempt → plays through in sequence with the swap-on-`ended` trick. Persistent preview pane across all pages.
 
 **10. Attempt editing.**
-Drag to reorder. "Replace this clip" action shows other takes of the same script line. Fork an attempt (duplicate with `parent_attempt_id` set). Per-attempt trim with `[` `]` `,` `.` keyboard nudges (no Trim Mode auto-replay yet — that's Future Ideas). All edits debounce-save to `clipfarm.json`.
+Drag to reorder. "Replace this clip" action shows other takes of the same script line. Fork an attempt (duplicate with `parent_attempt_id` set). Per-attempt trim with `[` `]` `,` `.` keyboard nudges (no Trim Mode auto-replay yet — that's Future Ideas). **"Tighten internal pauses" toggle per attempt-clip** — sets `internal_pause_max_sec` to a sensible default (start with 0.5s); the resolver collapses any interior word-gap longer than this so the preview/export plays the cleaned-up version. Single button, no slider — v1 polish layer adds the full aggressiveness UI. All edits debounce-save to `clipfarm.json`.
 
 **11. Export.**
 Generate FFmpeg `concat` input list from the active attempt with trim offsets applied. Stream-copy where codec/fps match, re-encode where they don't. Output: MP4 at original quality. FCPXML deferred to v0.5.
 
 ---
 
-**After step 11: complete v0 end-to-end.** btc.0.4 recorded → ingested → tagged → assembled → exported as MP4. Everything in Future Ideas (Trim Mode, auto-clip mode, voice annotations, Script TOC view, cross-project surfacing UI, database migration) layers on top of this without changing the data model.
+**After step 11: complete v0 end-to-end.** btc.0.4 recorded → ingested → tagged → assembled → exported as MP4. Everything in Future Ideas (Trim Mode, auto-clip mode, voice annotations, cross-project surfacing UI, database migration) layers on top of this without changing the data model.
 
-**Deferred to v0.5 (after the dogfood loop closes):** FCPXML export, Script TOC view as a separate layout, multiple named attempts as switchable tabs (v0 has a single active attempt at a time), idea-bucket-as-its-own-page (v0 surfaces standalone clips inline in the Take grid).
+**Deferred to v0.5 (after the dogfood loop closes):** FCPXML export, multiple named attempts as switchable tabs (v0 has a single active attempt at a time), idea-bucket-as-its-own-page (v0 surfaces standalone clips inline in the Take grid).

@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# ClipFarm runtime state
+clipfarm.json
+.clipfarm/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Node / web
+web/node_modules/
+web/dist/
+
+# Editors
+.vscode/
+.idea/
