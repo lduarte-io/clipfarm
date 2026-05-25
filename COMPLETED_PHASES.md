@@ -4,9 +4,84 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 3 — Library page (raw transcript browser)
+
+**Verified by Lillian:** ⏳ pending
+
+**Built (2026-05-25):**
+
+- **Backend (new for Phase 3):**
+  - `clipfarm/transcripts.py` — `load_transcript_for_source(source)` reads + validates the sidecar via `WhisperTranscript`, returns `None` on failure (never raises). In-process LRU cache keyed by `(transcript_path, mtime_ns)`, capacity 32. Re-running `transcribe.py` automatically invalidates the entry because the mtime changes — no server restart needed. Thread-safe via `threading.RLock`.
+  - `clipfarm/search.py` — pure `search_transcript(transcript, query, context_words=5) -> list[SearchHit]`. Word-level case-insensitive substring (the locked v0 behavior); strips the faster_whisper leading-space convention before comparing. Multi-word phrases don't match (Future Idea). Empty/whitespace query raises `ValueError`. `SearchHit` carries `word_index`, `timestamp_sec`, `context_before`, `match`, `context_after`.
+  - `clipfarm/routes/transcripts.py` — `GET /api/sources/{source_id}/transcript`. Returns `{source_id, filename, duration_sec, segments, clips}` where `clips` is the source's auto-detected ranges sorted by `start_sec`. **404** for unknown source. **422** for transcript-less (footage-only) source — the frontend uses this to render a clean "no transcript" message. **500** if `state.transcript_path` is set but the file is unreadable (state-vs-disk drift).
+  - `clipfarm/routes/search.py` — `GET /api/search?q=&source_id=&limit=`. Walks every source (or one if filtered), pulls transcripts via the cache, returns `{query, total, truncated, hits[]}` with each hit stamped with `source_id`, `filename`, and `clip_id` (the clip the matched word falls inside, if any). Empty/whitespace `q` → **400**. Unknown `source_id` → **404**. `limit` default 200, max 1000.
+
+- **Frontend (`web/src/pages/Library.tsx`):** rebuilt as a two-column layout.
+  - **Top bar:** debounced (200ms) search input + hit count + truncation indicator. Results inline below the bar — each hit shows filename + timestamp + context with the matched word highlighted in amber. Clicking a hit jumps to the source, scrolls to the word, and flash-rings the matched word + its clip.
+  - **Left rail:** collapsible "Ingest" panel (folder text input + button + result summary, with `<details>` expansions for `sources_skipped` / `rejected` / `warnings` — matches the carry-over UX request from the Phase 2 review). Source list below: filename, duration, clip count, footage-only indicator, unavailable greyed-out treatment.
+  - **Main panel:** the selected source's raw transcript as a flowing text stream. Words are span-wrapped with `data-word-index`, `data-start`, `data-end`, and `data-clip-id` attributes (Phase 4 will use the first; Phase 9 will use the timing). Clip ranges get alternating tints so adjacent boundaries read as distinct; the selected clip gets a stronger amber ring. Empty states for "no source picked" and "footage-only" (422) are explicit.
+  - Faster_whisper leading-space convention is preserved via `white-space: pre-wrap` — concatenation looks like prose, not "wordwordword".
+
+- **Tests added (110 passing total — was 77 in Phase 2.1):**
+  - `tests/test_transcripts.py` (7): parsed shape returns; `None` for missing path / missing file / malformed JSON; cache hit doesn't re-read disk (verified by patching `read_text` to raise); cache invalidates on mtime change; cache cap evicts oldest.
+  - `tests/test_search.py` (13): empty transcript; substring match within word; case-insensitive; no-match; multi-word phrase does NOT match (locks v0 behavior); multiple hits in order; context bounds clamp at start + end; custom `context_words`; match spans segment boundary; default 5 locked; empty/whitespace query raises; negative `context_words` raises.
+  - `tests/test_routes_transcripts.py` (5): happy path returns expected shape; 404 for unknown source; 422 for footage-only; 500 if sidecar disappears mid-session; clips sorted by `start_sec` regardless of insertion order.
+  - `tests/test_routes_search.py` (8): finds matches across sources; case-insensitive; 400 on empty `q` (422 on missing param from FastAPI); no-match returns clean empty list; `source_id` filter narrows results; unknown `source_id` → 404; `limit` truncates and flips `truncated: true`; hit carries `clip_id` when timestamp falls inside a detected clip.
+
+**Manual verification run (all green):**
+
+Real ingest against `05.19.26/` (18 sources, 157 clips). Then:
+
+- `GET /api/sources/4/transcript` (btc.0.4) → returns `duration_sec=2059.84`, `segments=379`, `clips=91`, `total words=4735`. First segment words confirm the faster_whisper leading-space convention is preserved end-to-end (`[' She', ' makes', ' me', ' smile', ...]`).
+- `GET /api/sources/9999/transcript` → **404**.
+- `GET /api/search?q=smile` → **2 hits**, both inside btc.0.4, each carrying the correct `clip_id` and a real context window:
+  - `5.1s → ...| She makes me|smile|all the time a flop...` (inside `btc.0.4__00-00-04.370__00-00-09.600`)
+  - `1879.9s → ...|back at this video and|smile|My little dog is in...` (inside `btc.0.4__00-31-10.500__00-31-27.200`)
+- `GET /api/search?q=the` → 337 hits across the library; `?source_id=4` narrows to 223 from btc.0.4 alone. `?limit=3` truncates with `truncated: true`.
+- Empty + whitespace queries → **400**.
+- Synthesized footage-only `.mov` → `GET /transcript` returns **422**.
+- Repeated `GET /api/search?q=smile` runs at ~10ms wall-clock (cache hits on every sidecar after first scan); single transcript fetch at 13ms warm.
+
+**Assumptions made + deviations from the plan:**
+
+- **Substring search is genuinely word-level.** A search for `"i"` matches every word containing the letter "i" (2433 hits on the dogfood folder). That's correct under the locked v0 spec but the volume is real — the `limit` cap (default 200, max 1000) keeps the response bounded. A future "whole-word" toggle is a polish-layer addition, not a v0 requirement.
+- **Cache invalidation is mtime-based, not content-based.** If a sidecar is overwritten with byte-identical content (rare), the cache will still serve the old parsed object — which is fine because the parsed object IS byte-identical. The "stale paths" eviction in `_TranscriptCache.put` drops the previous-mtime entry when a new mtime appears, so we never keep two versions of the same path.
+- **`load_transcript_for_source` returns `None` on every failure.** That's defensive — sidecar problems shouldn't take down the search route. The route then turns transcript-less or load-failed into a 422 or 500 as appropriate. `None` is also what `transcript_path is None` returns, so the call site doesn't need to distinguish.
+- **`StampedHit.clip_id` is `Optional[str]`.** A search match can land between two detected clips (in the silence gap that defined the boundary). The frontend handles `null` by showing the timestamp without a clip ID. v0 segmentation uses 2-sec gaps, so the gap-only words are short and rare, but the model has to allow it.
+- **Frontend layout assumes ≥1024px width.** The two-column grid is fixed-width (280px sidebar). Phase 3 is a desktop-only UI; mobile / narrow viewport tuning is polish-layer territory. Lillian works on a Mac in a full-width browser, so no v0 problem.
+
+**Open follow-ups for the reviewer to evaluate:**
+
+1. **Multi-word phrase search.** Spec calls out semantic search as Future Ideas but doesn't explicitly bin "phrase substring" (e.g. `"self custody"`). v0 behavior is locked: phrase queries return 0 hits even when the words appear adjacent. Worth a one-line decision in the spec under "Library page" if Lillian wants this to stay clear of confusion.
+2. **Per-source ingest history.** The Phase 2 reviewer flagged "rejection-noise on re-ingest" as a Phase 3-or-later concern. Phase 3 still scopes rejection lists to the current ingest response — they vanish on next reload. Persistent ingest history would land alongside an "Ingest activity" log view, which is polish-layer. Defer.
+3. **`/api/search` with `q` of one character** is allowed by the current validation (after strip). `?q=a` returns 2.5k+ hits in the dogfood folder. The `limit` cap protects performance, but the UX might want a minimum length of 2 or 3 in the frontend's debounce. Flagged for polish.
+
+**Files touched in Phase 3:**
+
+```
+NEW:
+  clipfarm/transcripts.py
+  clipfarm/search.py
+  clipfarm/routes/transcripts.py
+  clipfarm/routes/search.py
+  tests/test_transcripts.py
+  tests/test_search.py
+  tests/test_routes_transcripts.py
+  tests/test_routes_search.py
+
+MODIFIED:
+  clipfarm/app.py        — include transcripts + search routers
+  web/src/pages/Library.tsx — rebuilt as two-column with search bar, transcript view, and ingest panel
+  web/dist/...           — rebuilt
+  PHASES.md              — Phase 2 marked verified, Phase 3 plan written
+  COMPLETED_PHASES.md    — Phase 2/2.1 verified stamps + this Phase 3 entry
+```
+
+---
+
 ## Phase 2.1 — Dead-code purge + mutation-under-lock seam
 
-**Verified by Lillian:** ⏳ pending — folded in alongside Phase 2 verification.
+**Verified by Lillian:** ✅ 2026-05-25 (folded in alongside Phase 2).
 
 **Two fixes from the reviewer's Phase 2 assessment:**
 

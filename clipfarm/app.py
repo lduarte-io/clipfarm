@@ -38,7 +38,9 @@ from fastapi.staticfiles import StaticFiles
 
 from clipfarm.models import ClipFarmState
 from clipfarm.routes import ingest as ingest_routes
+from clipfarm.routes import search as search_routes
 from clipfarm.routes import state as state_routes
+from clipfarm.routes import transcripts as transcripts_routes
 from clipfarm.routes.deps import (
     commit_state_to_disk,
     commit_state_with_snapshot,
@@ -138,6 +140,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ClipFarm", lifespan=lifespan)
 app.include_router(state_routes.router)
 app.include_router(ingest_routes.router)
+app.include_router(transcripts_routes.router)
+app.include_router(search_routes.router)
 
 
 # --- Frontend hosting ---------------------------------------------------------
