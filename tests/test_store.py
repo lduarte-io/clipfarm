@@ -19,10 +19,13 @@ from clipfarm.store import (
     SNAPSHOT_DIR,
     SNAPSHOT_LIMIT,
     WritesFrozenError,
+    hash_serialized,
     list_snapshots,
     load_state,
     save_state,
     save_state_sync,
+    save_state_with_snapshot,
+    serialize_state,
     snapshot_before_destructive,
 )
 
@@ -177,3 +180,149 @@ async def test_save_state_raises_when_writes_frozen(tmp_path: Path):
     with pytest.raises(WritesFrozenError):
         await save_state(state, state_path, lock, writes_frozen=True)
     assert not state_path.exists(), "frozen save must not have touched disk"
+
+
+# --- Phase 1.1: post_write installs the hash inside the lock -----------------
+
+
+@pytest.mark.asyncio
+async def test_post_write_called_inside_lock_with_correct_hash(tmp_path: Path):
+    """The watcher's hash install must run inside the save's critical section.
+    Otherwise the polling observer can fire between the lock release and the
+    hash install, see an 'external' change, and spuriously freeze writes.
+
+    Verify with two asserts: (a) the callback got the right hash, and (b) the
+    lock was held when the callback ran (`asyncio.Lock.locked()` returns
+    True while held by any task).
+    """
+    state = _make_state()
+    state_path = tmp_path / "clipfarm.json"
+    lock = asyncio.Lock()
+
+    received_hashes: list[str] = []
+    lock_state_during_callback: list[bool] = []
+
+    def post_write(h: str) -> None:
+        lock_state_during_callback.append(lock.locked())
+        received_hashes.append(h)
+
+    serialized = await save_state(state, state_path, lock, post_write=post_write)
+
+    expected_hash = hash_serialized(serialized)
+    assert received_hashes == [expected_hash]
+    assert lock_state_during_callback == [True], (
+        "post_write fired with the lock released — the race window is open"
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_write_not_called_when_frozen(tmp_path: Path):
+    """If writes_frozen raises, post_write must never run — the watcher must
+    not learn about a write that didn't happen."""
+    state = _make_state()
+    state_path = tmp_path / "clipfarm.json"
+    lock = asyncio.Lock()
+
+    received: list[str] = []
+    with pytest.raises(WritesFrozenError):
+        await save_state(
+            state,
+            state_path,
+            lock,
+            writes_frozen=True,
+            post_write=received.append,
+        )
+    assert received == []
+
+
+# --- Phase 1.1: save_state_with_snapshot couples both under one lock ---------
+
+
+@pytest.mark.asyncio
+async def test_save_with_snapshot_writes_old_state_to_snapshot_then_new_to_main(
+    tmp_path: Path,
+):
+    """save_state_with_snapshot must snapshot the PRE-CHANGE on-disk state
+    and then write the NEW state — both inside one critical section."""
+    state_path = tmp_path / "clipfarm.json"
+    lock = asyncio.Lock()
+
+    # Establish a baseline on disk.
+    old_state = _make_state(clip_count=1)
+    save_state_sync(old_state, state_path)
+
+    # Now apply a destructive change with snapshot.
+    new_state = _make_state(clip_count=3)
+    snap_path, serialized = await save_state_with_snapshot(
+        new_state, state_path, lock, "test-destructive"
+    )
+
+    assert snap_path is not None and snap_path.is_file()
+    # Snapshot has the OLD content; main file has the NEW content.
+    loaded_from_snapshot = json.loads(snap_path.read_text(encoding="utf-8"))
+    loaded_from_main = json.loads(state_path.read_text(encoding="utf-8"))
+    assert len(loaded_from_snapshot["clips"]) == 1, "snapshot must be pre-change"
+    assert len(loaded_from_main["clips"]) == 3, "main must reflect the new write"
+    # The reason label is in the snapshot filename.
+    assert "test-destructive" in snap_path.name
+    # Returned serialized form matches what was written.
+    assert json.loads(serialized) == loaded_from_main
+
+
+@pytest.mark.asyncio
+async def test_save_with_snapshot_no_baseline_returns_none_snapshot(tmp_path: Path):
+    """If the state file doesn't exist yet, the snapshot is a no-op (None
+    returned) and the new state still lands."""
+    state_path = tmp_path / "clipfarm.json"
+    lock = asyncio.Lock()
+    new_state = _make_state(clip_count=2)
+
+    snap_path, _ = await save_state_with_snapshot(
+        new_state, state_path, lock, "create"
+    )
+    assert snap_path is None
+    assert state_path.is_file()
+
+
+@pytest.mark.asyncio
+async def test_save_with_snapshot_post_write_inside_lock(tmp_path: Path):
+    state_path = tmp_path / "clipfarm.json"
+    lock = asyncio.Lock()
+    save_state_sync(_make_state(clip_count=1), state_path)
+
+    lock_state: list[bool] = []
+    received: list[str] = []
+
+    def post_write(h: str) -> None:
+        lock_state.append(lock.locked())
+        received.append(h)
+
+    new_state = _make_state(clip_count=2)
+    _, serialized = await save_state_with_snapshot(
+        new_state, state_path, lock, "split", post_write=post_write
+    )
+
+    assert lock_state == [True]
+    assert received == [hash_serialized(serialized)]
+
+
+@pytest.mark.asyncio
+async def test_save_with_snapshot_raises_when_frozen(tmp_path: Path):
+    state_path = tmp_path / "clipfarm.json"
+    lock = asyncio.Lock()
+    save_state_sync(_make_state(), state_path)
+    pre_change_body = state_path.read_bytes()
+
+    with pytest.raises(WritesFrozenError):
+        await save_state_with_snapshot(
+            _make_state(clip_count=99),
+            state_path,
+            lock,
+            "split",
+            writes_frozen=True,
+        )
+
+    # Neither the snapshot nor the main write should have happened.
+    assert state_path.read_bytes() == pre_change_body
+    snap_dir = state_path.parent / SNAPSHOT_DIR
+    assert not snap_dir.exists() or not any(snap_dir.iterdir())

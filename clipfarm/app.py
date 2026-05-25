@@ -147,23 +147,47 @@ app.include_router(state_routes.router)
 
 
 async def commit_state_to_disk(app: FastAPI) -> None:
-    """Save the current `app.state.clipfarm` under the save lock and update
-    the watcher's known-hash so the next watchdog event is filtered as a
-    self-write.
+    """Save the current `app.state.clipfarm` under the save lock. The
+    watcher's `last_known_hash` is installed inside the same critical
+    section via `post_write`, closing the race where a poll between
+    lock-release and hash-install would see an "external" change and
+    spuriously flip `writes_frozen`.
 
     Raises `WritesFrozenError` if `app.state.writes_frozen` is set.
     """
-    state_path: Path = app.state.state_path
-    cf_state: ClipFarmState = app.state.clipfarm
-    serialized = await save_state(
-        cf_state,
-        state_path,
+    watcher: StateFileWatcher = app.state.watcher
+    await save_state(
+        app.state.clipfarm,
+        app.state.state_path,
         app.state.save_lock,
         writes_frozen=app.state.writes_frozen,
+        post_write=watcher.update_last_known_hash,
     )
     app.state.dirty = False
+
+
+async def commit_state_with_snapshot(app: FastAPI, reason: str) -> Path | None:
+    """Locked snapshot-then-save, used by destructive routes (split, merge,
+    delete, etc. — first user lands in Phase 4). Same race-closure as
+    `commit_state_to_disk`: the snapshot, write, and hash install all happen
+    inside the same `asyncio.Lock` critical section.
+
+    Returns the snapshot path (or None if no on-disk state existed yet).
+    Raises `WritesFrozenError` if `app.state.writes_frozen` is set.
+    """
+    from clipfarm.store import save_state_with_snapshot
+
     watcher: StateFileWatcher = app.state.watcher
-    watcher.update_last_known_hash(hash_serialized(serialized))
+    snap_path, _ = await save_state_with_snapshot(
+        app.state.clipfarm,
+        app.state.state_path,
+        app.state.save_lock,
+        reason,
+        writes_frozen=app.state.writes_frozen,
+        post_write=watcher.update_last_known_hash,
+    )
+    app.state.dirty = False
+    return snap_path
 
 
 # --- Frontend hosting ---------------------------------------------------------
@@ -204,4 +228,9 @@ def spa_catch_all(full_path: str):
     return FileResponse(index_file)
 
 
-__all__ = ["app", "commit_state_to_disk", "get_state"]
+__all__ = [
+    "app",
+    "commit_state_to_disk",
+    "commit_state_with_snapshot",
+    "get_state",
+]

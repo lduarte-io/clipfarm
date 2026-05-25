@@ -35,6 +35,8 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
+
 from pydantic import BaseModel
 
 from clipfarm.migrations import (
@@ -235,10 +237,17 @@ async def save_state(
     lock: asyncio.Lock,
     *,
     writes_frozen: bool = False,
+    post_write: "Callable[[str], None] | None" = None,
 ) -> str:
     """Serialize and atomically write the state under the supplied
-    `asyncio.Lock`. Returns the serialized form (so the caller can stash its
-    hash for self-write detection in `watcher.py`).
+    `asyncio.Lock`. Returns the serialized form.
+
+    `post_write`, if supplied, runs **inside the same locked critical
+    section** with the serialized form's sha256 hex digest. The watcher's
+    `update_last_known_hash` is the canonical caller — installing the new
+    hash inside the lock closes the race where the polling observer could
+    fire between the lock release and the hash install, see an "external"
+    change, and spuriously freeze writes.
 
     `writes_frozen=True` raises `WritesFrozenError` instead of writing — used
     by the conflict-freeze path. Callers should consult
@@ -250,11 +259,44 @@ async def save_state(
         )
     serialized = serialize_state(state)
     async with lock:
-        # The atomic write is sync but cheap; running it inside the asyncio
-        # lock is fine and keeps the pre-write snapshot + write coherent if
-        # the caller chains them in a future destructive op.
         atomic_write(state_path, serialized)
+        if post_write is not None:
+            post_write(hash_serialized(serialized))
     return serialized
+
+
+async def save_state_with_snapshot(
+    state: ClipFarmState,
+    state_path: Path,
+    lock: asyncio.Lock,
+    reason: str,
+    *,
+    writes_frozen: bool = False,
+    post_write: "Callable[[str], None] | None" = None,
+) -> tuple[Path | None, str]:
+    """Snapshot the on-disk file, then atomically write the new state — both
+    inside the same `asyncio.Lock` critical section.
+
+    This is the helper destructive operations (split, merge, delete, retag-
+    clobber) call. Coupling the snapshot to the save under one lock makes a
+    concurrent save impossible to slip in between them, so the snapshot is
+    always the exact pre-change state.
+
+    Returns `(snapshot_path_or_None, serialized_form)`. The snapshot path is
+    `None` only if the state file didn't exist on disk yet (nothing to
+    snapshot — same semantics as `snapshot_before_destructive`).
+    """
+    if writes_frozen:
+        raise WritesFrozenError(
+            "writes are frozen due to an unresolved external-edit conflict"
+        )
+    serialized = serialize_state(state)
+    async with lock:
+        snap_path = snapshot_before_destructive(state_path, reason)
+        atomic_write(state_path, serialized)
+        if post_write is not None:
+            post_write(hash_serialized(serialized))
+    return snap_path, serialized
 
 
 def save_state_sync(state: ClipFarmState, state_path: Path) -> str:
@@ -331,6 +373,7 @@ __all__ = [
     "run_source_integrity_check",
     "save_state",
     "save_state_sync",
+    "save_state_with_snapshot",
     "serialize_state",
     "snapshot_before_destructive",
 ]

@@ -4,6 +4,36 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 1.1 — Race fix + atomic snapshot-then-save
+
+**Verified by Lillian:** ⏳ pending — folded in alongside Phase 1 verification.
+
+**Two fixes from the reviewer's pass on Phase 1:**
+
+1. **Hash-install race in `commit_state_to_disk` closed.** Original flow released the lock between writing the file and installing the new hash on the watcher; if the 0.5s poll fell in that window, the watcher saw an "external" change and would freeze writes. Fix: `save_state()` now takes an optional `post_write` callback that runs **inside the lock** with the serialized form's hash. `commit_state_to_disk` passes `watcher.update_last_known_hash` as `post_write`, so the hash install and the write are one critical section.
+2. **`save_state_with_snapshot()` added.** Spec invariant says snapshot-then-save is a single locked critical section. Original `snapshot_before_destructive()` was sync and called outside the lock. New helper acquires the lock once, snapshots the pre-change on-disk file, atomic-writes the new state, installs the hash via `post_write` — all inside one `async with lock:` block. Routes that mutate base clips (Phase 4's first user) call this via `commit_state_with_snapshot(app, reason)` on `app.py`.
+
+**Tests added (`tests/test_store.py`, 6 new — 27 total passing):**
+
+- `test_post_write_called_inside_lock_with_correct_hash` — asserts the callback receives `hash_serialized(serialized)` and that `lock.locked()` returns True while the callback runs.
+- `test_post_write_not_called_when_frozen` — if `WritesFrozenError` raises, the callback never fires (the watcher must not learn about a write that didn't happen).
+- `test_save_with_snapshot_writes_old_state_to_snapshot_then_new_to_main` — establishes a baseline, applies a destructive save, asserts the snapshot file has the OLD content and the main file has the NEW content.
+- `test_save_with_snapshot_no_baseline_returns_none_snapshot` — fresh file → snapshot returns None and the new state still lands.
+- `test_save_with_snapshot_post_write_inside_lock` — same lock-held + correct-hash assertions for the snapshot variant.
+- `test_save_with_snapshot_raises_when_frozen` — freeze blocks both the snapshot AND the write; neither side-effect occurs.
+
+**Live re-verification:** 40 concurrent `POST /api/test/touch` against the new code → all 200s, file valid JSON, **zero "external write" events in the watcher log** (vs. the original code where the race window could trip the freeze). The reviewer's deferred punch-list items (`WATCHDOG_DEBOUNCE_MS` constant, duplicate `_get_state`, dict-of-model heuristic, `/api/test/touch` env-gate, integrity-check mutation comment, round-trip test for new optional fields, `WhisperTranscript.duration` policy) are out of scope for this cleanup — flagged for either a focused follow-up or Phase 2 kickoff.
+
+**Files touched in 1.1:**
+
+```
+clipfarm/store.py     — added `post_write` param to save_state; new save_state_with_snapshot()
+clipfarm/app.py       — commit_state_to_disk uses post_write; new commit_state_with_snapshot()
+tests/test_store.py   — six new tests
+```
+
+---
+
 ## Phase 1 — FastAPI backend + frontend skeleton + JSON schema + safety scaffolding
 
 **Verified by Lillian:** ⏳ pending
