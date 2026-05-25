@@ -450,12 +450,14 @@ On load, ClipFarm checks `schema_version == 1` and refuses (with a clear error p
 
 ### Pipelines
 
-**1. Ingest sources.** Point at a folder of `.mov` files, each ideally accompanied by a Whisper word-level JSON transcript (`<filename>.whisper.json` sibling, generated upstream by the existing `transcribe.py` — ClipFarm does **not** run Whisper itself in v0). For each pair, ClipFarm:
+**1. Ingest sources.** Point at a folder of video files in `{.mov, .mp4, .m4v, .mkv}`, each ideally accompanied by a Whisper word-level JSON transcript (`<stem>.whisper.json` sibling, generated upstream by the existing `transcribe.py` — ClipFarm does **not** run Whisper itself in v0). For each pair, ClipFarm:
 
-- Adds an entry to `sources` with `transcript_path` pointing at the sidecar on disk (transcripts are **not** embedded in `clipfarm.json` — they stay as separate files and are read on demand).
-- Probes `fps` and `duration_sec` via `ffprobe` (we already ship FFmpeg). If probing fails for any reason, fps is recorded as `null` and frame-precise operations later fall back to 30 fps with a one-time UI warning.
-- Validates the source filename — names containing `__` (the clip-ID separator) are rejected with a clear error and an offer to rename. See the source-filename constraint in "Decisions locked."
+- Adds an entry to `sources` with `transcript_path` pointing at the sidecar on disk (transcripts are **not** embedded in `clipfarm.json` — they stay as separate files and are read on demand). Source IDs are monotonic stringified integers (`"1"`, `"2"`, ...) — opaque after creation per the data-model invariant.
+- Probes `fps` via `ffprobe` (we already ship FFmpeg). If probing fails for any reason, fps is recorded as `null` and frame-precise operations later fall back to 30 fps with a one-time UI warning.
+- Resolves `duration_sec` via the **sidecar wins → ffprobe → null** policy. See "Source duration policy" in Decisions locked.
+- Validates the source filename — stems containing `__` (the clip-ID separator) are rejected with a clear error and an offer to rename. See the source-filename constraint in "Decisions locked."
 - Segments the transcript into candidate `clips` by silence boundary (gap ≥ 2 sec between words).
+- **Sidecar problems are non-fatal to the source.** If the sidecar is malformed or reports an unsupported `schema_version`, the source is still added (as footage-only with `transcript_path: null`) and the rejection is reported in the ingest result. Re-running `transcribe.py` and re-ingesting upgrades the source in-place. See "Sidecar errors don't kill the source" in Decisions locked.
 
 On every subsequent startup, source paths are re-verified; missing files mark the source `unavailable: true` and grey-out in the UI rather than crashing the load. No LLM yet, no project yet.
 
@@ -482,8 +484,8 @@ On every subsequent startup, source paths are re-verified; missing files mark th
 
 **On first launch with no `clipfarm.json` present:**
 
-1. **Empty state with a drop zone.** "Drop a folder of `.mov` files (with their Whisper transcripts) here, or click to pick one." Inline help explains the transcript requirement so you don't get confused about why a folder of bare `.mov`s won't work.
-2. **On drop, ingest runs.** Scans the folder, pairs each `.mov` with its `<filename>.whisper.json`, segments into clips. Progress bar.
+1. **Empty state with a drop zone.** "Drop a folder of video files (`.mov` / `.mp4` / `.m4v` / `.mkv`, each with its Whisper transcript sidecar) here, or click to pick one." Inline help explains the transcript requirement so you don't get confused about why a folder of bare videos won't auto-segment.
+2. **On drop, ingest runs.** Scans the folder, pairs each video with its `<stem>.whisper.json`, segments into clips. Progress bar.
 3. **Lands on the Library page** with sources listed and clip counts populated. The **raw-transcript view of the first source is shown by default** — you can immediately browse the recording and grab clips by hand. Useful before any project exists.
 4. **A persistent "create a project" CTA** lives in the corner. Optional. The library is fully usable without it.
 
@@ -492,7 +494,7 @@ On every subsequent startup, source paths are re-verified; missing files mark th
 - If projects exist but no last-active state: project picker.
 
 **What ClipFarm expects you to drop in:**
-ClipFarm consumes `.mov` files **plus their pre-generated Whisper word-level JSON transcripts** (named `<filename>.whisper.json` next to the video, or in a sibling `transcripts/` folder — convention configurable). It does **not** run Whisper itself in v0; that's the existing `transcribe.py` pipeline's job. This keeps transcription (slow, can run overnight) and editing (interactive, daytime) cleanly separated. **Long-term**, ClipFarm could shell out to `transcribe.py` automatically when it sees an untranscribed `.mov` — captured in Future Ideas, not v0.
+ClipFarm consumes video files in `{.mov, .mp4, .m4v, .mkv}` **plus their pre-generated Whisper word-level JSON transcripts** (named `<stem>.whisper.json` next to the video). The dogfood folder is all `.mov`, but tolerating the common siblings avoids false negatives on the next folder Lillian drops. It does **not** run Whisper itself in v0; that's the existing `transcribe.py` pipeline's job. This keeps transcription (slow, can run overnight) and editing (interactive, daytime) cleanly separated. **Long-term**, ClipFarm could shell out to `transcribe.py` automatically when it sees an untranscribed video — captured in Future Ideas, not v0.
 
 ### Frontend pages
 
@@ -524,6 +526,11 @@ A persistent **live-preview pane** (resizable, dismissable) follows whatever cli
 - **Unknown-key tolerance**: `clipfarm.json` is hand-editable by design. Unknown keys at any level are **logged with a warning and dropped on load**, never rejected. Pydantic models use `extra="ignore"`; `load_state()` does a pre-validation diff and emits one warning per dropped key so we know it happened. Our own writers can't produce extra keys (they round-trip through validated models), so the on-write surface is clean by construction — `extra="forbid"` would only ever fire on hand-edits, which is the wrong tradeoff for a file the spec explicitly invites users to edit.
 - **Source filename constraint**: source filenames containing `__` are **rejected at ingest** with a clear error and an offered sanitized rename ("`my__file.mov` → `my_file.mov`?"). The `__` substring is reserved as the clip-ID separator. Even though IDs are opaque post-creation, an unparseable ID space hurts debugging and future tooling — cheaper to constrain filenames than to escape the separator.
 - **Source fps detection**: at ingest, each source's frame rate is probed via `ffprobe`. On failure, `fps` is recorded as `null` and frame-precise nudge operations (Phase 10, `Cmd+Alt = ±1 frame`) fall back to 30 fps with a one-time UI warning per source. Decision sealed in Phase 2; enforcement in Phase 10.
+- **Source duration policy**: `duration_sec` resolves as **sidecar `duration` wins → `ffprobe` falls back → `null`**. Rationale: `transcribe.py` reads actual audio frame counts during transcription, which is generally more accurate than `ffprobe`'s container metadata (especially on truncated or container-quirky files). When no sidecar exists or it lacks `duration`, ffprobe is the fallback. If both fail, the source is still ingested with `duration_sec: null` and the UI shows `—` for duration. Locked in Phase 2.
+- **Sidecar errors don't kill the source**: malformed JSON, schema-version mismatch, or any other sidecar load failure adds the source to the ingest result's `rejected` list but **also** registers the `.mov` as a footage-only source (`transcript_path: null`, no auto-detected clips). Rationale: the user almost always wants to retry `transcribe.py` later — losing the source entry on a sidecar problem is surprising and lossy. Re-ingest after fixing the sidecar takes the "transcript newly available" upgrade path. Filename-level errors (`__` in stem) still reject hard, because the source itself is the problem. Locked in Phase 2.
+- **Acceptable video extensions**: `{.mov, .mp4, .m4v, .mkv}` at ingest. Spec was originally `.mov`-only to match the dogfood folder, but constraining to one extension would false-negative on the next folder. The set covers what `ffprobe` reliably handles for this workflow.
+- **Source IDs**: monotonic stringified integers (`"1"`, `"2"`, ...). JSON object keys must be strings; opaque after creation. If we ever need globally-unique IDs (multi-machine sync, etc.) that's a migration, not a v0 concern.
+- **File watcher implementation**: `watchdog.observers.polling.PollingObserver` with a 0.5s poll interval, **not** the platform-default `Observer`. macOS FSEvents has documented reliability issues for rapid back-to-back single-file edits — events can be coalesced or dropped, and Phase 1 verification confirmed this on the dev machine. Polling a single `stat()` every 500ms is cheap, deterministic across platforms, and makes external-edit detection reliable enough to ground the conflict-policy invariant on. Locked in Phase 1.
 
 ---
 
