@@ -100,12 +100,6 @@ def _sanitize_filename_stem(stem: str) -> str:
     return stem
 
 
-def _transcript_sidecar(mov_path: Path) -> Path:
-    return mov_path.with_suffix(mov_path.suffix + ".whisper.json")
-    # Actually convention is `<stem>.whisper.json` not `<filename>.whisper.json`
-    # Fixed below.
-
-
 def _sidecar_path_for(mov_path: Path) -> Path:
     """Convention: `<stem>.whisper.json` next to the `.mov` (e.g.
     `btc.0.4.whisper.json` for `btc.0.4.mov`).

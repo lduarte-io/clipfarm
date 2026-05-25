@@ -114,3 +114,80 @@ def test_re_ingest_through_route_is_idempotent(
     assert first.json()["sources_added"] == ["alpha.mov"]
     assert second.json()["sources_added"] == []
     assert second.json()["sources_skipped"] == ["alpha.mov"]
+
+
+# --- Phase 2.1: mutation-under-lock seam --------------------------------------
+
+
+def test_ingest_holds_save_lock_during_orchestrator_call(
+    client: TestClient, tmp_path: Path
+):
+    """Structural assertion: the route must hold `app.state.save_lock` when
+    `ingest_folder` runs. Without the lock the source-ID allocator
+    (`max(existing) + 1`) is racy under any future async mutation. Mock the
+    orchestrator and inspect the lock state at the moment it's called."""
+    folder = tmp_path / "media"
+    folder.mkdir()
+    _write_pair(folder, "alpha")
+
+    from clipfarm.ingest import IngestResult
+
+    observed_locked: list[bool] = []
+
+    def fake_ingest(state, folder_arg):
+        observed_locked.append(client.app.state.save_lock.locked())
+        return IngestResult()  # no mutations; route should still hold lock
+
+    with patch("clipfarm.routes.ingest.ingest_folder", side_effect=fake_ingest):
+        response = client.post("/api/ingest", json={"folder": str(folder)})
+
+    assert response.status_code == 200
+    assert observed_locked == [True], (
+        "ingest_folder ran without `save_lock` held — the mutation seam is open"
+    )
+
+
+def test_concurrent_ingest_produces_consistent_state(
+    client: TestClient, tmp_path: Path
+):
+    """Fire multiple concurrent `/api/ingest` calls against the same folder;
+    the final state must have each source exactly once with a unique ID,
+    regardless of ordering. Today's sync `ingest_folder` can't actually race
+    under asyncio, but this is the regression guard for the day it goes
+    async (e.g. async ffprobe) — without the lock, two handlers could both
+    compute `_next_source_id == "1"` and one would silently lose."""
+    import concurrent.futures
+
+    folder = tmp_path / "media"
+    folder.mkdir()
+    for stem in ("alpha", "beta", "gamma"):
+        _write_pair(folder, stem)
+
+    with patch(
+        "clipfarm.ingest.probe_video",
+        return_value={"fps": 60.0, "duration_sec": 12.0},
+    ):
+        # Three concurrent ingests of the same folder. First call adds
+        # every source; the others should land in `sources_skipped`.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+            results = list(
+                ex.map(
+                    lambda _: client.post("/api/ingest", json={"folder": str(folder)}),
+                    range(3),
+                )
+            )
+
+    for r in results:
+        assert r.status_code == 200, r.text
+
+    # State invariants: each filename appears exactly once across sources;
+    # every source ID is unique; clip count matches what one ingest would
+    # have produced (concurrent runs must not double-segment).
+    state_response = client.get("/api/state")
+    assert state_response.status_code == 200
+    state = state_response.json()
+    filenames = [s["filename"] for s in state["sources"].values()]
+    assert sorted(filenames) == ["alpha.mov", "beta.mov", "gamma.mov"]
+    assert len(set(state["sources"].keys())) == 3, "duplicate source IDs"
+    # 3 sources × 1 clip each (default sidecar fixture has 1 word) = 3 clips.
+    assert len(state["clips"]) == 3

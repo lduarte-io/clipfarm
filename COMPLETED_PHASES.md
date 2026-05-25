@@ -4,9 +4,35 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 2.1 — Dead-code purge + mutation-under-lock seam
+
+**Verified by Lillian:** ⏳ pending — folded in alongside Phase 2 verification.
+
+**Two fixes from the reviewer's Phase 2 assessment:**
+
+1. **Deleted dead `_transcript_sidecar` in `ingest.py`.** The function was wrong (would have built `btc.0.4.mov.whisper.json` instead of `btc.0.4.whisper.json`) and had a comment underneath saying so. The real impl (`_sidecar_path_for`) lived right below. Removing the misdirection before someone reads it during Phase 3.
+2. **`async with app.state.save_lock:` around the `ingest_folder` call in `routes/ingest.py`.** Under today's purely-sync orchestrator no race is reachable (asyncio doesn't preempt sync code), but the lock makes "mutation requires the lock" an explicit invariant ahead of Phase 4's destructive routes. The day ingest goes async (network probe, ML enrichment, anything with an `await`), `_next_source_id`'s `max(existing) + 1` allocator would otherwise be racy across concurrent route handlers. Comment in the route spells out why both critical sections (mutation here + write in `commit_state_to_disk`) are safe as two separate locks.
+
+**Tests added (2 new — 77 total passing):**
+
+- `test_ingest_holds_save_lock_during_orchestrator_call` — patches `ingest_folder` with a fake that records `app.state.save_lock.locked()` at call time. Asserts `[True]`. Would catch the seam closing back up if a future refactor moves the lock or removes it.
+- `test_concurrent_ingest_produces_consistent_state` — three concurrent `/api/ingest` POSTs via `ThreadPoolExecutor` against the same folder. Final state must have each source exactly once with a unique ID, and the clip count must match a single-ingest run (no double-segmentation). Today this passes trivially because the orchestrator is sync; tomorrow when ingest goes async it's the regression guard that catches the ID race.
+
+**Files touched in 2.1:**
+
+```
+clipfarm/ingest.py        — removed dead _transcript_sidecar
+clipfarm/routes/ingest.py — wrapped ingest_folder call in `async with app.state.save_lock:`
+tests/test_routes_ingest.py — two new tests
+```
+
+The reviewer's other notes are tracked separately: the spec edits (#3 — duration policy, video extensions, source-ID format, sidecar-problems-don't-kill-source) are queued for the reviewer to land directly in `clipfarm-spec.md`; the polish items (`sources_skipped` UI expansion, rejection-noise on re-ingest, recursive folder walk) are flagged for Phase 3 kickoff.
+
+---
+
 ## Phase 2 — Ingest pipeline
 
-**Verified by Lillian:** ⏳ pending
+**Verified by Lillian:** ✅ 2026-05-25
 
 **Built (2026-05-25):**
 
