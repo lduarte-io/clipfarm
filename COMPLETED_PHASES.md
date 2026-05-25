@@ -4,9 +4,93 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 2 — Ingest pipeline
+
+**Verified by Lillian:** ⏳ pending
+
+**Built (2026-05-25):**
+
+- **Phase 2 kickoff cleanups** (punch-list residue from the Phase 1 review):
+  - New `clipfarm/routes/deps.py` — `get_state`, `commit_state_to_disk`, `commit_state_with_snapshot` all live here. `app.py` and every route imports from `deps.py`; the duplicate `_get_state` in `routes/state.py` is gone.
+  - `WATCHDOG_DEBOUNCE_MS = 200` dead constant removed from `store.py` (real interval is `_WATCH_POLL_INTERVAL_SEC = 0.5` in `watcher.py`).
+  - `POST /api/test/touch` gated behind `CLIPFARM_TEST_ROUTES=1`. Default OpenAPI surface no longer carries it.
+  - One-line comment in `run_source_integrity_check` documenting the `validate_assignment=False` assumption.
+  - New `tests/test_models_round_trip.py` (6 tests): defaults for `Clip.tracks`, `Attempt.continuity_score`, `Attempt.premade_bucket`, `Attempt.needs_review`, `AttemptClip.internal_pause_max_sec` serialize as `null` (never `{}`, never missing). Parametrized round-trip through disk confirms exact value preservation.
+
+- **Backend (new for Phase 2):**
+  - `clipfarm/ffprobe.py` — `probe_video(path) -> {fps, duration_sec}`. Subprocess wrapper around `ffprobe -show_entries stream=r_frame_rate,duration:format=duration -of json`. Parses fractional fps (`30000/1001` → `29.97`). All failure modes (binary missing, exit nonzero, malformed JSON, `OSError`) return `(None, None)` and log a warning. Never raises.
+  - `clipfarm/segmentation.py` — pure `segment_words_by_silence(words, gap_threshold_sec=2.0) -> list[(start, end)]`. No I/O. Tested with the threshold-boundary edge cases (sub-, equal-, super-threshold), empty input, single-word input, custom thresholds, and the spec's locked default of 2.0s.
+  - `clipfarm/ingest.py` — orchestrator. Walks the folder, pairs `.mov` + `<stem>.whisper.json`, validates the sidecar via `WhisperTranscript`, rejects `__`-named files with a sanitized-rename suggestion, probes fps/duration, segments words into clips, mutates `state` in place. Returns `IngestResult` summary. **Re-ingest semantics:** new source → add+segment; existing source with transcript newly available → upgrade+segment; otherwise → skip. Sources whose files disappeared aren't auto-removed (integrity check handles them). `duration` policy: prefer sidecar value when present, fall back to ffprobe.
+  - `clipfarm/routes/ingest.py` — `POST /api/ingest` with `{folder: <absolute path>}`. 400 on relative or missing path, 409 when `writes_frozen`, 200 with `IngestResult` JSON on success. Persists via `commit_state_to_disk(app)` only when something actually changed.
+
+- **Frontend (`web/src/pages/Library.tsx`):** absolute-path text input + Ingest button. Result summary shows added/updated/skipped/rejected/clip counts, with collapsible rejection + warning details. Source list below: filename (mono), duration, fps, clip count, transcript status (`ok` / `footage-only`), `unavailable` indicator on missing files. Path-picker UX limitation captured: HTML's `<input type="file" webkitdirectory>` can't surface absolute filesystem paths from the browser sandbox, so a text input is the v0 affordance. An Electron-style native picker can land later.
+
+- **Tests added (75 passing total — was 33 in Phase 1):**
+  - `tests/test_ffprobe.py` (9): canned-subprocess tests for clean run, fractional fps, `0/0` fps, missing duration, exit nonzero, binary missing, malformed JSON, `OSError`. Plus a real-file smoke test against `btc.0.4.mov` (skipped if not present).
+  - `tests/test_segmentation.py` (11): empty/single/contiguous inputs, above-/exact-/below-threshold gaps, multi-segment, custom thresholds, negative threshold raises, zero threshold splits every word, default-threshold-locked assertion.
+  - `tests/test_whisper_validation.py` (6): real `btc.0.4.whisper.json` validates and carries leading-space word convention; minimal valid payload; missing `segments` defaults to `[]`; missing `start` raises; missing `word` field raises; unknown top-level key dropped silently at model boundary.
+  - `tests/test_ingest.py` (11): happy path (2 pairs → 4 clips); transcript-less → footage-only; `__` rejection with sanitized rename; `schema_version=2` rejected, batch continues; malformed JSON sidecar rejected, source still added as footage-only; re-ingest idempotent; transcript-appearing-later upgrades source; filenames with spaces and special chars round-trip (`cuddlingchai content.mov`, `is my face crooked??.mov`, `more test videos <3.mov`); `__` in directory path is fine (only filename stem is constrained); dotted stem (`btc.0.4`) handled correctly; not-a-directory raises.
+  - `tests/test_routes_ingest.py` (5): happy path through `TestClient` (lifespan runs), relative path → 400, missing folder → 400, freeze → 409, re-ingest through route is idempotent.
+  - `tests/test_models_round_trip.py` (6): the kickoff-cleanup test mentioned above.
+
+**Manual verification run (all green):**
+
+Live ingest against the real dogfood folder (`05.19.26/`):
+
+- `POST /api/ingest {"folder": "...05.19.26"}` → **200, 18 sources_added, 157 clips_detected, 0 rejected, ~1.3s total**.
+- `btc.0.4.mov`: source_id `"4"`, **fps 30.0, duration 2059.84s (~34 min), 91 clips detected**. First clip starts at 4.37s (`"She makes me smile all the time..."`). This is the empirical clip-count baseline for `btc.0.4` — regressions on the segmentation should be visible against `91`.
+- Special-char filenames (`is my face crooked??.mov`, `more test videos <3.mov`) ingested cleanly and round-trip through `clipfarm.json` without escaping issues.
+- **Re-ingest idempotency:** second `POST /api/ingest` on the same folder returns `sources_added=[]`, all 18 in `sources_skipped`, `clips_detected=0`.
+- **`__` rejection:** synthetic `/tmp/clipfarm_p2_synth/bad__file.mov` rejected with `sanitized_rename: "bad_file.mov"`; the rest of the batch (`good.mov`, `from_future.mov`) still ingested.
+- **`schema_version=2` rejection:** synthetic `from_future.whisper.json` rejected with a clear message pointing at `transcribe.py`. The corresponding `from_future.mov` was still added as a footage-only source rather than disappearing.
+
+**Benchmark:** `load_state()` over the full ingested state (18 sources, 157 clips, 88,413-byte `clipfarm.json`): **2.63 ms average over 10 runs** (warm). For the spec's scale concern (a single 30-min recording produces ~350 clips; the 05.19.26 folder hits ~6k clips at full transcription), linear extrapolation puts load time at ~100ms for 6k clips — comfortably within "snappy on startup" budget. **SQLite migration not urgent at the dogfood scale.** Worth re-measuring after one full week of real use.
+
+**Assumptions made + deviations from the original plan:**
+
+- **`duration` policy decided.** Sidecar's `duration` (from `transcribe.py`) wins when present; falls back to `ffprobe` duration; otherwise `None`. The deferred question from the Phase 1 review is now answered explicitly in code + spec-aligned. btc.0.4 stored as `2059.84s` — the sidecar value, not ffprobe's.
+- **Sidecar problems don't kill the source.** A malformed or wrong-schema-version sidecar adds the source to `rejected` but ALSO registers the `.mov` as a footage-only source. Rationale: the user almost always wants to keep the source entry and re-run `transcribe.py` later. Losing the source on a sidecar problem would be surprising.
+- **Acceptable video extensions widened to `{.mov, .mp4, .m4v, .mkv}`.** The spec calls out `.mov` for the dogfood folder but doesn't constrain the set. Phase 2 tolerates the common siblings — only `.mov` exists in `05.19.26/`, so no behavior change in practice, but the next folder Lillian drops might not be `.mov`-pure.
+- **Source ID format locked.** Monotonic string integers (`"1"`, `"2"`, ...). Adequate for the scale; if we ever need UUIDs, that's a migration.
+- **Clip-ID encoded form uses `HH-MM-SS.mmm` (hyphens, not colons).** Dashes are filesystem-safe; colons make some tools unhappy. The ID is opaque after creation either way, but the encoded form needs to round-trip through JSON keys + URL slugs eventually.
+- **Frontend's path input is a text field, not a folder picker.** Browser sandbox can't supply absolute paths from `<input type=file>`. Documented as a known v0 constraint; an Electron wrapper or a native picker addon can land later. Not blocking for dogfood.
+- **`test_routes_ingest.py` uses `TestClient` not `httpx.AsyncClient`.** Tried `ASGITransport` first — lifespan doesn't run with it, so `app.state.writes_frozen` was undefined. `TestClient` runs lifespan correctly. The async-ness of routes is still tested via `pytest-asyncio` for the lower-level store/save pieces.
+
+**Open follow-ups for the reviewer to evaluate:**
+
+1. **`_log_unknown_keys` dict-of-model heuristic** (deferred from Phase 1 review #5) is still in place. Phase 2 didn't add nested-shape models that would stress it (WhisperTranscript is consumed at the model boundary in ingest, not loaded through `load_state`). Worth doing before Phase 5 ships the `Script` model.
+2. **Per-clip transcript text quality.** v0 strips leading/trailing whitespace on the assembled clip text. Faster_whisper's leading-space convention means we lose the leading word's space — that's intentional for display but worth flagging if Phase 3's transcript browser needs the raw form. The full transcript stays in `<stem>.whisper.json` and the by-source view (Phase 3) reads from there directly, so this is cosmetic on the clip card, not lossy.
+3. **No clip-overlap invariant tested.** Adjacent segmentation ranges don't overlap by construction (each word belongs to exactly one range), but there's no explicit test asserting that across the full 05.19.26 ingest. Worth adding in Phase 3 or as part of Phase 4's boundary-correction tests.
+
+**Files touched in Phase 2:**
+
+```
+NEW:
+  clipfarm/ffprobe.py
+  clipfarm/segmentation.py
+  clipfarm/ingest.py
+  clipfarm/routes/ingest.py
+  clipfarm/routes/deps.py
+  tests/test_ffprobe.py
+  tests/test_segmentation.py
+  tests/test_whisper_validation.py
+  tests/test_ingest.py
+  tests/test_routes_ingest.py
+  tests/test_models_round_trip.py
+
+MODIFIED (kickoff cleanups):
+  clipfarm/app.py       — imports from deps.py; removed inline get_state and commit helpers; route inclusion adds ingest
+  clipfarm/store.py     — removed dead WATCHDOG_DEBOUNCE_MS; documented integrity-check assumption
+  clipfarm/routes/state.py  — uses deps.get_state; test/touch gated by CLIPFARM_TEST_ROUTES env var
+  web/src/pages/Library.tsx  — first real implementation (was placeholder)
+  web/dist/...          — rebuilt
+```
+
+---
+
 ## Phase 1.1 — Race fix + atomic snapshot-then-save
 
-**Verified by Lillian:** ⏳ pending — folded in alongside Phase 1 verification.
+**Verified by Lillian:** ✅ 2026-05-25 (folded in alongside Phase 1).
 
 **Two fixes from the reviewer's pass on Phase 1:**
 
@@ -36,7 +120,7 @@ tests/test_store.py   — six new tests
 
 ## Phase 1 — FastAPI backend + frontend skeleton + JSON schema + safety scaffolding
 
-**Verified by Lillian:** ⏳ pending
+**Verified by Lillian:** ✅ 2026-05-25
 
 **Built (2026-05-25):**
 
@@ -114,7 +198,7 @@ web/src/pages/{Library,Project,Brief,Settings}.tsx
 
 ## Phase 0 — Environment setup
 
-**Verified by Lillian:** ⏳ pending (low-stakes; commands were `brew install ollama ffmpeg uv && brew services start ollama && ollama pull llama3.1:8b`).
+**Verified by Lillian:** ✅ 2026-05-25 (low-stakes; commands were `brew install ollama ffmpeg uv && brew services start ollama && ollama pull llama3.1:8b`).
 
 **Done (2026-05-25):**
 

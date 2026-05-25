@@ -16,95 +16,131 @@ Phase numbering matches the spec's build order (steps 0–11).
 
 ---
 
-## Phase 1 — FastAPI backend + frontend skeleton + JSON schema + safety scaffolding
+## Phase 1 — Verified ✅ 2026-05-25
 
-> **⚠️ Spec + plan revised mid-Phase-1 (2026-05-25).** Re-read this whole entry, the spec's "Decisions locked" section, and CLAUDE.md's "Data model invariants" before resuming. Key changes since the original plan: single `load_state()` entry; `asyncio.Lock` around saves; snapshot filename gets ms + hash; `extra="ignore"` not `extra="forbid"` (log+strip on load); explicit `app.state`+DI, no module globals; concrete `curl`-based verification; stubbed `ClipProjectTag` uniqueness validator. Spec also gained four product fields (`continuity_score`, `premade_bucket`, `internal_pause_max_sec`, expanded `Attempt`/`AttemptClip`) and a `WhisperTranscript` model that Phase 2 will use — the Phase 1 models should already declare them.
-
-**Goal.** A booting end-to-end stack: FastAPI on `localhost:8765` serving a React SPA, with all Pydantic models in place for the full data model, atomic JSON load/save, snapshot helper, watchdog file watcher, migrations runner, and source-file integrity check. No features yet — just the foundation everything else lands on.
-
-**Verification at the end of this phase (concrete, no UI dependency):**
-- `uv run uvicorn clipfarm.app:app --reload --port 8765` starts cleanly.
-- `http://localhost:8765/` returns the React shell with empty routed pages (Library, Project, Brief editor, Settings) visible and navigable.
-- `curl localhost:8765/api/state` returns the current `clipfarm.json` shape (or a synthesized empty default if the file doesn't exist).
-- **External-edit reload check**: `curl /api/state` → hand-edit `clipfarm.json` (e.g. add a project) → wait ~500ms → `curl /api/state` again → second response reflects the edit. No UI inspection needed.
-- **Unknown-key tolerance check**: hand-add `"_lillian_note": "hi"` to the top level → reload → server logs a warning naming the dropped key → next save round-trips without the key. No load error.
-- **Concurrent-save serialization check**: hit a write endpoint (a tiny test-only `POST /api/test/touch` that bumps a timestamp is fine) twice concurrently → both saves complete, final file is valid, no half-written state, no missed write.
-- `pytest` passes (initial tests cover atomic-save under the lock, snapshot helper + filename uniqueness under ms-resolution collision, migration runner, source-integrity check, log-and-strip behavior on unknown keys).
-
-### Scope
-
-**Backend (`clipfarm/` package):**
-
-- `clipfarm/app.py` — FastAPI entry. Static files mount for the built React SPA. SPA-catch-all route for client-side routing. Single `/api/state` GET endpoint for now (returns the loaded `clipfarm.json` shape). Startup hook loads JSON, runs migrations if needed, runs source integrity check, starts watchdog, **installs the state container and the watchdog observer onto `app.state` (NOT module-level globals)**. Shutdown hook stops watchdog. A `get_state()` dependency provider reads `app.state.clipfarm` and is used by every route — no route ever calls `load_state()` directly after startup.
-- `clipfarm/models.py` — Pydantic models for every entity in the data model. All models inherit `StrictModel` configured with **`extra="ignore"`** (the load_state diff-and-log pass surfaces dropped keys). Includes:
-  - `Source`, `Clip`, `Project`, `ProjectTag`, `ClipProjectTag`, `Attempt`, `AttemptClip`, `VoiceAnnotation`, and the top-level `ClipFarmState` container.
-  - **New product fields** (spec-revised): `Attempt.continuity_score: Optional[float]`, `Attempt.premade_bucket: Optional[Literal["best", "diagnostic"]]`, `Attempt.needs_review: bool`, `AttemptClip.internal_pause_max_sec: Optional[float]`.
-  - `WhisperTranscript` model that pins the sidecar schema (`schema_version: int`, `segments[*].words[*]`) — declared in Phase 1 but only *used* by Phase 2 ingest. Lives here so the shape is defined before ingest reaches for it.
-  - Categories as a `Literal["on-script", "related-but-different", "standalone-idea", "off-topic", "fragment"]`.
-  - Tag kinds as `Literal["section", "line"]`.
-  - `tracks: Optional[TracksOverride] = None` reserved per spec — `TracksOverride` defined but unused in v0 writers.
-  - **Stubbed root_validator on `ClipFarmState`** for `ClipProjectTag` uniqueness on `(clip_id, project_id, project_tag_id, category)`. Empty/pass-through in Phase 1 (no tags exist yet); activated in Phase 6 when tags get written. Stub exists so the activation in P6 is one-line.
-- `clipfarm/store.py` — JSON I/O, **single entry point for all `clipfarm.json` access**. Exports `load_state()` (read → run migrations → log+drop unknown keys → validate → return `ClipFarmState`) and `save_state(state)` (validate → serialize → atomic write under an `asyncio.Lock`). Nothing else opens the file. Pre-write snapshot helper `snapshot_before_destructive(reason: str)` runs inside the same lock as the save it precedes; copies the current file to `.clipfarm/snapshots/<ISO-timestamp>-<ms>-<hash4>__<reason>.json` and prunes to last 50. `<hash4>` is a 4-char hash of the file contents — defends against same-ms collisions in tests. Source integrity check sets `unavailable` on missing source files. `WATCHDOG_DEBOUNCE_MS = 200` to coalesce rapid filesystem events.
-- `clipfarm/watcher.py` — `watchdog` observer wrapping a callback. Tracks the last successfully-written file hash; ignores self-writes by comparison. **Conflict detection**: if in-memory state has unsaved changes when an external write lands, the watcher (a) emits a conflict event onto an in-process channel for the UI (Phase 2 reads this), (b) sets `app.state.writes_frozen = True` so `save_state()` refuses to write until the user resolves. Phase 1 just *logs* the freeze + conflict; the modal is Phase 2.
-- `clipfarm/migrations/__init__.py` — version constant `CURRENT_VERSION = 1` and the migration runner. Runner imports migration functions, runs them in version order, returns the migrated dict. Called from `load_state()`, not from routes.
-- `clipfarm/migrations/v1_to_v2.py` — placeholder function `def migrate(d: dict) -> dict: return d`. Stays empty until we actually bump.
-- `clipfarm/routes/state.py` — `GET /api/state` returns the current `ClipFarmState` as JSON via the `get_state` dependency. Future phases add more routes here.
-- `pyproject.toml` — uv-managed Python project. Deps: `fastapi`, `uvicorn[standard]`, `pydantic>=2`, `watchdog`, `pytest`, `pytest-asyncio`, `httpx` (for test client). Phase 6+ deps (`ollama`, `sentence-transformers`, `rapidfuzz`) deferred — don't install yet.
-
-**Frontend (`web/`):**
-
-- Vite + React + Tailwind scaffold.
-- React Router with four empty pages: `/library`, `/project`, `/brief`, `/settings`. Each renders a placeholder `<h1>` + a sentence saying the page is not yet implemented.
-- A simple top nav with the four links + the app name.
-- `npm run build` outputs to `web/dist/`. FastAPI mounts that path as static files.
-- Dev workflow: `vite dev` proxies `/api/*` to `localhost:8765` so the React dev server can hot-reload while talking to the Python backend.
-
-**Tests (`tests/`):**
-
-- `test_store.py` — atomic save creates the file; round-trip serializes/deserializes through Pydantic; snapshot helper writes to `.clipfarm/snapshots/`; pruning keeps last 50; **two snapshots taken in the same millisecond produce distinct filenames** (hash suffix does its job); **two concurrent `await save_state(...)` calls both complete with a valid final file** (lock serializes them).
-- `test_load_unknown_keys.py` — `clipfarm.json` with an extra `"_lillian_note": "..."` field at top level and inside a nested model loads without raising; warnings are emitted (caplog); the round-tripped state does not contain the unknown keys.
-- `test_migrations.py` — runner with no migrations is a no-op; runner with one migration bumps version; refuses to downgrade.
-- `test_source_integrity.py` — missing source file flips `unavailable: true`; restoring file flips it back.
-- `test_conflict_freeze.py` — simulate an external write while in-memory is dirty → `app.state.writes_frozen` becomes `True` → subsequent `save_state()` raises (or returns a documented sentinel) instead of overwriting.
-
-**Repo plumbing:**
-
-- `.gitignore` — `.DS_Store`, `clipfarm.json`, `.clipfarm/`, `web/node_modules/`, `web/dist/`, `__pycache__/`, `.venv/`, `*.pyc`, `.python-version` (decide). Run `git rm --cached .DS_Store` once to stop tracking the existing one.
-- `README.md` — one-paragraph project description + how to run dev mode locally.
-- Phase 0 deliverables: ollama installed, llama3.1:8b pulled, ffmpeg installed (with `ffprobe`, which comes bundled), uv installed. Phase 0 is verified by `ollama list | grep llama3.1`, `ffmpeg -version`, and `ffprobe -version`.
-
-### Open questions / assumptions
-
-- **`clipfarm.json` location.** Assumption: it lives at the repo root (`/Users/lillianduarte/Desktop/clipfarm/clipfarm.json`). Spec says "single `clipfarm.json` at the project root" — confirmed.
-- **Default `clipfarm.json` on first launch.** Assumption: if no file exists at startup, the app boots with an in-memory empty state but does NOT write the file until the first ingest or other write. This matches the spec's "drop zone on first launch" intent — the file's existence signals "real state exists."
-- **Snapshot filename format.** Locked: `.clipfarm/snapshots/<YYYY-MM-DDTHH-MM-SS>-<mmm>-<hash4>__<reason>.json` (e.g. `2026-05-25T18-30-45-812-a3f2__split-clip.json`). Colons are filesystem-hostile; ms + hash defend against same-second + same-ms collisions; reason is a short kebab-case label.
-- **Watchdog self-write filtering.** Locked: track the last successfully-written file hash in `app.state`; when watchdog fires, read + hash + compare. Match = self-write, ignore. Mismatch = external edit. If in-memory state is dirty: freeze writes + emit conflict event + log. If clean: reload silently.
-- **Conflict UX surface.** Locked: Phase 1 detects, freezes writes, logs, and exposes the conflict event on a channel. The UI modal lands in Phase 2 along with the first user-facing routes.
-- **Save concurrency.** Locked: an `asyncio.Lock` lives on `app.state.save_lock`; `save_state()` and `snapshot_before_destructive()` both acquire it. Pre-write snapshot + write happen inside one critical section.
-- **Models config.** Locked: `extra="ignore"` everywhere; the loader does the diff-and-log pass. See spec → "Unknown-key tolerance."
-
-### Out of scope for Phase 1 (explicit)
-
-- Folder picker / ingest UI (Phase 2).
-- Any LLM calls (Phase 6+).
-- Any video preview or FFmpeg work (Phase 9, 11).
-- Real page content beyond placeholder shells.
-- The conflict-resolution UI modal (Phase 2 — Phase 1 just freezes + logs).
-- Activating the `ClipProjectTag` uniqueness validator (Phase 6 — Phase 1 just stubs it).
+See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 1 + Phase 1.1.
 
 ---
 
 ## Phase 2 — Ingest pipeline
 
-*To be planned before execution.*
+**Goal.** Point the app at a folder of `.mov` files (with their `.whisper.json` sidecars), have it produce `sources` + `clips` entries in `clipfarm.json`. After Phase 2, the Library page shows the ingested footage with clip counts; the raw-transcript browser comes in Phase 3.
 
-**Advance notes** (carry into the plan when written):
-- Use the `WhisperTranscript` Pydantic model defined in Phase 1 to validate every sidecar at load. Refuse with a clear error if `schema_version != 1`.
-- Probe `fps` and `duration_sec` via `ffprobe` (spawn as subprocess) for every source at ingest. On probe failure, log + record `fps=None` and continue.
-- Reject source filenames containing `__` at ingest with a clear error; offer a sanitized-rename action ("`my__file.mov` → `my_file.mov`?"). See spec → "Source filename constraint."
-- Transcript-less `.mov` ingest is supported (Source with `transcript_path=None`, no auto-detected clips). See spec → "Transcript-less sources are still ingestable."
-- **Benchmark hook**: after ingesting the full `05.19.26/mp4/` folder once, time `load_state()` end-to-end (read + migrate + validate). Write the number to `COMPLETED_PHASES.md`. Cheapest empirical data on whether SQLite migration timing is "now" or "later."
-- **Filename edge cases observed in the sample folder**: spaces (`cuddlingchai content.mov`), special chars (`is my face crooked??.mov`, `more test videos <3.mov`). All paths must survive shell-escape and JSON round-trip cleanly. Test with these names, not just clean ones.
+**Verification at the end of this phase (concrete, no manual UI inspection needed):**
+
+- `uv run pytest` passes (target ~40+ tests; Phase 1's 27 + Phase 2 additions).
+- `curl -X POST localhost:8765/api/ingest -H 'content-type: application/json' -d '{"folder":"/Users/lillianduarte/Desktop/AdAstra/2ndMind/Creation/PlanetLillian/Video/Scripts/mp4files/05.19.26"}'` returns `{"sources_added": N, "clips_detected": M, "rejected": [], "warnings": [...]}` and `clipfarm.json` now contains those sources + clips with the right shape.
+- After ingest: `curl localhost:8765/api/state | jq '.sources | length, [.clips | to_entries[] | .value.source_id] | unique | length'` shows the right counts.
+- Specifically for `btc.0.4.mov` (the dogfood video): a known number of clips show up (we record the empirical count in `COMPLETED_PHASES.md` after first ingest so regressions are visible).
+- **Filename edge-case check**: every `.mov` from `05.19.26/` (including `cuddlingchai content.mov`, `is my face crooked??.mov`, `more test videos <3.mov`) successfully ingests — their `Source.path` round-trips through `clipfarm.json` and the file is still resolvable on re-load (`unavailable: false` after the integrity check).
+- **`__`-filename rejection**: a renamed `bad__file.mov` (created by hand for the test) gets refused with a clear error message; the rest of the folder still ingests; the rejected entry appears in the response under `rejected`.
+- **Schema-version refusal**: a sidecar with `schema_version: 2` causes the corresponding source to land in `rejected` with a message pointing at `transcribe.py`. The rest of the folder still ingests.
+- **Re-ingest idempotency**: running the ingest twice against the same folder is a no-op the second time (no duplicate sources, no double-counted clips).
+- **Benchmark line written**: after the first full ingest of `05.19.26/`, the time for `load_state()` end-to-end (read → migrate → validate → integrity-check) is captured and written into the Phase 2 entry of `COMPLETED_PHASES.md`. This is the empirical data point for "when does SQLite need to come?"
+
+### Scope
+
+**Backend cleanups (Phase 2 kickoff — folding in the Phase 1 review punch-list):**
+
+These are small and benefit Phase 2's new code, so they ride along on this phase rather than spinning a separate 1.2 pass.
+
+- New `clipfarm/routes/deps.py` holding `get_state(request)`, `commit_state_to_disk(app)`, and `commit_state_with_snapshot(app, reason)`. Routes (`state.py`, the new `ingest.py`, future ones) import from here. Removes the duplicate `_get_state` in `routes/state.py`. (Punch-list #3.)
+- Remove the dead `WATCHDOG_DEBOUNCE_MS = 200` constant from `store.py` + `__all__`. (Punch-list #4.)
+- Gate `POST /api/test/touch` behind `os.environ.get("CLIPFARM_TEST_ROUTES") == "1"`. The Phase 1 verification flow used it; future phases shouldn't expose it by default. (Punch-list #6.)
+- Add a one-line comment in `run_source_integrity_check` documenting the `validate_assignment=False` assumption. (Punch-list #7.)
+- New `tests/test_models_round_trip.py`: round-trip defaults for `Attempt`, `AttemptClip`, `Clip` — assert `continuity_score`, `premade_bucket`, `internal_pause_max_sec`, `tracks` all serialize as `null` by default, never an empty dict / missing field. Locks the spec invariant "v0 writers leave `tracks` null." (Punch-list #8.)
+
+**Backend (`clipfarm/` package — new for Phase 2):**
+
+- `clipfarm/ffprobe.py` — thin subprocess wrapper.
+  - `probe_video(path: Path) -> dict` returns `{"fps": float|None, "duration_sec": float|None}`. On any subprocess failure (FFmpeg missing, file unreadable, malformed metadata) returns both fields as `None` and logs a warning naming the file.
+  - Uses `ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate,duration -of json <path>`. Parses `r_frame_rate` (often `"60/1"` or `"30000/1001"` → divide), and `duration` as a float.
+  - Pure-Python parsing of the JSON output; no third-party dependency. Tests can patch subprocess.
+
+- `clipfarm/segmentation.py` — pure function.
+  - `segment_words_by_silence(words: list[WhisperWord], gap_threshold: float = 2.0) -> list[tuple[float, float]]` returns `(start_sec, end_sec)` ranges. A "silence gap" is `current_word.start - previous_word.end >= gap_threshold`. Each contiguous run becomes one range, bounded by the first word's `start` and the last word's `end`.
+  - Pure function: no I/O, no state. Tests cover edge cases (empty list, single word, all-one-segment, contiguous-but-just-under-threshold, etc.).
+  - Returns ranges, not Clip objects — keeps the segmentation logic decoupled from the model construction (the orchestrator builds `Clip`s).
+
+- `clipfarm/ingest.py` — orchestrator.
+  - `IngestRequest = TypedDict-ish` (or Pydantic) with `folder: Path`. (Future ideas: glob patterns, recursive flag.)
+  - `IngestResult` Pydantic model:
+    ```python
+    class IngestResult(StrictModel):
+        sources_added: list[str]      # filename
+        sources_skipped: list[str]    # already-ingested
+        sources_updated: list[str]    # transcript newly available
+        rejected: list[IngestRejection]
+        warnings: list[str]
+        clips_detected: int
+    class IngestRejection(StrictModel):
+        filename: str
+        reason: str                   # "filename-contains-__" | "schema-version-mismatch" | "transcript-malformed"
+        sanitized_rename: Optional[str]
+    ```
+  - `ingest_folder(state: ClipFarmState, folder: Path) -> IngestResult` is the pure orchestration: walks the folder for `*.mov`, pairs each with its sibling `<stem>.whisper.json`, validates the sidecar through `WhisperTranscript`, rejects filenames containing `__`, probes fps/duration via `ffprobe`, segments transcripts into clips, and mutates `state` in-place. Returns the result summary.
+  - **Re-ingest semantics:**
+    - If `state.sources` already contains a source with this `path`, and it had `transcript_path is None`, and a transcript now exists → segment now, add the resulting clips. Mark `sources_updated`.
+    - If it had a transcript already → skip entirely (no re-segment). Mark `sources_skipped`.
+    - If brand new → add Source + segment + clips. Mark `sources_added`.
+    - Sources whose files no longer exist in the folder are NOT removed (handled by the integrity check on load).
+  - **Source-ID generation:** spec example uses string keys ("1", "2", ...). Use monotonically-increasing string integers starting from `max(existing_ids) + 1`. Phase 2 doesn't need UUIDs — keys are opaque.
+  - **Clip-ID generation:** per the spec, `{source_stem}__{start_hms}__{end_hms}` where HMS is `HH-MM-SS.mmm`. The encoded form is for human readability at creation time; the ID is opaque afterward.
+  - **`__` rejection:** a `.mov` whose **filename stem** (without extension) contains `__` is rejected with `sanitized_rename` proposing the stem with `__` → `_`. The rest of the batch still ingests. No auto-rename on disk — the user fixes it and re-runs.
+  - **Whisper `duration` policy** (resolving the deferred question from the Phase 1 review): if the sidecar has `duration` set, use it; if missing, fall back to `ffprobe`'s `duration_sec`. If both are missing/None, log a warning, store `Source.duration_sec = None`, and continue. The decision is: don't fail loudly on a missing `duration` since `ffprobe` is the more authoritative source anyway — but always prefer the sidecar's value when present, so `transcribe.py`'s timing window matches what ClipFarm displays.
+
+- `clipfarm/routes/ingest.py` — `POST /api/ingest`.
+  - Body: `{"folder": "/absolute/path"}`.
+  - Resolves the folder path, refuses if not absolute or not a directory (400 with a clear message).
+  - Calls `ingest_folder(state, folder)`.
+  - Persists via `commit_state_to_disk(app)` (the existing locked-save path).
+  - Returns the `IngestResult` as JSON.
+  - 409 if `app.state.writes_frozen` is set (defer to the existing freeze surface).
+
+**Frontend (`web/`):**
+
+- Library page (`web/src/pages/Library.tsx`) gets a real first version:
+  - Text input for "absolute folder path" + "Ingest" button.
+  - On submit, POSTs to `/api/ingest`, shows result summary (added/updated/skipped/rejected counts).
+  - Lists existing sources from `/api/state` below the form: filename, fps, duration, clip count, `unavailable` indicator. Sortable by recording date later — for now, original insertion order.
+  - No raw-transcript browser (Phase 3) — clicking a source does nothing yet.
+  - Path-pick UX limitation noted in COMPLETED_PHASES.md: HTML's `<input type="file" webkitdirectory>` can't surface absolute filesystem paths from the browser sandbox, so a text input is the v0 choice. Phase 2.5+ could add a native Electron-style folder picker; not blocking.
+- All other pages stay placeholders.
+
+**Tests:**
+
+- `tests/test_segmentation.py` — pure-function tests for `segment_words_by_silence`. Cover: empty input, single word, two words with sub-threshold gap (one range), two words above threshold (two ranges), boundary case (exactly `gap_threshold`), longer chain.
+- `tests/test_ffprobe.py` — patches `subprocess.run` to return canned JSON. Covers: valid 60fps mov, 30000/1001 fractional fps, missing duration, ffprobe exit-nonzero, ffprobe binary missing.
+- `tests/test_whisper_validation.py` — loads one real `.whisper.json` from `05.19.26/` and validates through `WhisperTranscript`. Plus a synthetic sidecar with `schema_version: 2` raises. Plus a malformed sidecar (missing `segments`) raises a Pydantic `ValidationError`.
+- `tests/test_ingest.py` — uses a `tmp_path` folder with synthetic `.mov`s + sidecars (binary fixture mov files: zero-byte placeholders are fine, `ffprobe` will fail and we'll get `fps=None`/`duration_sec=None` which is the documented fallback). Covers:
+  - Happy path: 2 paired mov+sidecar files ingest into 2 sources + N clips.
+  - Transcript-less mov: ingests as Source with `transcript_path=None` and zero clips.
+  - `__`-named mov: ends up in `rejected` with a sanitized-rename suggestion, rest of batch still works.
+  - `schema_version: 2` sidecar: source goes to `rejected`, rest still works.
+  - Re-ingest: second run is a no-op (counts unchanged).
+  - Transcript-available-now (was None before): second run upgrades the source.
+  - Filenames with spaces and special chars (synthesize names like `weird !? <3.mov`): round-trip through `clipfarm.json` cleanly.
+- `tests/test_models_round_trip.py` — punch-list #8 cleanup; covered above.
+- `tests/test_routes_ingest.py` — uses `httpx.AsyncClient` against the FastAPI app: 400 on relative path, 400 on missing folder, 200 with a real (synthetic) folder. Plus a 409-when-frozen case.
+
+### Open questions / assumptions
+
+- **Folder path UX.** Locked: absolute-path text input on the Library page. Browser sandbox makes a real OS folder picker tricky for v0; a personal localhost tool can accept typed paths. Future ideas can add an Electron-style picker.
+- **Re-ingest is conservative.** Locked: never re-segments an already-segmented source. The user can delete clips manually (Phase 4) and re-ingest if they really want a fresh run. Avoids losing manual boundary corrections.
+- **Source ID format.** Locked: monotonic string integers ("1", "2", ...). Phase 2 doesn't need UUIDs; if we ever need them, that's a migration.
+- **`duration` source-of-truth.** Locked: sidecar `duration` preferred, falls back to ffprobe, may be `None`.
+- **`__` rejection is at the filename stem level.** A path like `/Users/foo__bar/my.mov` doesn't trip the check — only the filename matters. Directory components can contain whatever.
+- **Frame-rate parsing.** `ffprobe`'s `r_frame_rate` can be `"60/1"`, `"30000/1001"`, or numeric. Always parse as a fraction (split on `/`, divide). Store as float.
+
+### Out of scope for Phase 2 (explicit)
+
+- The raw-transcript browser UI (Phase 3).
+- Boundary correction operations (Phase 4).
+- Project creation (Phase 5).
+- LLM tagging (Phase 6).
+- The conflict-resolution modal (Phase 2's `POST /api/ingest` returns 409 if frozen; the modal lands later — for now, the user resolves by manually fixing the file).
+- Drag-and-drop folder picker UI — text input is the v0 affordance.
+- Re-segmenting an already-segmented source on re-ingest (user-driven workflow, Phase 4+).
 
 ## Phase 3 — Library page (raw transcript browser)
 
