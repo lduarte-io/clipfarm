@@ -51,7 +51,6 @@ log = logging.getLogger("clipfarm.store")
 DEFAULT_STATE_FILENAME = "clipfarm.json"
 SNAPSHOT_DIR = ".clipfarm/snapshots"
 SNAPSHOT_LIMIT = 50
-WATCHDOG_DEBOUNCE_MS = 200
 
 # Filesystem-safe label for snapshot reasons. Spaces / weird chars → hyphens.
 _SAFE_LABEL_RE = re.compile(r"[^a-zA-Z0-9._-]+")
@@ -207,6 +206,12 @@ def run_source_integrity_check(state: ClipFarmState) -> ClipFarmState:
     Run on every load and (in a future phase) on every Library refresh. Tags
     and attempt references stay intact — only playback is gated on a source
     being available.
+
+    Mutates `source.unavailable` in place. We deliberately bypass Pydantic's
+    `validate_assignment` (which is off — default) here; if it were on, every
+    flip would re-run the model validator, which is unnecessary for this
+    derived flag. If `validate_assignment=True` ever gets switched on,
+    revisit this to avoid the redundant per-source validation pass.
     """
     for source in state.sources.values():
         try:
@@ -363,7 +368,6 @@ __all__ = [
     "DEFAULT_STATE_FILENAME",
     "SNAPSHOT_DIR",
     "SNAPSHOT_LIMIT",
-    "WATCHDOG_DEBOUNCE_MS",
     "WritesFrozenError",
     "atomic_write",
     "hash_bytes_short",

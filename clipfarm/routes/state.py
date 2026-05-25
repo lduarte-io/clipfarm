@@ -1,28 +1,24 @@
 """GET /api/state — return the current in-memory `ClipFarmState` as JSON.
 
-Also exposes `POST /api/test/touch` for the Phase 1 concurrent-save
-verification listed in `PHASES.md`. Removable after Phase 2 stabilizes —
-flagged with a `[test]` tag so it's obvious in `/docs`.
+Also conditionally exposes `POST /api/test/touch` for the Phase 1
+concurrent-save verification. Gated behind `CLIPFARM_TEST_ROUTES=1` so it
+doesn't sit in the openapi docs for normal use.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from clipfarm.models import ClipFarmState
+from clipfarm.routes.deps import commit_state_to_disk, get_state
 
 router = APIRouter(prefix="/api", tags=["state"])
 
 
-def _get_state(request: Request) -> ClipFarmState:
-    # Local proxy for `clipfarm.app.get_state` — avoids the import cycle
-    # (`app.py` includes this router at import time).
-    return request.app.state.clipfarm  # type: ignore[no-any-return]
-
-
 @router.get("/state", response_model=ClipFarmState)
-def get_state_route(state: ClipFarmState = Depends(_get_state)) -> ClipFarmState:
+def get_state_route(state: ClipFarmState = Depends(get_state)) -> ClipFarmState:
     return state
 
 
@@ -46,29 +42,35 @@ def pending_conflicts(request: Request) -> dict:
     }
 
 
-@router.post("/test/touch", tags=["test"])
-async def test_touch(request: Request) -> dict:
-    """[test] Bump a counter on `app.state` and persist. Used to verify the
-    `asyncio.Lock` serializes concurrent saves under load.
+# --- Test-only route, gated by env var ---------------------------------------
 
-    Implementation note: writes to a dedicated `_touch_counter` field on
-    `app.state` rather than mutating `ClipFarmState` (which would dirty the
-    schema with a test-only key)."""
-    from clipfarm.app import commit_state_to_disk
-    from clipfarm.store import WritesFrozenError
+# Set CLIPFARM_TEST_ROUTES=1 to expose `POST /api/test/touch`. Used by the
+# concurrent-save verification in PHASES.md → Phase 1; not part of the
+# production surface.
 
-    app = request.app
-    if not hasattr(app.state, "_touch_counter"):
-        app.state._touch_counter = 0
-    app.state._touch_counter += 1
-    app.state.dirty = True
+if os.environ.get("CLIPFARM_TEST_ROUTES") == "1":
 
-    try:
-        await commit_state_to_disk(app)
-    except WritesFrozenError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+    @router.post("/test/touch", tags=["test"])
+    async def test_touch(request: Request) -> dict:
+        """[test] Bump a counter on `app.state` and persist. Verifies the
+        `asyncio.Lock` serializes concurrent saves under load.
 
-    return {
-        "counter": app.state._touch_counter,
-        "saved_at": datetime.now(timezone.utc).isoformat(),
-    }
+        Writes to an off-schema `_touch_counter` on `app.state` rather than
+        mutating `ClipFarmState`, so it doesn't dirty the JSON schema."""
+        from clipfarm.store import WritesFrozenError
+
+        app = request.app
+        if not hasattr(app.state, "_touch_counter"):
+            app.state._touch_counter = 0
+        app.state._touch_counter += 1
+        app.state.dirty = True
+
+        try:
+            await commit_state_to_disk(app)
+        except WritesFrozenError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+
+        return {
+            "counter": app.state._touch_counter,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
