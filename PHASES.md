@@ -64,7 +64,70 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 7b.
 
 ---
 
-## Phase 8 — Premade attempts generation (PLANNED — awaiting greenlight)
+## Phase 8 — Verified ✅ 2026-05-26
+
+See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 8.
+
+---
+
+## Phase 8.1 — Long-run progress UI (DRAFT — addresses Phase 6 open follow-up)
+
+**Goal.** Make the tagging and premade-attempt runs visible while they're running. Both ops can take ~30s–5min on Llama 3.1 8B; the current UI is opaque "spinner that might be alive."
+
+This was Phase 6's open follow-up #1 (*"Per-clip-batch progress UI — at 5.5 min for 91 clips, the synchronous spinner is genuinely uncomfortable. Real-world runtime suggests Lillian will hit this discomfort on dogfood."*) Lillian hit it on 2026-05-26.
+
+### Scope
+
+**Pattern**: progress lives on `app.state` as a single global slot per op type (single-user v0 — only one run at a time anyway since both ops hold the save lock). Orchestrators take an optional `progress: Callable[[dict], None]` callback that writes to that slot. New `GET` endpoints return the current value. Frontend polls every 2s while a button is in the run state.
+
+**Backend:**
+
+- **`clipfarm/app.py`** — initialize `app.state.tag_progress = None` and `app.state.premade_progress = None` in lifespan. None = idle; populated dict = running.
+- **`clipfarm/tagging.py`** — `tag_project` gains `progress: Optional[ProgressCallback] = None` param. Calls `progress({"phase": "preflight"})` once before batching; `progress({"phase": "batching", "current_batch": i, "total_batches": N, "elapsed_sec": ...})` per batch start; `progress({"phase": "committing"})` after batches. Orchestrator never crashes from progress callback exceptions (swallow + log).
+- **`clipfarm/premade.py`** — same shape: `progress` callback called at `preflight` → `running_strategies` → `naming` → `persisting`.
+- **`clipfarm/routes/tagging.py`** — wraps progress writes:
+  - Set `app.state.tag_progress = {"project_id": ..., "started_at": now, "phase": "starting", "elapsed_sec": 0}` before `to_thread`.
+  - Pass `progress=lambda info: app.state.tag_progress.update(info) if app.state.tag_progress else None`.
+  - Finally: `app.state.tag_progress = None` (resets to idle).
+- **`clipfarm/routes/premade.py`** — same pattern for `premade_progress`.
+- **New endpoints** (idempotent reads, no lock):
+  - `GET /api/tag/progress` → `{"running": bool, ...info if running}`
+  - `GET /api/premade/progress` → same shape
+  - Both return `{"running": false}` when idle. Cheap, no snapshot side-effect.
+
+**Frontend:**
+
+- **`web/src/pages/Brief.tsx`** — when "Tag clips" is firing:
+  - Poll `/api/tag/progress` every 2 seconds. Render a small progress panel below the button: `"Batch 3 of 10 · elapsed 1m 24s · ETA ~3m 30s"`. ETA = `elapsed * (total - current) / current` (rough).
+  - Phase label maps to friendly text: `preflight` → "Pinging Ollama…", `batching` → batch N/M counter, `committing` → "Saving tags…".
+  - Stop polling on POST resolve.
+- **`web/src/pages/Attempts.tsx`** — when "Generate" / "Regenerate" is firing: poll `/api/premade/progress` every 2s, render a similar panel.
+- **`web/src/pages/Project.tsx`** — same, when its CTA fires.
+
+**Tests (~10 new):**
+
+- `tests/test_tagging.py` — `progress` callback called per batch with correct shape; callback exceptions swallowed.
+- `tests/test_premade.py` — same for premade orchestrator.
+- `tests/test_routes_tagging.py` — `app.state.tag_progress` populated during run; resets to None on completion; resets on exception (try/finally).
+- `tests/test_routes_premade.py` — same.
+- A new `tests/test_routes_progress.py` (~4): both endpoints return `{running: false}` when idle; happy-path running state shape; concurrent reads don't block writes (via ThreadPoolExecutor, same pattern as Phase 6.1).
+
+### Decisions locked
+
+- **Single global progress slot per op type, not per-project.** Single-user v0 only ever has one tag run at a time (save_lock enforces). If Phase 12+ adds multi-user, switch to a `dict[project_id, progress]` then.
+- **Polling, not SSE.** Polling is simpler, the existing event-loop responsiveness guarantee (Phase 6.1 bug #2) makes the GETs cheap. SSE is a Future Idea if dogfood feedback says 2s polling feels laggy.
+- **Progress callback never raises into the orchestrator.** Exceptions are logged and swallowed — progress is observability, not correctness.
+- **Phase labels carry user-facing text in the frontend, not the backend.** Backend emits machine-readable phase keys (`"preflight"`, `"batching"`, `"committing"`); frontend maps them to display strings. Keeps the backend free of UX copy.
+- **No "Cancel" button in 8.1.** Cancelling mid-batch requires job tracking + interrupt-safe orchestrators — real work, not scope here. Add when dogfood says it's needed.
+
+### Out of scope for 8.1 (explicit)
+
+- Job IDs / multi-user concurrency / background-task architecture — Phase 12+ if needed.
+- Cancel button.
+- Per-clip granularity inside a batch — we know batch N of M, not which clip inside batch N.
+- Progress for short ops (ingest, boundary correction). Add only if they ever become slow.
+
+**Verification:** click "Tag clips" → see "Batch 1 of N · elapsed 0:05" within ~5 seconds. Watch the counter advance. Same for "Generate premade attempts."
 
 **Goal.** First write-side phase after Phase 6. Generates the named candidate attempts the spec calls out — five ship-worthy strategies in the Best plausible bucket and three diagnostic groupings in the Diagnostic bucket — by filtering `clip_project_tags` into ordered clip lists, persisting them in `state.attempts` with the appropriate `premade_bucket`, and surfacing them in a new Attempts page (with a compact summary on the Project page). **This is the moment a project goes from "a labeled library" to "candidate videos you can pick from."**
 

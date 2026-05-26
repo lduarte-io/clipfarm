@@ -4,6 +4,94 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 8 — Premade attempts generation
+
+**Verified by Lillian:** ✅ 2026-05-26 (reviewer approval: "ship it"; all 7 plan-review items landed; 3 advisory observations noted below for follow-up).
+
+**Built (2026-05-25 → 2026-05-26):**
+
+First write-side phase after Phase 6. Turns `clip_project_tags` rows into the named candidate attempts the spec calls out. **The moment a project goes from "a labeled library" to "candidate videos you can pick from."**
+
+- **`clipfarm/strategies.py`** — eight pure-function strategies with a shared `_detect_takes` helper.
+  - **Best plausible (5 strategies, `premade_bucket="best"`):** `best_per_line_in_script_order`, `longest_contiguous_take`, `near_one_take` (returns up to 3 SEPARATE attempts per the plan-review fix — each carries continuity ≈ 1.0), `shortest_complete`, `energy_shift` (words-per-second from Whisper timestamps; marked v0 heuristic in code).
+  - **Diagnostic (3 strategies, `premade_bucket="diagnostic"`):** `started_with_line`, `skipped_line`, `ad_libbed`. Each capped at 3 results.
+  - `_detect_takes` parameterized via `tolerated_inside` set: default `{fragment}` for clean-take strategies; `ad_libbed` uses `{fragment, standalone-idea, related-but-different}` so ad-libs land INSIDE takes rather than breaking them. Found mid-implementation when the first `ad_libbed` test failed — original design treated ad-libs as run-breakers, which meant `ad_libbed` could never find takes-with-ad-libs.
+  - **Best-plausible ceiling: 7 attempts** (4 single-result strategies + up to 3 from `near_one_take`). Total ceiling: 16 (7 best + 9 diagnostic).
+- **`clipfarm/continuity.py`** — `compute_continuity_score(state, attempt_clips)` walks the clip list, groups consecutive same-source forward-progressing clips into "runs," returns `max_run_runtime / total_runtime`. Explicit `ValueError` on empty/all-orphan/zero-runtime — defense-in-depth so a stale attempt can't crash the UI's score-bar rendering. Honors `trim_*_offset` even though Phase 8 doesn't populate them (Phase 10's edits don't need to rewrite the formula).
+- **`clipfarm/attempt_naming.py`** — single batched LLM call for N attempts with per-attempt canned fallback. If the LLM fails entirely → all canned. If it returns SOME valid names but is missing or malformed for others → those individual rows fall back to canned. Overall `name_source` flag returned: `"llm"` / `"canned"` / `"mixed"`.
+- **`clipfarm/premade.py`** — orchestrator. Pre-check (project exists, has on-script tags), runs every strategy, dedups across them by clip-list equality (first-by-strategy-order wins), computes continuity, batches into one LLM-naming call, optionally replaces `source="ai-premade"` attempts (hand-built + forks NEVER touched), allocates `_next_attempt_id` (monotonic-string-int matching `_next_source_id` / `_next_project_id`). Returns a `PremadeResult` with `generated_count`, `replaced_count`, `new_attempt_ids`, `naming_source`, `reason`, `mutated`.
+- **`clipfarm/routes/premade.py`** — `POST /api/projects/{id}/premade-attempts`. Response shape includes `attempts: dict[id, Attempt]` so the frontend renders without a follow-up state fetch. **No 502 from this route** (canned-fallback removes the Ollama-required precondition; skipping the ping avoids tying up the save lock on a network roundtrip when we'd succeed anyway). All Phase 6.1 invariants carried forward: `dirty=True` before run, `asyncio.to_thread` wrap, `mutated`-gated commit, snapshot reason `"premade-attempts"`.
+- **Frontend — `web/src/pages/Attempts.tsx` (new)**: two sections (Best plausible + Diagnostic), per-attempt card with name + source badge + continuity bar (green ≥ 0.8 / amber 0.4–0.8 / red < 0.4) + clip count + runtime, side panel with ordered clip list, regenerate confirmation modal with variable-count copy.
+- **Frontend — `web/src/pages/Project.tsx` (touched)**: best-plausible-only compact summary panel above the Take Grid (diagnostic stays on `/attempts` per the exploration-vs-assembly split). "Generate premade attempts" CTA when none exist. Navigates to `/attempts` on success.
+- **`web/src/App.tsx`** — `/attempts` route + new "Attempts" nav item between "Script" and "Brief".
+
+**Tests added (59 new — 381 total passing, up from 322):**
+
+- `tests/test_continuity.py` (9): formula edge cases — single-clip = 1.0, two-consecutive-same-source = 1.0, two-different-sources = max/total = 0.5, backward jump breaks run, three-clip composite, empty raises, zero-runtime raises, orphan handling, trim-offset shrinks runtime.
+- `tests/test_strategies.py` (21): per-strategy isolation tests (3 each for the major strategies, 2 for the simpler ones) + cross-cutting "every strategy returns [] on empty state."
+- `tests/test_attempt_naming.py` (9): empty input, llm-None path, happy LLM call (assert batched-not-sequential), partial success mixing LLM + canned per row, llm-returns-None falls back, malformed response falls back, too-few-names pads with canned, overly-long name truncates with ellipsis, llm-client raises falls back.
+- `tests/test_premade.py` (11): happy path with bucket separation, canned vs LLM naming sources, replace-existing keeps hand-built/forks, replace_existing=False appends, unknown project + no-on-script raises, dedup, _next_attempt_id allocator (no collision across 2 runs, skips existing higher IDs), zero-result returns reason not exception.
+- `tests/test_routes_premade.py` (9): happy paths (canned + LLM), 404 unknown, 400 no-on-script, 409 frozen, dirty=True precondition, mutated=False skips commit, mutated=True snapshots once, event-loop-responsive via ThreadPoolExecutor.
+
+**Decisions locked + made during execution:**
+
+- **`_detect_takes` tolerance set is parameterized**, not hardcoded. Found while implementing `ad_libbed` — the first test failure surfaced that ad-libs needed to land INSIDE takes, not act as run-breakers. The parameterization is cleaner than a separate detector function.
+- **No 502 from the premade route.** Documented in the route docstring as a deliberate departure from Phase 6's pattern. Canned-fallback names mean Ollama being unreachable doesn't fail the run; the response's `naming_source` field lets the frontend surface "we used canned names because Ollama was down."
+- **`_next_attempt_id` is monotonic over the FULL set of existing attempt IDs**, not just IDs we're about to keep. Comment: "so we don't reuse a freed slot mid-run and confuse anyone reading the snapshot trail." Important because regeneration deletes ai-premade and then adds new ones; reusing freed slots would make snapshot diffs confusing.
+- **Best-plausible summary panel on Project page** stays best-only — diagnostic only appears on `/attempts`. Reviewer plan-review item #2 endorsed this as "clean primary surface."
+- **`near_one_take` dedup**: when its top-1 result matches `longest_contiguous_take`'s clip list (single qualifying take case), dedup eliminates the duplicate. First-by-strategy-order wins; `longest_contiguous_take` runs first in `ALL_STRATEGIES`. Smoke run on btc.0.4 hit this case.
+
+**Real-data smoke on btc.0.4** (synthetic 3-line project, 91 clips):
+
+```
+generated: 5
+naming_source: canned (no LLM in smoke; live UI uses LLM)
+mutated: True
+
+#1  [best      ]  continuity=1.00   3 clips  -- best take of each line, in script order
+#2  [best      ]  continuity=1.00  13 clips  -- the longest contiguous take
+#3  [best      ]  continuity=1.00   3 clips  -- the shortest complete take of the full script
+#4  [best      ]  continuity=1.00   3 clips  -- the take where the energy picked up
+#5  [diagnostic]  continuity=1.00  30 clips  -- the take where you ad-libbed bonus material
+```
+
+5 of 8 strategies populated. `near_one_take` correctly dedup'd against `longest_contiguous_take` (same clip list). `started_with_line` / `skipped_line` produced 0 because the synthetic distribution has only one take. **Continuity = 1.0 across the board** because btc.0.4 is single-source — the cross-source/backward-jump score-tone visuals will only exercise on the first multi-source dogfood.
+
+**Reviewer assessment summary (2026-05-26, separate session):**
+
+> Top-line: ship it. All seven plan-review items landed correctly, Phase 6 invariants all carried forward, real-data smoke on btc.0.4 produced 5 attempts with sensible continuity behavior. Big phase (~3725 insertions across 14 files, 59 new tests, 381 total) but well-executed. The architecture follows the Phase 6/7 pattern cleanly — pure strategies + thin orchestrator + thin route. The diff is clean, the patterns are all proven, the plan-review items all landed.
+
+**Three advisory items from the review (carried into Phase 9 / 8.1 follow-ups):**
+
+1. **Continuity formula isn't visually stressed by single-source btc.0.4** — amber and red score-bar colors won't appear until a multi-source attempt exists. Same blind-spot as the cross-source preview latency from Phase 2. First multi-source dogfood is the real UX test.
+2. **Visually confirm the "names are spec defaults" hint** surfaces when `naming_source="canned"` — stop Ollama, regenerate, look for the small hint in the run-summary banner. Visual surface only; the backend produces the signal correctly.
+3. **`near_one_take` #1, #2, #3 collide on canned names** — all 3 canned-fallback names would be identical if Ollama is down AND there are 3 near-one-take results. LLM-path names differentiate via `name_hint` differences. Edge case (requires both 3 near-one-takes AND Ollama unreachable simultaneously); revisit if it manifests in real dogfood.
+
+**Files touched in Phase 8:**
+
+```
+NEW:
+  clipfarm/strategies.py
+  clipfarm/continuity.py
+  clipfarm/attempt_naming.py
+  clipfarm/premade.py
+  clipfarm/routes/premade.py
+  tests/test_strategies.py
+  tests/test_continuity.py
+  tests/test_attempt_naming.py
+  tests/test_premade.py
+  tests/test_routes_premade.py
+  web/src/pages/Attempts.tsx
+
+MODIFIED:
+  clipfarm/app.py           — include premade router
+  web/src/App.tsx           — /attempts route + nav item
+  web/src/pages/Project.tsx — best-plausible summary panel + Generate CTA
+  web/dist/...              — rebuilt
+```
+
+---
+
 ## Phase 7b — Script TOC view
 
 **Verified by Lillian:** ✅ 2026-05-25 (reviewer approval: "ship it"; no required changes, no advisory items).
