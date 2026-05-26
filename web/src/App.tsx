@@ -7,6 +7,7 @@ import Brief from "./pages/Brief";
 import Settings from "./pages/Settings";
 import { PlaybackProvider } from "./playback/context";
 import { PreviewPane } from "./playback/PreviewPane";
+import { ActiveAttemptProvider } from "./playback/active-attempt";
 
 const navItem =
   "px-3 py-1.5 rounded-md text-sm hover:bg-neutral-800 transition-colors";
@@ -19,6 +20,7 @@ export default function App() {
     // the preview pane survives page navigation without remounting
     // the <video> element (which would tank playback state).
     <PlaybackProvider>
+    <ActiveAttemptProvider>
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-neutral-800 bg-neutral-950">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
@@ -88,6 +90,7 @@ export default function App() {
       </main>
       <PreviewPane />
     </div>
+    </ActiveAttemptProvider>
     </PlaybackProvider>
   );
 }

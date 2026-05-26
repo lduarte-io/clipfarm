@@ -35,6 +35,7 @@ from clipfarm.attempt_naming import (
     NamedAttempt,
     name_attempts,
 )
+from clipfarm.attempts_ops import next_attempt_id
 from clipfarm.continuity import compute_continuity_score
 from clipfarm.models import Attempt, ClipFarmState
 from clipfarm.strategies import ALL_STRATEGIES, StrategyResult
@@ -77,15 +78,10 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _next_attempt_id(state: ClipFarmState) -> str:
-    """Monotonic stringified integer, matching `_next_source_id` /
-    `_next_project_id`. Walks BOTH existing attempt IDs (so re-running
-    after a partial replace doesn't collide) AND the IDs of attempts
-    we're about to delete (so we don't reuse a freed slot mid-run and
-    confuse anyone reading the snapshot trail).
-    """
-    used = {int(k) for k in state.attempts.keys() if k.isdigit()}
-    return str(max(used) + 1) if used else "1"
+# `next_attempt_id` lives in `clipfarm.attempts_ops` (Phase 10a moved it
+# there so the new attempt-CRUD routes can share the same allocator).
+# Imported above; kept the local reference here for symmetry with the
+# in-file usage and to make grep-for-next_attempt_id work.
 
 
 def _build_name_summaries(
@@ -262,7 +258,7 @@ def generate_premade_attempts(
     })
     now = _now_iso()
     for r, score, naming in zip(valid_results, continuity_scores, named):
-        aid = _next_attempt_id(state)
+        aid = next_attempt_id(state)
         state.attempts[aid] = Attempt(
             project_id=project_id,
             name=naming.name,

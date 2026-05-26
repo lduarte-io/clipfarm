@@ -41,6 +41,7 @@ from clipfarm.routes import clips as clips_routes
 from clipfarm.routes import ingest as ingest_routes
 from clipfarm.routes import projects as projects_routes
 from clipfarm.routes import search as search_routes
+from clipfarm.routes import attempts as attempts_routes
 from clipfarm.routes import premade as premade_routes
 from clipfarm.routes import resolver as resolver_routes
 from clipfarm.routes import settings as settings_routes
@@ -164,6 +165,7 @@ app.include_router(premade_routes.router)
 app.include_router(resolver_routes.router)
 app.include_router(video_routes.router)
 app.include_router(settings_routes.router)
+app.include_router(attempts_routes.router)
 
 
 # --- Frontend hosting ---------------------------------------------------------

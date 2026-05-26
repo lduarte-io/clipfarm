@@ -1,11 +1,32 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   PremadeProgressPanel,
   useRunProgress,
 } from "../components/RunProgress";
 import { SidePanel } from "../components/SidePanel";
 import { usePlayback } from "../playback/context";
+import {
+  useActiveAttempt,
+  useActiveAttemptValidation,
+} from "../playback/active-attempt";
 
 // Phase 8 — Attempts page. Lists generated + hand-built attempts for
 // the active project, grouped into two buckets:
@@ -187,19 +208,210 @@ function AttemptCard({
 // Side panel — full clip list for the selected attempt
 // ───────────────────────────────────────────────────────────────────────────
 
+/**
+ * One sortable clip row inside the attempt's clip list. Tombstones
+ * (clip referenced by id but missing from state.clips) are still
+ * draggable in 10a so the user can position them, but they render
+ * with a placeholder "▢ removed" indicator and no transcript.
+ *
+ * Drag handle = the index number + grip icon on the left. The rest
+ * of the row is non-interactive (no select-on-click in 10a; the
+ * AttemptCard's onSelect already pulled the user here).
+ */
+function SortableClipItem({
+  id,
+  index,
+  ac,
+  clip,
+  filename,
+}: {
+  id: string;
+  index: number;
+  ac: AttemptClip;
+  clip: AppState["clips"][string] | undefined;
+  filename: string;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  const isTombstone = clip == null;
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`rounded border px-2 py-1.5 ${
+        isTombstone
+          ? "border-amber-900/60 bg-amber-950/20"
+          : "border-neutral-800 bg-neutral-900"
+      }`}
+    >
+      <div className="flex items-baseline gap-2">
+        <span
+          {...attributes}
+          {...listeners}
+          className="text-neutral-600 tabular-nums w-6 shrink-0 cursor-grab active:cursor-grabbing select-none hover:text-neutral-300"
+          title="Drag to reorder"
+        >
+          ⋮⋮ {String(index + 1).padStart(2, "0")}
+        </span>
+        <span className="font-mono text-neutral-400 truncate flex-1 min-w-0">
+          {isTombstone ? (
+            <span className="text-amber-300">▢ {ac.clip_id} (removed)</span>
+          ) : filename}
+        </span>
+        {clip && (
+          <span className="text-neutral-500 font-mono text-[10px] shrink-0">
+            {formatTimestamp(clip.start_sec)}–{formatTimestamp(clip.end_sec)}
+          </span>
+        )}
+      </div>
+      {clip?.transcript_text && (
+        <div className="text-neutral-300 leading-snug mt-1 line-clamp-2">
+          {clip.transcript_text}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function InlineNameEditor({
+  attemptId,
+  initialName,
+  onSave,
+}: {
+  attemptId: string;
+  initialName: string;
+  onSave: (newName: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(initialName);
+  // Reset draft when the attempt switches (the side panel is reused
+  // across selections).
+  useEffect(() => {
+    setDraft(initialName);
+    setEditing(false);
+  }, [attemptId, initialName]);
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={async () => {
+          setEditing(false);
+          const trimmed = draft.trim();
+          if (trimmed && trimmed !== initialName) {
+            await onSave(trimmed);
+          } else {
+            setDraft(initialName);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          else if (e.key === "Escape") {
+            setDraft(initialName);
+            setEditing(false);
+          }
+        }}
+        className="text-sm font-semibold text-neutral-100 bg-neutral-900 border border-neutral-700 rounded px-1.5 py-0.5 w-full"
+      />
+    );
+  }
+  return (
+    <div
+      className="text-sm font-semibold text-neutral-100 hover:bg-neutral-900 rounded px-1.5 py-0.5 -mx-1.5 cursor-text"
+      onClick={() => setEditing(true)}
+      title="Click to rename"
+    >
+      {initialName}
+    </div>
+  );
+}
+
 function AttemptSidePanel({
   attemptId,
   attempt,
   state,
+  isActive,
   onClose,
+  onSetActive,
+  onFork,
+  onRename,
+  onDelete,
+  onReorderClips,
 }: {
   attemptId: string | null;
   attempt: Attempt | null;
   state: AppState;
+  isActive: boolean;
   onClose: () => void;
+  onSetActive: (aid: string | null) => void;
+  onFork: (aid: string) => void;
+  onRename: (aid: string, newName: string) => Promise<void>;
+  onDelete: (aid: string) => void;
+  /** Drag-reorder commit. Returns true on success; caller reverts
+   *  optimistic local order on false. */
+  onReorderClips: (
+    aid: string,
+    newClips: AttemptClip[],
+  ) => Promise<boolean>;
 }) {
   const tone = attempt ? continuityTone(attempt.continuity_score) : null;
   const runtime = attempt ? attemptRuntime(state, attempt) : 0;
+
+  // Phase 10a — optimistic-with-revert drag-reorder. Local clip list
+  // mirrors props on attemptId change; drag-end updates locally
+  // immediately for snappy animation, then commits via PATCH. On
+  // failure, revert to the captured previous order + the parent
+  // will also re-fetch and overwrite.
+  const [displayClips, setDisplayClips] = useState<AttemptClip[]>(
+    attempt?.clips ?? [],
+  );
+  const previousOrderRef = useRef<AttemptClip[]>([]);
+  useEffect(() => {
+    setDisplayClips(attempt?.clips ?? []);
+  }, [attemptId, attempt?.clips]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      // Activation distance prevents accidental drags on click-to-select.
+      activationConstraint: { distance: 4 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || !attemptId || active.id === over.id) return;
+      const oldIdx = displayClips.findIndex((ac, i) => `${ac.clip_id}-${i}` === active.id);
+      const newIdx = displayClips.findIndex((ac, i) => `${ac.clip_id}-${i}` === over.id);
+      if (oldIdx < 0 || newIdx < 0) return;
+      previousOrderRef.current = displayClips;
+      const reordered = arrayMove(displayClips, oldIdx, newIdx);
+      setDisplayClips(reordered); // optimistic
+      const ok = await onReorderClips(attemptId, reordered);
+      if (!ok) {
+        // Revert. Parent refresh will also re-seed, but doing it here
+        // means no visual flash.
+        setDisplayClips(previousOrderRef.current);
+      }
+    },
+    [attemptId, displayClips, onReorderClips],
+  );
   return (
     <SidePanel
       open={attempt != null && attemptId != null}
@@ -208,18 +420,29 @@ function AttemptSidePanel({
       header={
         attempt && attemptId && (
           <>
-            <div className="text-sm font-semibold text-neutral-100">
-              {attempt.name}
-            </div>
+            <InlineNameEditor
+              attemptId={attemptId}
+              initialName={attempt.name}
+              onSave={(n) => onRename(attemptId, n)}
+            />
             <div className="text-[10px] font-mono text-neutral-500 mt-0.5">
               #{attemptId} · {attempt.source}
               {attempt.premade_bucket && ` · ${attempt.premade_bucket}`}
+              {attempt.parent_attempt_id && (
+                <> · fork of #{attempt.parent_attempt_id}
+                  {!state.attempts?.[attempt.parent_attempt_id] && (
+                    <span className="text-amber-400" title="Parent attempt was deleted">
+                      {" "}(deleted)
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           </>
         )
       }
     >
-      {attempt && tone && (
+      {attempt && tone && attemptId && (
         <>
           <div className="flex items-center gap-2 text-[10px]">
             <span className="text-neutral-500">
@@ -228,40 +451,71 @@ function AttemptSidePanel({
             <span className="text-neutral-600 font-mono">·</span>
             <span className="text-neutral-400">continuity {tone.label}</span>
           </div>
-          <ol className="space-y-1.5 text-xs">
-            {attempt.clips.map((ac, i) => {
-              const clip = state.clips[ac.clip_id];
-              const filename = clip
-                ? state.sources[clip.source_id]?.filename ?? "?"
-                : "(clip missing)";
-              return (
-                <li
-                  key={`${ac.clip_id}-${i}`}
-                  className="rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5"
-                >
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-neutral-600 tabular-nums w-6 shrink-0">
-                      {String(i + 1).padStart(2, "0")}.
-                    </span>
-                    <span className="font-mono text-neutral-400 truncate flex-1 min-w-0">
-                      {filename}
-                    </span>
-                    {clip && (
-                      <span className="text-neutral-500 font-mono text-[10px] shrink-0">
-                        {formatTimestamp(clip.start_sec)}–
-                        {formatTimestamp(clip.end_sec)}
-                      </span>
-                    )}
-                  </div>
-                  {clip?.transcript_text && (
-                    <div className="text-neutral-300 leading-snug mt-1 line-clamp-2">
-                      {clip.transcript_text}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
+          {/* Phase 10a — action row: Fork, Set active, Delete. */}
+          <div className="flex items-center gap-2 text-xs pt-1">
+            <button
+              onClick={() => onFork(attemptId)}
+              className="rounded border border-neutral-700 hover:bg-neutral-800 px-2 py-1 text-[11px]"
+              title="Create a new fork of this attempt with its current clip list."
+            >
+              ⑂ Fork
+            </button>
+            <button
+              onClick={() => onSetActive(isActive ? null : attemptId)}
+              className={`rounded border px-2 py-1 text-[11px] ${
+                isActive
+                  ? "border-sky-700 bg-sky-900/40 text-sky-200"
+                  : "border-neutral-700 hover:bg-neutral-800"
+              }`}
+              title={
+                isActive
+                  ? "Currently active. Click to clear."
+                  : "Make this the active attempt. + clicks on take cards will add to it."
+              }
+            >
+              {isActive ? "✓ Active" : "Set as active"}
+            </button>
+            <button
+              onClick={() => onDelete(attemptId)}
+              className="ml-auto rounded border border-red-900 text-red-300 hover:bg-red-900/30 px-2 py-1 text-[11px]"
+            >
+              Delete
+            </button>
+          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={displayClips.map((ac, i) => `${ac.clip_id}-${i}`)}
+              strategy={verticalListSortingStrategy}
+            >
+              <ol className="space-y-1.5 text-xs">
+                {displayClips.map((ac, i) => {
+                  const clip = state.clips[ac.clip_id];
+                  const filename = clip
+                    ? state.sources[clip.source_id]?.filename ?? "?"
+                    : "(clip missing)";
+                  return (
+                    <SortableClipItem
+                      key={`${ac.clip_id}-${i}`}
+                      id={`${ac.clip_id}-${i}`}
+                      index={i}
+                      ac={ac}
+                      clip={clip}
+                      filename={filename}
+                    />
+                  );
+                })}
+                {displayClips.length === 0 && (
+                  <li className="text-xs text-neutral-600 italic px-2 py-3 text-center">
+                    Empty draft. Click + on a TakeCard in Project or Script to add a clip.
+                  </li>
+                )}
+              </ol>
+            </SortableContext>
+          </DndContext>
         </>
       )}
     </SidePanel>
@@ -333,6 +587,12 @@ export default function Attempts() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const { playAttempt } = usePlayback();
+  const { activeAttemptId, setActiveAttemptId } = useActiveAttempt();
+  // Phase 10a — clear the active attempt if it's been deleted or
+  // belongs to a different project.
+  useActiveAttemptValidation(appState?.attempts ?? null, projectId);
+  // Confirmation modal for destructive actions.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   // Phase 9 — clicking an attempt opens the side panel AND starts
   // playing through its resolved clip queue.
@@ -405,6 +665,108 @@ export default function Attempts() {
       (a) => a.project_id === projectId && a.source === "ai-premade",
     ).length;
   }, [appState, projectId]);
+
+  // ── Phase 10a — hand-built CRUD callbacks ────────────────────────────
+  const createEmpty = useCallback(async () => {
+    if (!projectId) return;
+    setError(null);
+    try {
+      const r = await fetch(`/api/projects/${projectId}/attempts`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "new attempt" }),
+      });
+      const body = await r.json();
+      if (!r.ok) {
+        setError(typeof body.detail === "string" ? body.detail : r.statusText);
+        return;
+      }
+      setActiveAttemptId(body.attempt_id);
+      setSelected(body.attempt_id);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [projectId, refresh, setActiveAttemptId]);
+
+  const forkAttempt = useCallback(async (aid: string) => {
+    setError(null);
+    try {
+      const r = await fetch(`/api/attempts/${aid}/fork`, { method: "POST" });
+      const body = await r.json();
+      if (!r.ok) {
+        setError(typeof body.detail === "string" ? body.detail : r.statusText);
+        return;
+      }
+      setSelected(body.attempt_id);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [refresh]);
+
+  const renameAttempt = useCallback(async (aid: string, newName: string) => {
+    setError(null);
+    try {
+      const r = await fetch(`/api/attempts/${aid}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      });
+      const body = await r.json();
+      if (!r.ok) {
+        setError(typeof body.detail === "string" ? body.detail : r.statusText);
+        return;
+      }
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [refresh]);
+
+  /** Phase 10a drag-reorder: PATCH the full new clip-list. Returns
+   *  true on success, false on failure — caller (AttemptSidePanel)
+   *  reverts its optimistic local order on false. */
+  const reorderClips = useCallback(async (
+    aid: string,
+    newClips: Array<{ clip_id: string; trim_start_offset: number; trim_end_offset: number; internal_pause_max_sec: number | null; notes: string }>,
+  ): Promise<boolean> => {
+    try {
+      const r = await fetch(`/api/attempts/${aid}/clips`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clips: newClips }),
+      });
+      if (!r.ok) {
+        const body = await r.json();
+        setError(typeof body.detail === "string" ? body.detail : r.statusText);
+        return false;
+      }
+      await refresh();
+      return true;
+    } catch (e) {
+      setError(String(e));
+      return false;
+    }
+  }, [refresh]);
+
+  const deleteAttempt = useCallback(async (aid: string) => {
+    setError(null);
+    try {
+      const r = await fetch(`/api/attempts/${aid}`, { method: "DELETE" });
+      const body = await r.json();
+      if (!r.ok) {
+        setError(typeof body.detail === "string" ? body.detail : r.statusText);
+        return;
+      }
+      if (selected === aid) setSelected(null);
+      if (activeAttemptId === aid) setActiveAttemptId(null);
+      setConfirmDelete(null);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [activeAttemptId, refresh, selected, setActiveAttemptId]);
 
   const runGenerate = useCallback(async () => {
     if (!projectId) return;
@@ -483,6 +845,14 @@ export default function Attempts() {
           <span className="text-sm text-neutral-300">{projects[0].name}</span>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={createEmpty}
+            disabled={!projectId}
+            className="text-xs rounded-md border border-neutral-700 hover:bg-neutral-800 px-3 py-1.5 disabled:opacity-50"
+            title="Create a new empty hand-built attempt for this project."
+          >
+            + New empty attempt
+          </button>
           {aiPremadeCount > 0 ? (
             <button
               onClick={() => setShowRegenModal(true)}
@@ -502,6 +872,24 @@ export default function Attempts() {
           )}
         </div>
       </div>
+
+      {activeAttemptId && appState?.attempts?.[activeAttemptId] && (
+        <div className="rounded-md border border-sky-900 bg-sky-950/40 px-3 py-2 text-xs flex items-center gap-2">
+          <span className="text-sky-200 font-medium">
+            Adding to:
+          </span>
+          <span className="font-mono text-sky-100">
+            #{activeAttemptId} · {appState.attempts[activeAttemptId].name}
+          </span>
+          <button
+            onClick={() => setActiveAttemptId(null)}
+            className="ml-auto text-sky-400 hover:text-white"
+            title="Clear active attempt; new + clicks won't add to any attempt."
+          >
+            Clear ✕
+          </button>
+        </div>
+      )}
 
       {busy && <PremadeProgressPanel info={premadeProgress} />}
 
@@ -606,7 +994,13 @@ export default function Attempts() {
             attemptId={selected}
             attempt={selectedAttempt}
             state={appState}
+            isActive={selected != null && selected === activeAttemptId}
             onClose={() => setSelected(null)}
+            onSetActive={setActiveAttemptId}
+            onFork={forkAttempt}
+            onRename={renameAttempt}
+            onDelete={(aid) => setConfirmDelete(aid)}
+            onReorderClips={reorderClips}
           />
         </div>
       )}
@@ -618,6 +1012,41 @@ export default function Attempts() {
           onConfirm={runGenerate}
           onCancel={() => setShowRegenModal(false)}
         />
+      )}
+
+      {confirmDelete && appState?.attempts?.[confirmDelete] && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            className="bg-neutral-900 border border-neutral-700 rounded-lg p-4 max-w-md space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold">Delete attempt?</h3>
+            <p className="text-sm text-neutral-300">
+              This deletes "{appState.attempts[confirmDelete].name}" (#{confirmDelete}).
+              {appState.attempts[confirmDelete].source === "ai-premade" && (
+                <> You can re-generate AI-premade attempts via the Regenerate
+                  button if you change your mind.</>
+              )}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="px-3 py-1.5 text-sm rounded-md border border-neutral-700 hover:bg-neutral-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteAttempt(confirmDelete)}
+                className="px-3 py-1.5 text-sm rounded-md bg-red-600 text-white hover:bg-red-500"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

@@ -88,7 +88,7 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 9.5. Tagging provid
 
 ---
 
-## Phase 10a — Attempt review + assembly basics (PLANNED — ready to execute)
+## Phase 10a — Built ⏳ 2026-05-26 (awaiting manual verify)
 
 **Goal.** Make the assembly workflow actually usable: scrub inside the preview pane, pause/seek with the keyboard, reorder clips inside an attempt by drag, build attempts from scratch, fork existing attempts. Plus the Phase 9 cross-source preload carry. **This is the phase where "candidate videos you can watch" becomes "candidate videos you can shape."**
 

@@ -98,6 +98,14 @@ export function PreviewPane() {
   const videoBRef = useRef<HTMLVideoElement | null>(null);
   const [activeIdx, setActiveIdx] = useState<0 | 1>(0);
 
+  // Phase 10a (Phase 9 carry): track which source_id is loaded on each
+  // element. Replaces the old `v.currentSrc.split("/api/")[1]` hack
+  // — `currentSrc` is empty until the first load, fragile to URL-shape
+  // changes, and confusingly compares URL fragments instead of the
+  // semantic identifier. With this ref pair, "same source as next
+  // range" is `loadedSourceIds.current[idx] === nextRange.source_id`.
+  const loadedSourceIds = useRef<[string | null, string | null]>([null, null]);
+
   const currentItem = currentIndex >= 0 ? queue[currentIndex] : null;
   const currentRange: ResolvedRangeItem | null =
     currentItem?.type === "range" ? currentItem : null;
@@ -136,11 +144,13 @@ export function PreviewPane() {
     const v = activeRef.current;
     if (!v || !currentRange) return;
     setCrossSourceLoading(false);
-    // If the active element's src doesn't match the current range's
-    // source URL, load it. This is the cross-source path (or first-load).
-    if (v.currentSrc.split("/api/")[1] !== currentRange.source_url.split("/api/")[1]) {
+    const loadedHere = loadedSourceIds.current[activeIdx];
+    // If the active element doesn't already have the right source
+    // loaded, load it. This is the cross-source path (or first-load).
+    if (loadedHere !== currentRange.source_id) {
       setCrossSourceLoading(true);
       v.src = currentRange.source_url;
+      loadedSourceIds.current[activeIdx] = currentRange.source_id;
       // canplay fires when we can start playback at currentTime.
       const onCanPlay = () => {
         v.currentTime = currentRange.effective_start_sec;
@@ -151,11 +161,12 @@ export function PreviewPane() {
       v.load();
       return () => v.removeEventListener("canplay", onCanPlay);
     }
-    // Same-source seek.
+    // Same-source seek (e.g. after a same-source swap where the
+    // formerly-hidden element was already preloaded at the new start).
     v.currentTime = currentRange.effective_start_sec;
     if (playing) v.play().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentRange?.source_url, currentRange?.effective_start_sec, currentIndex]);
+  }, [currentRange?.source_id, currentRange?.effective_start_sec, currentIndex]);
 
   // ─────────────────────────────────────────────────────────────────────
   // Play / pause from playback state.
@@ -187,15 +198,22 @@ export function PreviewPane() {
     if (v.currentTime + END_TOLERANCE_SEC >= currentRange.effective_end_sec) {
       v.pause();
       preloadedKeyRef.current = null;
-      // Swap roles. The hidden element should already have the next
-      // range preloaded (same-source path); cross-source needs the
-      // next-range effect to kick in after the swap.
-      if (nextRange && hv && hv.currentSrc.split("/api/")[1] === nextRange.source_url.split("/api/")[1]) {
-        // Same-source: just swap.
+      // Phase 10a fix (Phase 9 carry): ALWAYS swap roles on range-end
+      // when a next range exists, regardless of same-source vs
+      // cross-source. The hidden element has been preloaded for both
+      // cases (same-source: currentTime seeked to next.effective_start;
+      // cross-source: new src loaded). The previously-active element
+      // stays in DOM holding its last frame; the now-active element
+      // can play immediately (same-source) or after canplay fires
+      // (cross-source — the active-ref effect handles the wait).
+      //
+      // Pre-fix bug: the swap only happened for same-source, so cross-
+      // source transitions threw away the hidden element's preloaded
+      // file and re-fetched on the active element while the user saw
+      // a stalled frame. Cost ~100–300ms per cross-source transition.
+      if (nextRange && hv) {
         setActiveIdx((idx) => (idx === 0 ? 1 : 0));
       }
-      // For cross-source or no-next-range, just advance — the
-      // active-ref effect picks up the new currentRange on re-render.
       advance();
       return;
     }
@@ -205,20 +223,22 @@ export function PreviewPane() {
     if (!hv || !nextRange) return;
     const remaining = currentRange.effective_end_sec - v.currentTime;
     if (remaining > PRELOAD_AHEAD_SEC) return;
-    const key = `${nextRange.source_url}@${nextRange.effective_start_sec.toFixed(3)}`;
+    const key = `${nextRange.source_id}@${nextRange.effective_start_sec.toFixed(3)}`;
     if (preloadedKeyRef.current === key) return;
     preloadedKeyRef.current = key;
-    if (hv.currentSrc.split("/api/")[1] === nextRange.source_url.split("/api/")[1]) {
+    const hiddenIdx: 0 | 1 = activeIdx === 0 ? 1 : 0;
+    if (loadedSourceIds.current[hiddenIdx] === nextRange.source_id) {
       // Same-source: just seek (much faster than reloading).
       hv.currentTime = nextRange.effective_start_sec;
     } else {
-      // Cross-source: load the new file in the hidden element. When we
-      // actually swap, we'll need to wait for canplay (next-range
-      // effect handles this).
+      // Cross-source: load the new file in the hidden element. After
+      // the swap, the active-ref effect picks up the active element
+      // already having the right source loaded and just seeks.
       hv.src = nextRange.source_url;
       hv.load();
+      loadedSourceIds.current[hiddenIdx] = nextRange.source_id;
     }
-  }, [activeRef, hiddenRef, currentRange, nextRange, advance]);
+  }, [activeIdx, activeRef, hiddenRef, currentRange, nextRange, advance]);
 
   // ─────────────────────────────────────────────────────────────────────
   // Drag-resize handle (top-left corner, since pane is anchored BR).
@@ -262,6 +282,106 @@ export function PreviewPane() {
     },
     [size.width, size.height],
   );
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Scrubber state — currentTime sampled on every timeupdate so the
+  // scrubber bar can render the playhead position. Single state read
+  // is cheaper than a ref + RAF loop and accurate enough for a slim
+  // visual bar (~250ms timeupdate cadence is below human perception
+  // for a 480px-wide pane).
+  // ─────────────────────────────────────────────────────────────────────
+  const [currentTime, setCurrentTime] = useState(0);
+
+  const onTimeUpdateWithScrubber = useCallback(() => {
+    onTimeUpdate();
+    const v = activeRef.current;
+    if (v) setCurrentTime(v.currentTime);
+  }, [onTimeUpdate, activeRef]);
+
+  const onScrubberClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const v = activeRef.current;
+      if (!v || !currentRange) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const proportion = Math.max(
+        0,
+        Math.min(1, (e.clientX - rect.left) / rect.width),
+      );
+      const rangeDuration =
+        currentRange.effective_end_sec - currentRange.effective_start_sec;
+      // Clamp to slightly inside the end so the range-end handler
+      // doesn't immediately fire on a click-to-end (uses END_TOLERANCE_SEC).
+      const targetWithinRange = Math.min(
+        rangeDuration - END_TOLERANCE_SEC * 2,
+        proportion * rangeDuration,
+      );
+      v.currentTime = currentRange.effective_start_sec + Math.max(0, targetWithinRange);
+      setCurrentTime(v.currentTime);
+    },
+    [activeRef, currentRange],
+  );
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Keyboard: space=play/pause; ←/→=±5s within range; Shift+←/→=±15s.
+  // Document-level listener with ignore-if-input-focused guard.
+  // Only active when queue exists + not dismissed.
+  // ─────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (dismissed || currentIndex < 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      // Standard "ignore if user is typing" guard.
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (
+          tag === "INPUT"
+          || tag === "TEXTAREA"
+          || tag === "SELECT"
+          || target.isContentEditable
+        ) return;
+      }
+
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        if (playing) pause();
+        else resume();
+        return;
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const v = activeRef.current;
+        if (!v || !currentRange) return;
+        e.preventDefault();
+        const delta = (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 15 : 5);
+        const next = Math.max(
+          currentRange.effective_start_sec,
+          Math.min(
+            currentRange.effective_end_sec - END_TOLERANCE_SEC * 2,
+            v.currentTime + delta,
+          ),
+        );
+        v.currentTime = next;
+        setCurrentTime(next);
+        return;
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [dismissed, currentIndex, playing, pause, resume, activeRef, currentRange]);
+
+  // Scrubber proportion 0..1 within the current range.
+  const scrubberPct = currentRange
+    ? Math.max(
+        0,
+        Math.min(
+          1,
+          (currentTime - currentRange.effective_start_sec)
+          / Math.max(
+            0.001,
+            currentRange.effective_end_sec - currentRange.effective_start_sec,
+          ),
+        ),
+      )
+    : 0;
 
   // ─────────────────────────────────────────────────────────────────────
   // Render
@@ -314,14 +434,14 @@ export function PreviewPane() {
           ref={videoARef}
           controls={false}
           className={`absolute inset-0 w-full h-full object-contain ${activeIdx === 0 ? "" : "hidden"}`}
-          onTimeUpdate={activeIdx === 0 ? onTimeUpdate : undefined}
+          onTimeUpdate={activeIdx === 0 ? onTimeUpdateWithScrubber : undefined}
           preload="auto"
         />
         <video
           ref={videoBRef}
           controls={false}
           className={`absolute inset-0 w-full h-full object-contain ${activeIdx === 1 ? "" : "hidden"}`}
-          onTimeUpdate={activeIdx === 1 ? onTimeUpdate : undefined}
+          onTimeUpdate={activeIdx === 1 ? onTimeUpdateWithScrubber : undefined}
           preload="auto"
         />
         {currentItem?.type === "tombstone" && (
@@ -339,11 +459,26 @@ export function PreviewPane() {
           </div>
         )}
       </div>
+      {/* Scrubber bar — click to seek within [effective_start, effective_end].
+          Only shown when on a playable range (tombstones get the placeholder card). */}
+      {currentRange && (
+        <div
+          onClick={onScrubberClick}
+          className="h-2 cursor-pointer bg-neutral-800 hover:h-2.5 transition-all group"
+          title="Click to seek within this clip"
+        >
+          <div
+            className="h-full bg-neutral-300 group-hover:bg-white transition-colors"
+            style={{ width: `${scrubberPct * 100}%` }}
+          />
+        </div>
+      )}
       <div className="border-t border-neutral-800 px-2 py-1.5 flex items-center gap-2 text-xs bg-neutral-900">
         <button
           onClick={playing ? pause : resume}
           className="text-neutral-200 hover:text-white px-1"
           aria-label={playing ? "Pause" : "Play"}
+          title={playing ? "Pause (space)" : "Play (space)"}
         >
           {playing ? "⏸" : "▶"}
         </button>

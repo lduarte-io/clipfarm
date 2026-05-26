@@ -6,6 +6,10 @@ import {
 } from "../components/RunProgress";
 import { SidePanel } from "../components/SidePanel";
 import { usePlayback } from "../playback/context";
+import {
+  useActiveAttempt,
+  useActiveAttemptValidation,
+} from "../playback/active-attempt";
 
 // Phase 7 — Take Grid view. After Phase 6 tags clips into
 // `clip_project_tags`, this page reads `GET /api/projects/{id}/take-grid`
@@ -141,43 +145,63 @@ function Card({
   card,
   selected,
   onSelect,
+  onAdd,
+  addTooltip,
 }: {
   card: TakeCard;
   selected: boolean;
   onSelect: () => void;
+  /** Phase 10a — clicking the corner "+" adds this clip to the
+   *  active attempt (or creates a new attempt with just this clip
+   *  if there's no active one). Optional so the same Card component
+   *  works in bucket sections that don't surface the action. */
+  onAdd?: () => void;
+  addTooltip?: string;
 }) {
   const tint = selected ? "ring-1 ring-white/60" : "ring-1 ring-neutral-800";
   return (
-    <button
-      onClick={onSelect}
-      className={`w-[220px] shrink-0 text-left rounded-md bg-neutral-900 hover:bg-neutral-800/80 ${tint} p-3 space-y-2 transition-colors`}
-    >
-      <div className="flex items-center gap-1.5 text-[10px]">
-        <span
-          className={`px-1.5 py-0.5 rounded border ${CATEGORY_BADGE[card.category]}`}
-        >
-          {card.category}
-        </span>
-        <span className="text-neutral-500">
-          {(card.confidence * 100).toFixed(0)}%
-        </span>
-        {card.stale && (
+    <div className={`w-[220px] shrink-0 relative rounded-md bg-neutral-900 hover:bg-neutral-800/80 ${tint} transition-colors`}>
+      <button
+        onClick={onSelect}
+        className="w-full text-left p-3 space-y-2"
+      >
+        <div className="flex items-center gap-1.5 text-[10px]">
           <span
-            className="ml-auto h-2 w-2 rounded-full bg-amber-400"
-            title="Stale — brief changed after this tag was written. Re-tag to refresh."
-          />
-        )}
-      </div>
-      <div className="text-[10px] text-neutral-500 font-mono truncate">
-        {card.filename}
-      </div>
-      <div className="text-[10px] text-neutral-500 font-mono">
-        {formatTimestamp(card.start_sec)}–{formatTimestamp(card.end_sec)}
-      </div>
-      <div className="text-xs text-neutral-200 leading-snug line-clamp-3">
-        {truncate(card.transcript_text || "(no transcript)", 180)}
-      </div>
-    </button>
+            className={`px-1.5 py-0.5 rounded border ${CATEGORY_BADGE[card.category]}`}
+          >
+            {card.category}
+          </span>
+          <span className="text-neutral-500">
+            {(card.confidence * 100).toFixed(0)}%
+          </span>
+          {card.stale && (
+            <span
+              className="ml-auto h-2 w-2 rounded-full bg-amber-400"
+              title="Stale — brief changed after this tag was written. Re-tag to refresh."
+            />
+          )}
+        </div>
+        <div className="text-[10px] text-neutral-500 font-mono truncate">
+          {card.filename}
+        </div>
+        <div className="text-[10px] text-neutral-500 font-mono">
+          {formatTimestamp(card.start_sec)}–{formatTimestamp(card.end_sec)}
+        </div>
+        <div className="text-xs text-neutral-200 leading-snug line-clamp-3 pr-5">
+          {truncate(card.transcript_text || "(no transcript)", 180)}
+        </div>
+      </button>
+      {onAdd && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onAdd(); }}
+          className="absolute top-1.5 right-1.5 text-neutral-400 hover:text-white hover:bg-neutral-700 rounded w-5 h-5 flex items-center justify-center text-sm leading-none"
+          title={addTooltip ?? "Add to attempt"}
+          aria-label="Add to attempt"
+        >
+          +
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -263,10 +287,14 @@ function LineRowView({
   row,
   selectedClipId,
   onSelect,
+  onAddClip,
+  addTooltip,
 }: {
   row: LineRow;
   selectedClipId: string | null;
   onSelect: (card: TakeCard) => void;
+  onAddClip?: (card: TakeCard) => void;
+  addTooltip?: string;
 }) {
   return (
     <div className="rounded-md border border-neutral-800 bg-neutral-950/40 p-3 space-y-2">
@@ -293,6 +321,8 @@ function LineRowView({
               card={c}
               selected={selectedClipId === c.clip_id}
               onSelect={() => onSelect(c)}
+              onAdd={onAddClip ? () => onAddClip(c) : undefined}
+              addTooltip={addTooltip}
             />
           ))}
         </div>
@@ -310,11 +340,15 @@ function BucketSection({
   cards,
   selectedClipId,
   onSelect,
+  onAddClip,
+  addTooltip,
 }: {
   category: Category;
   cards: TakeCard[];
   selectedClipId: string | null;
   onSelect: (card: TakeCard) => void;
+  onAddClip?: (card: TakeCard) => void;
+  addTooltip?: string;
 }) {
   return (
     <details
@@ -338,6 +372,8 @@ function BucketSection({
                 card={c}
                 selected={selectedClipId === c.clip_id}
                 onSelect={() => onSelect(c)}
+                onAdd={onAddClip ? () => onAddClip(c) : undefined}
+                addTooltip={addTooltip}
               />
             ))}
           </div>
@@ -429,9 +465,64 @@ function AttemptsSummaryPanel({
 // Page
 // ───────────────────────────────────────────────────────────────────────────
 
+// Phase 10a — POST /api/attempts/{id}/clips replacements for the
+// "+ add this clip" action. Reads the attempt's current clip list
+// from `attemptsState`, appends one new entry, PATCHes the full list.
+// Returns the new clip count on success or null on failure.
+async function addClipToActiveAttempt(
+  activeAttemptId: string,
+  card: { clip_id: string },
+  attemptsState: Record<string, { clips: Array<{ clip_id: string; trim_start_offset: number; trim_end_offset: number; internal_pause_max_sec: number | null; notes: string }> }>,
+): Promise<number | null> {
+  const att = attemptsState[activeAttemptId];
+  if (!att) return null;
+  const nextClips = [...att.clips, {
+    clip_id: card.clip_id,
+    trim_start_offset: 0.0,
+    trim_end_offset: 0.0,
+    internal_pause_max_sec: null,
+    notes: "",
+  }];
+  const r = await fetch(`/api/attempts/${activeAttemptId}/clips`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clips: nextClips }),
+  });
+  if (!r.ok) return null;
+  const body = await r.json();
+  return body.attempt.clips.length as number;
+}
+
+// Phase 10a — "no active attempt yet, create one with this clip
+// as the seed." POSTs to create, sets the new attempt as active,
+// returns the new attempt id (or null on failure).
+async function createAttemptWithClip(
+  projectId: string,
+  card: { clip_id: string },
+): Promise<string | null> {
+  const r = await fetch(`/api/projects/${projectId}/attempts`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: "new attempt",
+      clips: [{
+        clip_id: card.clip_id,
+        trim_start_offset: 0.0,
+        trim_end_offset: 0.0,
+        internal_pause_max_sec: null,
+        notes: "",
+      }],
+    }),
+  });
+  if (!r.ok) return null;
+  const body = await r.json();
+  return body.attempt_id as string;
+}
+
 export default function Project() {
   const navigate = useNavigate();
   const { playClip } = usePlayback();
+  const { activeAttemptId, setActiveAttemptId } = useActiveAttempt();
   const [projects, setProjects] = useState<ProjectListItem[] | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [grid, setGrid] = useState<TakeGridView | null>(null);
@@ -457,6 +548,9 @@ export default function Project() {
   const [appAttempts, setAppAttempts] = useState<AppState["attempts"]>({});
   const [generatingAttempts, setGeneratingAttempts] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  // Phase 10a — clear active-attempt context if it's been deleted or
+  // belongs to a different project.
+  useActiveAttemptValidation(appAttempts, projectId);
   // Phase 8.1 — surface progress while the CTA is firing.
   const premadeProgress = useRunProgress(
     "/api/premade/progress",
@@ -478,6 +572,27 @@ export default function Project() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // Phase 10a — onAdd handler for the per-card + button. Adds the
+  // clip to the active attempt (or creates a new attempt with this
+  // clip if there's no active one).
+  const onAddClipToActive = useCallback(
+    async (card: TakeCard) => {
+      if (!projectId) return;
+      if (activeAttemptId && appAttempts[activeAttemptId]) {
+        await addClipToActiveAttempt(activeAttemptId, card, appAttempts);
+      } else {
+        const newId = await createAttemptWithClip(projectId, card);
+        if (newId) setActiveAttemptId(newId);
+      }
+      // Refresh so the side-panel + summary panel reflect the change.
+      loadAppState();
+    },
+    [activeAttemptId, appAttempts, projectId, setActiveAttemptId, loadAppState],
+  );
+  const addTooltip = activeAttemptId
+    ? `Add to attempt #${activeAttemptId}`
+    : "Start a new attempt with this clip";
 
   // Load the project list + attempts once; pick the first project.
   useEffect(() => {
@@ -721,6 +836,8 @@ export default function Project() {
                   row={row}
                   selectedClipId={selectedCard?.clip_id ?? null}
                   onSelect={onCardSelect}
+                  onAddClip={onAddClipToActive}
+                  addTooltip={addTooltip}
                 />
               ))}
             </div>
@@ -735,6 +852,8 @@ export default function Project() {
                   cards={grid.buckets[cat]?.cards ?? []}
                   selectedClipId={selectedCard?.clip_id ?? null}
                   onSelect={onCardSelect}
+                  onAddClip={onAddClipToActive}
+                  addTooltip={addTooltip}
                 />
               ))}
             </div>
