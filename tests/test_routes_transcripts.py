@@ -136,3 +136,29 @@ def test_transcript_clips_sorted_by_start_sec(client, tmp_path):
     clips = r.json()["clips"]
     starts = [c["start_sec"] for c in clips]
     assert starts == sorted(starts)
+
+
+def test_transcript_response_drops_probability(client, tmp_path):
+    """P3.1 #3: payload trim — `probability` is on the validated
+    WhisperTranscript model but stripped from the route response. The
+    frontend doesn't use it; including it adds ~50% to a 4700-word
+    transcript payload for no benefit."""
+    folder = tmp_path / "media"
+    folder.mkdir()
+    _write_pair(folder, "alpha")
+    _ingest(client, folder)
+
+    sid = next(iter(client.get("/api/state").json()["sources"].keys()))
+    r = client.get(f"/api/sources/{sid}/transcript")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["segments"], "expected at least one segment"
+    for seg in body["segments"]:
+        for w in seg["words"]:
+            assert "probability" not in w, (
+                f"`probability` leaked into the trimmed response payload "
+                f"(word={w!r}). See clipfarm/routes/transcripts.py — "
+                f"WhisperWordLite must not include it."
+            )
+            # Sanity: the fields we DO want are still there.
+            assert "start" in w and "end" in w and "word" in w

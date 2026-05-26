@@ -4,9 +4,32 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 3.1 — P3 review punch-list
+
+**Verified by Lillian:** ⏳ pending — folded in alongside Phase 3 verification.
+
+**Three small fixes from the reviewer's Phase 3 assessment:**
+
+1. **`typing.Optional` import cleanup in `tests/test_transcripts.py`.** Mid-file `from typing import Optional` with a stale `noqa` comment claiming to dodge a forward-ref headache that never existed (`from __future__ import annotations` already deferred evaluation). Moved to the top with the rest of the imports; dropped the comment.
+2. **Half-open `[start, end)` convention documented in `_clip_id_for_timestamp`** (`clipfarm/routes/search.py`). Added a docstring callout that a timestamp `t == c.end_sec` belongs to the NEXT clip, not this one. Cheap defense against Phase 4's extend/shrink drifting to inclusive ranges and breaking the "one timestamp belongs to one clip" invariant.
+3. **`/api/sources/{id}/transcript` payload trim — `probability` dropped from each word.** New `WhisperWordLite` / `WhisperSegmentLite` types in `routes/transcripts.py`; the route projects the full Whisper segments into the lite shape before returning. The frontend uses zero bytes of `probability`, and stripping it removes ~50% of the per-word JSON cost. On btc.0.4 (4735 words) that's a meaningful trim; on a future 2-hour recording it's load-bearing. New test (`test_transcript_response_drops_probability`) asserts the field is absent on every word in the response.
+
+**112 tests passing** (Phase 3's 110 + the new payload-trim test + the existing tests still green).
+
+**Files touched in 3.1:**
+
+```
+tests/test_transcripts.py          — moved Optional import to the top
+clipfarm/routes/search.py          — half-open interval comment
+clipfarm/routes/transcripts.py     — WhisperWordLite + WhisperSegmentLite + projection
+tests/test_routes_transcripts.py   — new test for probability stripping
+```
+
+---
+
 ## Phase 3 — Library page (raw transcript browser)
 
-**Verified by Lillian:** ⏳ pending
+**Verified by Lillian:** ✅ 2026-05-25
 
 **Built (2026-05-25):**
 

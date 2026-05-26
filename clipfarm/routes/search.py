@@ -46,8 +46,16 @@ def _clip_id_for_timestamp(
     state: ClipFarmState, source_id: str, t: float
 ) -> Optional[str]:
     """First clip on this source whose `[start_sec, end_sec)` contains `t`.
+
+    Half-open interval: a timestamp `t` exactly equal to `c.end_sec` belongs
+    to the NEXT clip (the one whose `start_sec == t`), not this one. That
+    keeps the invariant "a single timestamp belongs to exactly one clip"
+    intact and avoids the off-by-one ambiguity at boundaries. Phase 4's
+    extend / shrink operations must preserve this — see PHASES.md Phase 4.
+
     Linear scan — under v0 scale (~150 clips total) this is cheap; if it
-    matters later, bucket clips by source_id in a startup index."""
+    matters later, bucket clips by source_id in a startup index.
+    """
     for cid, c in state.clips.items():
         if c.source_id == source_id and c.start_sec <= t < c.end_sec:
             return cid

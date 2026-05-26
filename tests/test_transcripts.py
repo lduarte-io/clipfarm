@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 from unittest.mock import patch
 
 import pytest
@@ -28,10 +29,6 @@ def _src(path: Optional[Path], filename: str = "x.mov") -> Source:
         transcript_path=str(path) if path else None,
         added_at=datetime.now(timezone.utc).isoformat(),
     )
-
-
-# Import after Source defined to avoid forward-ref headaches.
-from typing import Optional  # noqa: E402
 
 
 def _write_sidecar(folder: Path, name: str, words: list[tuple[float, float, str]]) -> Path:

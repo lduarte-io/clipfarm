@@ -1,9 +1,15 @@
 """GET /api/sources/{source_id}/transcript — the raw transcript for a single
 source, annotated with the clip ranges detected for that source.
 
-The response shape combines the validated `WhisperTranscript` payload with
-the auto-detected `clips` ranges from `state.clips` so the frontend can mark
-clip boundaries inline without a second round-trip.
+The response shape combines a slimmed copy of the validated
+`WhisperTranscript` (with the per-word `probability` field stripped — the
+frontend doesn't use it) with the auto-detected `clips` ranges from
+`state.clips` so the frontend can mark clip boundaries inline without a
+second round-trip.
+
+Why strip `probability`: for a 34-minute recording (btc.0.4) the full
+transcript is ~4700 words. Including `probability` on every word adds
+~50% to the response payload for no consumer benefit. Phase 3 review #3.
 """
 from __future__ import annotations
 
@@ -11,15 +17,28 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from clipfarm.models import (
-    ClipFarmState,
-    StrictModel,
-    WhisperSegment,
-)
+from clipfarm.models import ClipFarmState, StrictModel
 from clipfarm.routes.deps import get_state
 from clipfarm.transcripts import load_transcript_for_source
 
 router = APIRouter(prefix="/api", tags=["transcripts"])
+
+
+class WhisperWordLite(StrictModel):
+    """Response-only word shape — `probability` dropped vs the full
+    `WhisperWord` model. See module docstring."""
+
+    start: float
+    end: float
+    word: str
+
+
+class WhisperSegmentLite(StrictModel):
+    id: Optional[int] = None
+    start: float
+    end: float
+    text: Optional[str] = None
+    words: list[WhisperWordLite]
 
 
 class ClipRange(StrictModel):
@@ -32,7 +51,7 @@ class TranscriptView(StrictModel):
     source_id: str
     filename: str
     duration_sec: Optional[float] = None
-    segments: list[WhisperSegment]
+    segments: list[WhisperSegmentLite]
     clips: list[ClipRange]
 
 
@@ -65,6 +84,22 @@ def get_source_transcript(
             ),
         )
 
+    # Project full Whisper segments into the lite response shape, dropping
+    # per-word probability. Cheap (~4700 iterations on btc.0.4).
+    lite_segments: list[WhisperSegmentLite] = [
+        WhisperSegmentLite(
+            id=seg.id,
+            start=seg.start,
+            end=seg.end,
+            text=seg.text,
+            words=[
+                WhisperWordLite(start=w.start, end=w.end, word=w.word)
+                for w in seg.words
+            ],
+        )
+        for seg in transcript.segments
+    ]
+
     clips: list[ClipRange] = [
         ClipRange(clip_id=cid, start_sec=clip.start_sec, end_sec=clip.end_sec)
         for cid, clip in state.clips.items()
@@ -76,6 +111,6 @@ def get_source_transcript(
         source_id=source_id,
         filename=source.filename,
         duration_sec=source.duration_sec,
-        segments=transcript.segments,
+        segments=lite_segments,
         clips=clips,
     )
