@@ -290,6 +290,52 @@ script:
     assert "don't think" in parsed.script.lines[0]
 
 
+def test_uniformly_indented_brief_dedented():
+    """Pasting from a markdown code block carries the block's leading
+    indent on every line. The parser strips common leading whitespace
+    so that pattern Just Works.
+
+    Mirrors a real dogfood paste (2026-05-25) where every line had a
+    2-space prefix from the surrounding markdown context.
+    """
+    text = """  ---
+  name: break the chrysalis
+  script:
+    - "Working on my goals."
+    - "I have unedited videos."
+  sections:
+    - the hook
+  tags:
+    - hook
+  ---
+
+  # What's good
+
+  Energy.
+"""
+    parsed = parse_brief(text)
+    assert parsed.name == "break the chrysalis"
+    assert parsed.script is not None
+    assert parsed.script.lines == [
+        "Working on my goals.",
+        "I have unedited videos.",
+    ]
+    assert parsed.sections == ["the hook"]
+    assert parsed.tags == ["hook"]
+    assert "Energy" in parsed.body_md
+
+
+def test_4_space_indent_also_dedented():
+    """The Python convention is 4 spaces — paste-from-Python-docstring
+    case."""
+    text = """    ---
+    name: ok
+    ---
+"""
+    parsed = parse_brief(text)
+    assert parsed.name == "ok"
+
+
 def test_leading_preamble_before_frontmatter_tolerated():
     """A leading title / header line above the `---` fence shouldn't
     reject the brief. Mirrors a real dogfood paste (2026-05-25) where

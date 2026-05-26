@@ -17,6 +17,7 @@ YAML position info preserved.
 from __future__ import annotations
 
 import re
+import textwrap
 from typing import Optional
 
 import yaml
@@ -206,6 +207,13 @@ def parse_brief(text: str) -> ParsedBrief:
     closed so Phase 6's tagging code doesn't have to special-case
     structure-less projects.
     """
+    # Strip common leading indent from the entire brief. This rescues
+    # paste-from-code-block briefs where every line carries the same
+    # 2- or 4-space prefix (real dogfood paste, 2026-05-25). Idempotent
+    # on already-flush briefs — `textwrap.dedent` is a no-op when the
+    # common indent is zero.
+    text = textwrap.dedent(text)
+
     match = _FRONTMATTER_RE.match(text)
     if match is None:
         # Fallback: tolerate a leading preamble (blank lines, a title
