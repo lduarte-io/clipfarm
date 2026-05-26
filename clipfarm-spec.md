@@ -297,7 +297,8 @@ Three levels. Each clip can carry tags at any subset of these levels, for any nu
 |-------|-----------|---------|
 | **Project** | An output video you're building. The thing that gets exported. UI label: "Video." | "btc explainer v0.4", "short: hook about local AI", "video essay: nuance" |
 | **Section** | A chapter or beat within a project. From the project's TOC. Optional — short scripts can skip sections. | "intro", "the setup", "the punchline", "subsection C" |
-| **Line** | A specific script line. Belongs to a section if sections exist, otherwise directly to the project. | "Hey, today I want to talk about..." |
+| **Line** | A specific script line. Conceptually belongs to a section if sections exist, otherwise directly to the project. **v0 simplification**: every line attaches directly to the project (`parent_id=None`); the brief format doesn't yet express section-line parentage, so sections and lines live as siblings inside `Project.tags`. The section→line hierarchy lands in Phase 7+ when the take grid actually consumes it. | "Hey, today I want to talk about..." |
+| **Ad-hoc tag** | A free-form label from the brief's `tags:` array — `kind="tag"` in `ProjectTag`. Distinct from script lines so the merge logic can tell them apart (both used to be `kind="line" parent_id=None` before Phase 5, indistinguishable from each other). Examples: `hook`, `self-custody`, `mistakes`. | |
 
 **Key property — clips are multi-project.** A great line about local AI can belong to multiple projects simultaneously. The same clip carries one tag set per project it's been assigned to — each tag set is independently `(section, line, category)`.
 
@@ -339,7 +340,8 @@ When you write a brief for a new project, the LLM scans the *existing library* a
       "script_json": { "lines": [ "..." ] },
       "tags": {
         "1": { "kind": "section", "name": "intro", "parent_id": null, "order_idx": 0 },
-        "2": { "kind": "line",    "name": "the hook", "parent_id": "1", "order_idx": 0 }
+        "2": { "kind": "line",    "name": "the hook", "parent_id": null, "order_idx": 0 },
+        "3": { "kind": "tag",     "name": "self-custody", "parent_id": null, "order_idx": 0 }
       },
       "created_at": "..."
     }
