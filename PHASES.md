@@ -81,7 +81,7 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 7b.
 - `uv run pytest` passes (target ~375 tests; 322 current + ~50 new for 8 strategies, continuity score, naming, orchestrator, route).
 - `curl localhost:8765/api/projects/<id>/premade-attempts -X POST` against a real tagged project returns the new attempts in JSON with their `premade_bucket`, computed `continuity_score`, named clip lists. State file gains entries under `attempts`.
 - Re-running the POST replaces the ai-premade attempts (count may stay the same or drop if a diagnostic grouping no longer applies; names + clip lists may change).
-- **Real-data smoke on btc.0.4** (after Phase 6 tagging): all 5 best-plausible strategies produce a non-empty attempt. Each has a distinct clip list. `continuity_score` for "longest contiguous take" is ≥ 0.8 (sanity check on the formula). At least one diagnostic grouping populates (likely "ad-lib-heavy" since btc.0.4 has off-script clips around on-script takes).
+- **Real-data smoke on btc.0.4** (after Phase 6 tagging): all 4 single-result strategies (best_per_line, longest_contiguous, shortest_complete, energy_shift) produce a non-empty attempt. `near_one_take` produces ≥ 1 separate attempt (likely 1–3). Each best-plausible attempt has a distinct clip list. `continuity_score` for "longest contiguous take" is ≥ 0.8 AND for every `near_one_take` attempt is ≥ 0.9 (sanity check that the near-one-take strategy is preserving contiguity by returning separate attempts rather than splicing). At least one diagnostic grouping populates (likely `ad_libbed` since btc.0.4 has off-script clips around on-script takes).
 - Frontend: new `/attempts` page lists attempts grouped by `premade_bucket` ("Best plausible" + "Diagnostic"). Each card shows name, source badge, continuity-score bar, clip count, total runtime. Clicking expands the clip list (filenames + timestamps). Project page (`/project`) shows a "Generate premade attempts" CTA when none exist; once present, the CTA flips to "Regenerate" and a compact 8-row summary panel appears with a "See all" link to `/attempts`.
 
 ### Scope
@@ -94,7 +94,7 @@ Each strategy is a pure function returning `list[StrategyResult]` where each `St
 
 - `best_per_line_in_script_order(state, project_id)` — for each line tag in `order_idx` order, pick the highest-confidence on-script clip. Skip lines with no on-script match. Result is ordered by script-line order. Usually low continuity, high completeness. **Always returns at most 1 result.**
 - `longest_contiguous_take(state, project_id)` — over every (source, contiguous-clip-run) window in the project's on-script clips, find the run that maximizes total runtime AND covers the most distinct line tags. Return that run as-is in source-order. By definition continuity ≈ 1.0. **Always at most 1 result.**
-- `near_one_take(state, project_id)` — find contiguous-in-source runs that hit ≥ 70% of script lines on-script with ≤ 2 fragment clips inside. Return ONE combined attempt that concatenates the top 3 such runs (script-order across the 3). Spec wording: "the 3 times I said it in almost one take." **Always at most 1 result.**
+- `near_one_take(state, project_id)` — find contiguous-in-source runs that hit ≥ 70% of script lines on-script with ≤ 2 fragment clips inside. **Return up to 3 SEPARATE attempts**, one per qualifying run, ranked by line-coverage then runtime. Each attempt's clip list is the source-order clip sequence of that single run — so each carries continuity ≈ 1.0 (the whole point: high-continuity straight-throughs). Spec wording matches: *"the 3 TIMES I said it in almost one take"* — plural takes, three viewable candidates, not a Frankensteined splice that would tank continuity. **Result count 0–3.** Ripple effect: best-plausible bucket can have 4–7 attempts, not always 5 (4 single-result strategies + 0–3 near-one-take). Naming differentiates them: "the near-one-take from N:NN-N:NN" or similar.
 - `shortest_complete(state, project_id)` — like `best_per_line` but picks the SHORTEST on-script clip per line. Every line covered, minimum total runtime. For length-constrained cuts and shorts. **Always at most 1 result.**
 - `energy_shift(state, project_id)` — compute words-per-second for each on-script clip from the Whisper word timestamps (cached). For each line, pick the clip with the highest words-per-second. **Marked `# v0 heuristic — revisit when audio analysis lands` in code.** **Always at most 1 result.**
 
@@ -104,7 +104,7 @@ Each strategy is a pure function returning `list[StrategyResult]` where each `St
 - `skipped_line(state, project_id)` — for each line tag N, find sources where the project has on-script clips for at least 60% of OTHER lines but NOT line N. Each non-empty grouping becomes ONE diagnostic attempt: the takes-that-skipped-line-N concatenated in source-order. Cap at top 3 most-skipped lines. **Variable result count (0–3).**
 - `ad_libbed(state, project_id)` — find sources where there's an on-script run + substantial off-line content (related-but-different / standalone-idea clips) intermixed. Build an attempt per source-take that has ≥ 2 such ad-lib clips around its on-script clips. Concatenate in source-order so the user sees the on-script delivery WITH its ad-libs preserved. Cap at top 3 by ad-lib clip count. **Variable result count (0–3).**
 
-Diagnostic strategies are bounded at 3 results each → max 9 diagnostic attempts plus 5 best-plausible = 14 attempts ceiling per project. Reality on a single-source project (btc.0.4) is likely 1–2 of each diagnostic = 5–9 total attempts.
+Diagnostic strategies are bounded at 3 results each → max 9 diagnostic attempts. Best-plausible can have up to 7 attempts (4 single-result strategies + 3 near-one-take), so the ceiling is **16 attempts per project**. Reality on a single-source project (btc.0.4) is likely 4–6 best-plausible + 1–3 diagnostic = 5–9 total attempts.
 
 **Continuity score function: `clipfarm/continuity.py`**
 
@@ -123,10 +123,24 @@ Diagnostic strategies are bounded at 3 results each → max 9 diagnostic attempt
 
 **Route: `clipfarm/routes/premade.py`**
 
-- `POST /api/projects/{project_id}/premade-attempts` → returns the generated `Attempt` objects + their `premade_bucket` field. Same pattern as `POST /api/projects/{id}/tag`:
-  - 404 unknown project, 400 empty-script / no-tags, 502 Ollama unreachable, 409 writes frozen.
-  - `async with save_lock: { mutate via asyncio.to_thread; commit_with_snapshot_locked }`. Snapshot reason `"premade-attempts"`.
-  - `app.state.dirty = True` flips inside the lock-held block BEFORE the orchestrator runs (Phase 6.1 bug #1 rule carries forward as the project pattern).
+- `POST /api/projects/{project_id}/premade-attempts` → response shape:
+  ```json
+  {
+    "generated_count": 0-16,
+    "reason": "...",
+    "attempts": [Attempt, ...]
+  }
+  ```
+  `reason` is always present (empty string when generation succeeded normally; a user-facing message when `generated_count == 0`).
+- **Error / edge-case mapping:**
+  - **404** unknown project.
+  - **400** project has zero `clip_project_tags` rows OR zero on-script tags. Detail: "tag clips first — no on-script matches exist for this project."
+  - **200 with `generated_count: 0`** — the project has on-script tags but every strategy returned `[]` after dedup. Theoretical edge (with on-script tags, `best_per_line` and `shortest_complete` will almost always produce something) but we don't 4xx for "you did everything right, the data is just sparse." `reason` field carries a user-facing message like "Only X on-script clips found; need ≥ Y for premade attempts. Tag more clips and re-run." Frontend reads `reason` for the empty-state copy.
+  - **502** Ollama unreachable (only checked when we're about to make the naming call; canned fallback still works without LLM, so this only fires if we want LLM names AND ping fails — actually, since canned fallback is the safety net, the route SKIPS the Ollama ping entirely and lets `attempt_naming` fall back to canned on connection failure. **No 502 from this route.** Single tradeoff: user might not realize their attempts have canned names instead of LLM names; the response includes `"naming_source": "llm" | "canned"` so the frontend can surface it.).
+  - **409** writes frozen.
+- `async with save_lock: { mutate via asyncio.to_thread; commit_with_snapshot_locked }`. Snapshot reason `"premade-attempts"`.
+- `app.state.dirty = True` flips inside the lock-held block BEFORE the orchestrator runs (Phase 6.1 bug #1 rule carries forward as the project pattern).
+- `mutated` gate (Phase 6.1 cosmetic #3): only commit when at least one attempt was actually written. `generated_count == 0` skips the snapshot.
 
 **Frontend: `web/src/pages/Attempts.tsx` (new) + `web/src/pages/Project.tsx` (touched) + `web/src/App.tsx` (route + nav)**
 
@@ -135,7 +149,7 @@ Diagnostic strategies are bounded at 3 results each → max 9 diagnostic attempt
   - Click an attempt → expanded view: full ordered clip list (filename + timestamp per row, transcript snippet on hover). No editing UI yet (Phase 10).
   - "Regenerate premade attempts" button at the top with a confirmation modal when ai-premade attempts already exist ("This will replace the 8 existing AI-generated attempts. Hand-built attempts and forks are not touched. Continue?").
 - **`web/src/App.tsx`** — `/attempts` route + new "Attempts" nav item between "Script" and "Brief".
-- **`web/src/pages/Project.tsx` (touched)** — when ai-premade attempts exist for the active project, render a **compact 8-row summary panel** above the Take Grid: one row per attempt with name + continuity-bar + clip count, clicking a row navigates to `/attempts` and scrolls to that attempt. "See all" link at the bottom. When NO attempts exist, render a single "Generate premade attempts" CTA instead — clicking POSTs to `/api/projects/{id}/premade-attempts` then navigates to `/attempts`.
+- **`web/src/pages/Project.tsx` (touched)** — when ai-premade attempts exist for the active project, render a **compact summary panel** above the Take Grid showing **best-plausible attempts only** (4–7 rows depending on what strategies produced). Diagnostic attempts are intentionally NOT in this panel — diagnostic is browse-only exploration ("what patterns did I record?"), Project page is the assembly workflow ("what candidates are ready?"); mixing them muddies the mental model. Each row: name + continuity-bar + clip count, clicking navigates to `/attempts` and scrolls to that attempt. A "See all attempts (including diagnostic) →" link at the bottom of the panel jumps to `/attempts`. When NO attempts exist, render a single "Generate premade attempts" CTA instead — clicking POSTs to `/api/projects/{id}/premade-attempts` then navigates to `/attempts`.
 - Empty states: no projects → link to Brief; no tags → link to Brief's "Tag clips"; no attempts → CTA to generate.
 
 **Tests (~50 new):**
@@ -158,6 +172,15 @@ Diagnostic strategies are bounded at 3 results each → max 9 diagnostic attempt
 - **Dedup across strategies.** If two strategies produce identical clip lists (e.g., `best_per_line` and `shortest_complete` agree on a small project), keep the first by strategy order, drop the second. Documented; tested.
 - **`AttemptClip.trim_start_offset` / `trim_end_offset` left at 0.0** for all premade attempts. Per-attempt trim is Phase 10 territory; the resolver uses the clip's base `start_sec`/`end_sec` directly until then.
 - **`internal_pause_max_sec` left at `null` for all premade attempts.** The "tighten internal pauses" toggle ships in Phase 10.
+
+### Phase 8 plan-review advisory items (resolve inline during execution, not pre-code)
+
+These came back from the Phase 8 plan review (2026-05-25). Not blocking but worth landing in code so they don't slip:
+
+- **Regenerate confirmation modal — variable count.** The modal copy should be `"This will replace the ${count} existing AI-generated attempts."`, not hardcoded "8". Attempts vary 4–16; hardcoding lies.
+- **`best_per_line` name suffix when coverage is incomplete.** A 10-line script where 3 lines have no on-script match → 7-clip attempt. Generated name should suffix `(7 of 10 lines covered)` so the user sees the gap. One line in the namer.
+- **`_next_attempt_id` allocator.** Phase 8 is the first writer of `state.attempts`; the monotonic-string-int pattern from `_next_source_id` / `_next_project_id` extends here. Explicit in the orchestrator + one test that two consecutive `generate_premade_attempts` calls don't collide on IDs.
+- **Attempts.tsx click-to-expand uses the side-panel pattern**, NOT an in-place expand or modal. Consistent with Project.tsx / ScriptTOC.tsx; forward-compat with Phase 9's live-preview pane swap (which becomes the third use of the SidePanel pattern → extraction trigger).
 
 ### Carry from Phase 7 review
 
