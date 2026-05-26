@@ -88,7 +88,7 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 9.5. Tagging provid
 
 ---
 
-## Phase 10a — Attempt review + assembly basics (DRAFT — awaiting greenlight)
+## Phase 10a — Attempt review + assembly basics (PLANNED — ready to execute)
 
 **Goal.** Make the assembly workflow actually usable: scrub inside the preview pane, pause/seek with the keyboard, reorder clips inside an attempt by drag, build attempts from scratch, fork existing attempts. Plus the Phase 9 cross-source preload carry. **This is the phase where "candidate videos you can watch" becomes "candidate videos you can shape."**
 
@@ -103,7 +103,7 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 9.5. Tagging provid
 
 ### Verification (manual + automated)
 
-- `uv run pytest` passes (target ~470 tests; 447 current + ~23 new for hand-built create, fork, reorder, scrubber math).
+- `uv run pytest` passes (target ~475 tests; 447 current + ~27 new for hand-built create, fork, reorder, scrubber math, validation edge cases from plan review).
 - **Preview pane**: progress bar visible at bottom; click anywhere on it → seeks to that point within the current range. Spacebar toggles play/pause. ←/→ seek by 5s (clamped at the range edges). Cross-source transition is now instant on same-source-after-cross-source (Phase 9 carry fix).
 - **`/attempts` page**: "New empty attempt" button creates an attempt with 0 clips. Clicking + on a TakeCard (Project / ScriptTOC pages) appends to whichever attempt is "active" (UI selector on each take page).
 - **Drag-to-reorder**: in the AttemptSidePanel's clip list, drag a clip handle → reorder. State + continuity_score persist immediately.
@@ -114,12 +114,17 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 9.5. Tagging provid
 
 **Backend — attempt-edit endpoints (`clipfarm/routes/attempts.py`, new):**
 
-- `POST /api/projects/{project_id}/attempts` — create a new hand-built attempt. Body `{name?: string, clips?: list[AttemptClip]}`. Defaults: empty clips, `source="hand-built"`, `premade_bucket=null`. Returns the new attempt with allocated id. Snapshot + commit.
+- `POST /api/projects/{project_id}/attempts` — create a new hand-built attempt. Body `{name?: string, clips?: list[AttemptClip]}`. Defaults: empty clips, `source="hand-built"`, `premade_bucket=null`, `continuity_score=None`. Returns the new attempt with allocated id. Snapshot + commit.
 - `POST /api/attempts/{attempt_id}/fork` — clone the attempt. Sets `source="fork"`, `parent_attempt_id=attempt_id`, `name="fork of {original.name}"`, copies the clip list verbatim, **recomputes `continuity_score`** (in case the original's cache was stale). Snapshot + commit.
-- `PATCH /api/attempts/{attempt_id}/clips` — replace the entire clip list (the simplest semantics for reorder + add + remove all at once). Body `{clips: list[AttemptClip]}`. Validates: all `clip_id`s exist OR carry tombstone semantics (dangling refs allowed per Phase 4 invariant), clip count > 0 OR explicit force flag for empty drafts. **Recomputes `continuity_score` on every write.** Snapshot + commit.
-- `DELETE /api/attempts/{attempt_id}` — delete an attempt. Hand-built / fork / ai-premade all allowed; defense-in-depth requires explicit confirmation in the UI but the backend doesn't gate on source. Snapshot + commit.
-- All four routes carry the Phase 6.1 invariants: dirty=True before run, mutated-gated commit, snapshot reason names (`hand-built-create`, `attempt-fork`, `attempt-clips-patch`, `attempt-delete`).
-- **No `asyncio.to_thread` needed** — these are pure local mutations, no LLM calls. Fast routes.
+- `PATCH /api/attempts/{attempt_id}` — update attempt metadata. Body `{name?: string}`. Used by the inline rename affordance. Doesn't touch clips. Snapshot + commit.
+- `PATCH /api/attempts/{attempt_id}/clips` — replace the entire clip list (the simplest semantics for reorder + add + remove + tombstone-drop all at once). Body `{clips: list[AttemptClip]}`. **Validation rules (plan-review #1, #2, #3):**
+  1. **PATCH-to-empty is always allowed** (no force flag). Hand-built attempts start empty and the user can drag all clips out and end empty; an empty attempt has `continuity_score=None`.
+  2. **New clip_ids must exist in `state.clips`.** A `clip_id` in the request body that's NOT already in the attempt's current clip list AND NOT in `state.clips` is data corruption (the user can't add a non-existent clip on purpose) — return 400 with a clear "unknown clip_id" detail.
+  3. **Existing tombstones pass through unchanged.** A `clip_id` that's already in the current attempt and resolves to `None` in `state.clips` (a Phase 4 tombstone) survives reorders. The frontend renders tombstones as non-draggable slots in 10a; Phase 10b adds the replacement flow.
+  4. **Tombstones CAN be dropped via PATCH.** The user can prune a tombstone slot by submitting a clip list without it. Different from "replace" (Phase 10b); this is "I gave up on this slot." Tombstone deletion is just a clip-list edit, doesn't require the replace UI.
+  5. **`continuity_score` recomputed on every write** (or set to None if empty).
+- `DELETE /api/attempts/{attempt_id}` — delete an attempt. Hand-built / fork / ai-premade all allowed; defense-in-depth requires explicit confirmation in the UI but the backend doesn't gate on source. Snapshot + commit. **Forks-of-deleted-parent semantics (plan-review #4):** when the parent of a fork is deleted, the fork's `parent_attempt_id` stays pointing at the now-missing id (dangling reference, matches Phase 4's tombstone-for-deleted-clip pattern). Fork is user work and is preserved; UI can render "fork of [deleted attempt #N]" when the parent isn't found. DELETE never gates on "has forks" — gating would be a UX nag at single-user v0 scale.
+- **All five routes set `app.state.dirty = True` inside the `async with save_lock:` block BEFORE the mutation** (plan-review #5). Even though no `asyncio.to_thread` wrap is needed (these are sync local mutations, no LLM calls), the watcher polls every 500ms and in principle could land a poll between mutation and commit. The dirty-before-mutation invariant carries forward from Phase 6 / 8 / 8.1 / 9.5. `mutated`-gated commit + snapshot reason names: `hand-built-create`, `attempt-fork`, `attempt-rename`, `attempt-clips-patch`, `attempt-delete`.
 
 **Backend — continuity refresh helper (`clipfarm/continuity.py`, touched):**
 
@@ -155,14 +160,31 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 9.5. Tagging provid
 
 **Tests (~23 new):**
 
-- `tests/test_routes_attempts.py` (~12): create hand-built (empty + with clips), fork (parent_attempt_id set, continuity recomputed), PATCH clips (reorder, add, remove, all-empty), DELETE, 404 on unknown, 409 on writes-frozen, snapshot+commit invariants (Phase 6.1 carry pattern).
+- `tests/test_routes_attempts.py` (~16): create hand-built (empty + with clips), fork (parent_attempt_id set, continuity recomputed), PATCH metadata (`{name}`) round-trip, PATCH clips (reorder, add, remove, all-empty, **reject unknown clip_id**, **preserve existing tombstone**, **allow tombstone-drop**), DELETE (own, **with-forks-still-references-deleted-parent**), 404 on unknown, 409 on writes-frozen, **dirty=True-before-mutation invariant** (Phase 6.1 carry pattern), snapshot+commit-once-per-call.
 - `tests/test_continuity_refresh.py` (~4): `refresh_attempt_continuity` for empty-clips (sets None), single-clip, multi-clip, dangling clip (uses existing handling).
 - `tests/test_clamp_attempt_trims_for_clip.py` (~5): the Phase 4 stub finally lands its real test. With attempts containing trim offsets, boundary correction that moves base `start_sec` inward past `trim_start_offset` clamps the offset. Same for end. Other clips' offsets unaffected.
 - Phase 9 carry tests not added — visual UX (cross-source preload swap) is the verification target, not unit-testable cleanly.
 
+### Plan-review advisory items (fold inline during execution)
+
+These came back from the Phase 10a plan review (2026-05-26). Not blocking but worth landing in code so they don't slip:
+
+- **Optimistic reorder revert pattern**: keep the previous `clips` array in React state (a `previousOrder` ref) until the server confirms. On 4xx/5xx, restore the array + show a toast. Standard pattern; explicit so the implementer doesn't ad-hoc it.
+- **`AttemptClip` fields round-trip verbatim** on reorder — `trim_start_offset` / `trim_end_offset` / `internal_pause_max_sec` / `notes` survive reorders untouched. 10a won't set these but 10b will, and hand-edited values must survive.
+- **Active-attempt clears on project switch.** The active-attempt context's `useEffect` reads the current state's projects + attempts and clears the active attempt id when it points at a different project (or no longer exists).
+- **Duplicate clip via "+" button is allowed.** Spec doesn't restrict and the use case is real (same clip twice for a callback). Optional subtle toast on add: "added (already in this attempt at position #N)" if the clip is already present.
+- **Phase 9 cross-source preload fix is visually verified only on multi-source attempts.** btc.0.4 is single-source so this won't surface during dogfood verification of 10a. Same blind-spot pattern as Phase 6 LLM speed + Phase 8 continuity-score formula. Note in commit + COMPLETED entry.
+
 ### Decisions locked with this plan
 
 - **Single `PATCH /clips` endpoint replaces the entire clip list.** Cleaner than separate `/reorder` / `/add` / `/remove` endpoints — frontend sends the new list, server validates + recomputes continuity + snapshots. Tradeoff: bigger network payload per edit; in practice the list is small (5–20 clips × ~200 bytes = a few KB).
+- **Separate `PATCH /attempts/{id}` endpoint for metadata** (`{name}`). Keeps the clip-list PATCH semantically pure (clips ↔ clips). Inline rename affordance on the AttemptSidePanel: click the title, edit, blur to save. ~15 lines of React.
+- **PATCH-to-empty allowed without a force flag** (plan-review #1). Empty drafts are a legitimate intermediate state; `continuity_score=None` when empty.
+- **PATCH validation distinguishes preserved-tombstone from new-dangling-id** (plan-review #2). Existing tombstones in the attempt pass through; new clip_ids must exist in `state.clips`. 400 with `unknown clip_id` detail for invalid ones.
+- **PATCH can drop tombstones** (plan-review #3). Pruning a slot is a clip-list edit; replacing one is the 10b flow.
+- **Fork of deleted parent keeps dangling `parent_attempt_id`** (plan-review #4). Matches Phase 4's tombstone-for-deleted-clip pattern. DELETE doesn't gate on "has forks."
+- **All five routes set `dirty=True` inside the save_lock block before mutation** (plan-review #5). Carries the invariant forward despite no `to_thread` wrap.
+- **Attempt rename ships in 10a** (plan-review advisory #10): separate `PATCH /attempts/{id}` for `{name}`. Inline-edit affordance on the side panel.
 - **Optimistic client-side reorder** on drag-end. Server confirms async. Toast + revert on failure.
 - **`@dnd-kit/sortable` keyboard sensors enabled by default.** Tab → Space → arrows → Enter / Esc. Accessibility for free.
 - **Active attempt persisted in localStorage** (key `clipfarm.active_attempt_id`), not on `app.state`. Single-user v0; UI state, not domain state. Cleared on project switch (per-project key would be `clipfarm.active_attempt_id.${project_id}` — TBD if dogfood wants multi-project memory).
