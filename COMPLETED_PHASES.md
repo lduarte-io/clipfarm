@@ -4,6 +4,57 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 7b — Script TOC view
+
+**Verified by Lillian:** ✅ 2026-05-25 (reviewer approval: "ship it"; no required changes, no advisory items).
+
+**Built (2026-05-25):**
+
+Frontend-only re-layout of Phase 7's data. Same `/api/projects/{id}/take-grid` endpoint powers both pages — Take Grid (Phase 7) for cross-line scanning across deliveries; Script TOC (this phase) for working one line top-to-bottom. Each script line becomes a collapsible `<details>` with its takes stacked vertically inside; same buckets-at-the-bottom shape; same side panel + Open-in-Library deep-link.
+
+- **`web/src/pages/ScriptTOC.tsx`** — new page.
+  - Vertical outline: line number (`01.`, `02.`, …) + name + tag-id + take-count badge. Empty rows de-emphasized (italic, neutral-500) but still visible so structural gaps surface.
+  - Compact card per take (~280-char snippet visible without scrolling). Same category-badge palette as Phase 7.
+  - All lines collapsed by default. State is component-local — reload = fresh-everything-collapsed.
+  - Buckets section at the bottom, same 4-bucket shape as Phase 7.
+  - Side panel sticky on the right; selecting a take shows full transcript + Open-in-Library `?source=&word=` deep-link.
+- **`web/src/App.tsx`** — `/script` route + new "Script" nav item between "Project" and "Brief".
+
+**Decisions locked with this phase:**
+
+- **No "Pick this take" assembly button in v0.** Visible-but-disabled UI would be a nag without an attempt target; lands in Phase 8 when attempts exist.
+- **Card + SidePanel deliberately duplicated from Project.tsx, not extracted.** Two implementations isn't an abstraction trigger (project rule: wait for the third). Phase 9's live-preview SidePanel rewrite is the natural extraction point.
+- **Line numbering shown.** Anchors the user's mental model of script order.
+
+**Tests:** zero new — `build_take_grid` is already exhaustively covered by Phase 7's 14 orchestrator tests + 7 route tests. Phase 7b is a re-layout of the same data with no new backend surface. **322 passing + 1 skipped** (the existing ffprobe skip), unchanged from Phase 7's settling-in commits.
+
+**The three brief-parser polish commits (between Phase 7 and Phase 7b) are part of the same "Phase 7 settling in" story** — real friction from real dogfood paste, fixed in three rounds:
+
+- **`d9b540a`** — natural-paragraph script blocks: column-0 dashes + blank lines between items + multi-line continuations now accepted via a loose-list rewrite fallback. Triggered by the `break-the-chrysalis` brief paste.
+- **`ff2e133`** — leading preamble before `---` fence tolerated. Triggered by "New project" UI text getting captured above the frontmatter.
+- **`8270041`** — `textwrap.dedent` pre-pass so uniformly-indented pastes (from markdown code blocks) work. Triggered by the corrected brief still failing because of a 2-space prefix on every line.
+
+Each commit names its specific dogfood trigger so the audit trail is self-contained. The 12-test delta (310 → 322) is entirely from these polish commits — Phase 7b proper added zero new tests.
+
+**Reviewer assessment summary (2026-05-25, separate session):**
+
+> Top-line: ship it. Smallest phase yet, exactly as predicted. Frontend-only (ScriptTOC.tsx + nav route), zero backend changes, zero new tests because `build_take_grid` is the read surface from Phase 7. 322 passing + 1 skipped. The implementation matches the plan precisely — no surprises, no scope creep into 7b itself, no missing pieces. The "reuses Phase 7's endpoint" promise was kept. No required changes, no advisory items even.
+
+**Files touched in Phase 7b:**
+
+```
+NEW:
+  web/src/pages/ScriptTOC.tsx
+
+MODIFIED:
+  web/src/App.tsx              — /script route + nav item
+  PHASES.md                    — Phase 7b marked verified
+  COMPLETED_PHASES.md          — this entry
+  web/dist/...                 — rebuilt
+```
+
+---
+
 ## Phase 7 — Take grid view (read-side of the project layer)
 
 **Verified by Lillian:** ✅ 2026-05-25 (reviewer approval: "ship it"; three advisory items deferred to Phase 8 kickoff or never).
