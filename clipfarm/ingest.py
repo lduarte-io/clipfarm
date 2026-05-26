@@ -34,6 +34,7 @@ from clipfarm.models import (
     WhisperTranscript,
 )
 from clipfarm.segmentation import segment_words_by_silence
+from clipfarm.transcripts import transcript_text_for_range
 
 log = logging.getLogger("clipfarm.ingest")
 
@@ -161,27 +162,6 @@ def _flatten_words(transcript: WhisperTranscript) -> list:
     for seg in transcript.segments:
         out.extend(seg.words)
     return out
-
-
-def _transcript_text_for_range(transcript: WhisperTranscript, start: float, end: float) -> str:
-    """Concatenate every word that falls inside `[start, end]`. Word strings
-    carry their own leading space (faster_whisper convention) — no separator
-    needed."""
-    parts: list[str] = []
-    for seg in transcript.segments:
-        for w in seg.words:
-            if w.end <= start:
-                continue
-            if w.start >= end:
-                break
-            parts.append(w.word)
-        else:
-            continue
-        # If we broke out of the inner loop, also stop the outer? No — the
-        # ranges came from this same word stream, so once we leave the
-        # range we're done.
-        break
-    return "".join(parts).strip()
 
 
 def ingest_folder(state: ClipFarmState, folder: Path) -> IngestResult:
@@ -333,7 +313,7 @@ def _segment_into_clips(
             source_id=source_id,
             start_sec=start,
             end_sec=end,
-            transcript_text=_transcript_text_for_range(transcript, start, end),
+            transcript_text=transcript_text_for_range(transcript, start, end),
             created_at=created_at,
         )
         added += 1

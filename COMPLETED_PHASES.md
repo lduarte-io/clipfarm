@@ -4,9 +4,100 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 4 — Boundary correction
+
+**Verified by Lillian:** ⏳ pending
+
+**Built (2026-05-25):**
+
+The manual escape hatch for AI segmentation mistakes — five operations
+on base clips with full tag + attempt propagation rules tested against
+synthetic state (Phase 6 and Phase 8 plug in clean later).
+
+- **Backend (new for Phase 4):**
+  - `clipfarm/propagation.py` — pure tag + attempt-ref + trim-clamp rules. `clone_tags_to_pair` (split → clone with `stale=True` on both halves), `union_merge_tags` (merge → dedupe on `(project_id, project_tag_id, category)`), `drop_tags_for_clip` (delete → final removal), `reassign_attempt_refs` (split/merge → swap clip_id with optional `needs_review` flip), `mark_attempts_needs_review_for_clip` (delete → flag but leave the AttemptClip's `clip_id` pointing at the deleted ID — deliberate tombstone for the Phase 7+ "removed — pick a replacement" placeholder), `clamp_attempt_trims_for_clip` (the four-case rule activated). Module is pure: no I/O, no snapshot.
+  - `clipfarm/boundary.py` — orchestrators. Each clip-producing op takes `transcript: Optional[WhisperTranscript]` as an explicit parameter — the route layer loads via `transcripts.load_transcript_for_source` once and passes it in. Keeps `boundary.py` I/O-free, matches the Phase 2/3 seam. `split_clip(state, clip_id, split_at_sec, transcript) → (c1, c2)`; `merge_clips(state, clip_ids, transcript) → new_id`; `adjust_clip_boundaries(state, clip_id, start, end, transcript)`; `create_clip_from_range(state, source_id, start, end, transcript) → new_id`; `delete_clip(state, clip_id) → (dropped_tags, affected_attempts)`.
+  - `clipfarm/routes/clips.py` — five routes: `POST /api/clips/{id}/split`, `POST /api/clips/merge`, `PATCH /api/clips/{id}/boundaries`, `POST /api/sources/{id}/clips`, `DELETE /api/clips/{id}`. Each holds `app.state.save_lock` around the orchestrator call (mutation-under-lock pattern from Phase 2.1) and routes through `commit_state_with_snapshot(app, reason=<kebab-case>)`. Snapshot reasons: `split-clip`, `merge-clips`, `adjust-boundaries`, `create-clip`, `delete-clip` — all searchable + consistent. Domain errors map cleanly: `KeyError` → 404, `ValueError` → 400, `WritesFrozenError` → 409.
+  - `transcript_text_for_range` extracted from `clipfarm/ingest.py` into `clipfarm/transcripts.py` (now public, shared between ingest and boundary). Ingest output is byte-identical before/after the extraction.
+
+- **Trim-clamp four-case rule activated** (Phase 1 advance note). Negative offsets aren't touched (they extend past the base into source raw range, not constrained by base bounds). Positive offsets get clamped on **inward** base moves only:
+  - Case 1: start moved inward → `trim_start = max(0, (old_start + old_trim_s) - new_start)`. Preserves the absolute effective start; collapses to 0 if the new base overshoots.
+  - Case 2: end moved inward → symmetric.
+  - Case 3: outward moves leave positive offsets alone.
+  - Case 4 (pathological): if clamping produces `effective_start ≥ effective_end`, both offsets collapse to 0, a `WARNING` log line names `(attempt_id, clip_id)`, and the boundary adjustment succeeds. The boundary edit is the user's explicit ask; we don't fail it on a downstream trim conflict. `Attempt.needs_review` (already set by the calling op) gives Phase 10's UI a hook to surface "trim was reset on this attempt."
+
+- **Frontend (`web/src/pages/Library.tsx`):** big extension of the Phase 3 view.
+  - **Multi-clip selection** via cmd/ctrl-click (toggle in/out); plain click resets to single selection.
+  - **Action bar** above the transcript that materializes based on selection:
+    - 0 clips → keyboard hint banner.
+    - 1 clip → `Split @midpoint`, `[` / `]` / `,` / `.` boundary nudge buttons + a destructive `Delete` button. Same actions wired to keyboard.
+    - ≥ 2 clips on the same source → `Merge N clips` button.
+  - **Keyboard shortcuts**: `m` → merge, `[` `]` `,` `.` → nudge boundaries (each move jumps to the nearest word boundary in the transcript), `Cmd/Ctrl+Backspace` → delete with always-confirm dialog. Disabled while focus is inside a text input.
+  - **Create-clip dialog** (numeric start/end inputs in seconds) — works on transcript-having and footage-only sources; the footage-only source view shows a "Create clip by range" button up front instead of a transcript.
+  - **Delete confirm dialog** ("you can restore from `.clipfarm/snapshots/`") — always confirms in v0; the "disable confirmation" setting is deferred until Settings has real persistence (TODO comment points at the future hook).
+  - **Toasts** for success + failure on every mutation. Auto-dismiss at 1.8s for `ok` and 4.5s for `err`.
+  - **Auto-refresh** on every mutation: `/api/state` refetched + transcript view re-fetched (cache hit, so cheap) via a `refreshNonce`.
+  - **Search panel** got a minimum query length of 2 chars on the debounce — small UX polish flagged in the Phase 3 review.
+
+- **Tests added (71 new — 182 total passing, up from 111):**
+  - `tests/test_propagation.py` (18): all six pure helpers tested with synthetic tags + attempts. Clamp's four cases each get their own test, including the pathological collapse with a `caplog` assertion. Negative offsets explicitly tested as untouched. Multiple attempts referencing the same clip both get adjusted.
+  - `tests/test_boundary.py` (35): each orchestrator's happy path + every validation error + the propagation side effects (tags cloned with `stale`, tags union-deduped on merge, attempt refs reassigned with `needs_review` on split, refs reassigned without `needs_review` on merge, refs left dangling on delete with `needs_review` set). Footage-only behavior (`transcript=None` → `transcript_text=""`) tested for `split_clip` and `create_clip_from_range`. The half-open touching-endpoint case proven not to be an overlap.
+  - `tests/test_routes_clips.py` (18): one happy-path + at least one error case per route + the structural **`_count_snapshots_after_op` helper** wrapping every happy-path test (asserts exactly one new snapshot file appeared, name carrying the expected reason segment). Plus the **snapshot-count-equals-op-count invariant**: run one of each op type, assert snapshots increased by exactly 5. Plus the **save-lock-held-during-orchestrator** assertion carried from Phase 2.1.
+
+**Manual verification run (all green):**
+
+Ingest `05.19.26/` (18 sources, 157 clips), then exercise each op against `btc.0.4`:
+
+- **Split** `btc.0.4__00-00-24.890__00-00-50.610` at the midpoint 37.75s → 2 new clips with the boundaries summing to the original. Snapshot file: `…__split-clip.json`.
+- **Merge** the two halves back together → 1 new clip with the original range restored. `transcript_text` preview matches expected content. Snapshot: `…__merge-clips.json`.
+- **Adjust** the merged clip's end inward by 1.0s (to 49.61) → clip ID unchanged, boundaries updated. Snapshot: `…__adjust-boundaries.json`.
+- **Create** a new clip at `[55, 60)` (known unused range) → `btc.0.4__00-00-55.000__00-01-00.000` appears in state. Snapshot: `…__create-clip.json`.
+- **Delete** the just-created clip → gone. Response carries `dropped_tag_rows=0` and `affected_attempts=0` (forward-compatible shape even at zero). Snapshot: `…__delete-clip.json`.
+- **Snapshot inventory**: exactly 5 files total, one of each reason (`adjust-boundaries`, `create-clip`, `delete-clip`, `merge-clips`, `split-clip`). The op-count == snapshot-count invariant holds.
+- **Failure modes**: split with an out-of-range timestamp on a deleted clip → 404 (the clip is gone, found first). Merge across two sources → 400. All as designed.
+
+**Assumptions made + deviations from the plan:**
+
+- **Boundary nudge snaps to word boundaries on the server side.** The frontend collects every word's `start` / `end` timestamps from the loaded transcript and finds the next word edge in the direction of the press. The server is told the new exact boundaries, doesn't infer. Footage-only sources don't have word edges to snap to, so nudge keys are inert on them — the `Create clip by range` dialog is the only path.
+- **Merge selection only enables the `Merge N` button when all selected clips live on the same source.** The check is client-side (visual); the server still rejects cross-source merges with 400 even if the client missed it. Defense in depth.
+- **Split @midpoint** (not user-chosen). v0 ships the simplest split UX: pick the clip, split at its midpoint. A finer split-anywhere UI (click between two specific words) is a Phase 4.1 polish item — flagged for follow-up. The server already supports any in-range `split_at_sec`, so the upgrade is frontend-only.
+- **Transcript LRU cache invalidation on mutate.** After every boundary op the route doesn't touch the on-disk sidecar (only `clipfarm.json` changes), but `Clip.transcript_text` is recomputed from the cached transcript. The cache still returns the right `WhisperTranscript` (mtime hasn't changed); the recomputation runs against it. No stale-text risk.
+- **Pathological-clamp warning is logged, not surfaced in API response.** A future hook (Phase 10 UI) can read the log or check `Attempt.needs_review` to know a trim was reset. v0 doesn't propagate the warning back through the boundary route response — keeps the response shape simple. Flagged as a possible polish item.
+- **`merge_clips` with overlapping clips raises** rather than silently picking one side. Stricter than the spec's literal text but safer — overlapping clips on the same source shouldn't exist in the first place (boundary validation prevents it on adjust/create), so encountering them at merge time is a data-state bug worth surfacing.
+
+**Open follow-ups for the reviewer to evaluate:**
+
+1. **Split UX**: v0 ships `Split @midpoint` only. A finer "click between two words to split there" UI (popover anchored at the gap, computes the gap midpoint as `split_at_sec`) is a polish-layer add. Cheap, isolated to `TranscriptView`. Not blocking — but worth doing before extensive boundary-correction dogfooding.
+2. **Pathological-clamp surfacing in the API response.** Right now the warning lives only in logs. If Phase 10's UI wants to show "trim was reset on N attempts," the route could return a count of `pathological_clamps` from the adjust path. Forward-compatible response shape; defer until Phase 10 actually needs it.
+3. **Drag-select word range → create clip.** Cleaner than the numeric dialog for transcript-having sources. Native browser selection over the word spans is possible but capture-fiddly; v0 punted to the numeric dialog. Worth doing alongside Split UX polish.
+4. **`merge_clips` with no_overlap_or_gap_tolerance.** The spec's example talks about merging clips that were incorrectly split (sub-2-sec gap). v0 accepts any gap. Worth pinning a spec note that ≥ 2 sec gaps are intentional and merge folds them in deliberately.
+
+**Files touched in Phase 4:**
+
+```
+NEW:
+  clipfarm/boundary.py
+  clipfarm/propagation.py
+  clipfarm/routes/clips.py
+  tests/test_boundary.py
+  tests/test_propagation.py
+  tests/test_routes_clips.py
+
+MODIFIED:
+  clipfarm/app.py           — include clips router
+  clipfarm/ingest.py        — use public transcript_text_for_range from transcripts.py
+  clipfarm/transcripts.py   — export transcript_text_for_range as a shared helper
+  web/src/pages/Library.tsx — multi-clip selection + action bar + dialogs + toasts + keyboard shortcuts
+  web/dist/...              — rebuilt
+  PHASES.md                 — Phase 3 marked verified, Phase 4 plan landed (with seven plan-review fixes folded in)
+  COMPLETED_PHASES.md       — Phase 3/3.1 verified stamps + this Phase 4 entry
+```
+
+---
+
 ## Phase 3.1 — P3 review punch-list
 
-**Verified by Lillian:** ⏳ pending — folded in alongside Phase 3 verification.
+**Verified by Lillian:** ✅ 2026-05-25 (folded in alongside Phase 3).
 
 **Three small fixes from the reviewer's Phase 3 assessment:**
 

@@ -123,13 +123,118 @@ These are small and Phase 3 touches the Library UI anyway, so they ride along.
 
 ## Phase 4 — Boundary correction
 
-*To be planned before execution.*
+**Goal.** The manual escape hatch when the 2-second silence heuristic gets it wrong: split / merge / extend / shrink / create / delete on base clips, with the propagation rules from spec → "Fix segmentation when the AI gets it wrong" enforced for `clip_project_tags` (tags) and `attempts[*].clips` (attempt references). After Phase 4, segmentation mistakes on `btc.0.4` are fixable in-app instead of requiring a manual `clipfarm.json` edit.
 
-**Advance notes** (carry into the plan when written):
-- Split / merge / extend / shrink / create / delete must each route through `snapshot_before_destructive()` before mutating state. Test that every op writes a snapshot.
-- **Trim-clamp stub**: define a `clamp_attempt_trims_for_clip(state, clip_id)` function that walks every `Attempt.clips` referencing `clip_id` and clamps `trim_start_offset` / `trim_end_offset` to the new base bounds. Phase 4 calls it from extend/shrink (no attempts exist yet, so it's a no-op in practice), and Phase 10 has the failing test that proves it does the right thing once attempts exist. Stubbing it here means the call site already exists when attempts arrive.
-- **Tag propagation tests** (no real tags yet, but the rule is testable with synthetic data): split clones tags with `stale=true`; merge unions and dedupes on `(project_id, project_tag_id, category)`; delete drops tag rows and sets `needs_review=true` on affected attempts.
-- **Dangling-clip tombstone test**: an attempt whose `clip_id` no longer exists in `state.clips` must validate, load, and surface a "removed — pick a replacement" placeholder at render time (Phase 7+). The resolver detects it by `state.clips.get(clip_id) is None`. Test the round-trip + the resolver fallback.
+Tag and attempt pipelines don't exist yet (Phase 6 and Phase 8 respectively), so Phase 4 tests the propagation rules against **synthetic** `clip_project_tags` / `attempts` injected into state. That locks the write-side semantics before the read-side machinery shows up — both phases later become much smaller because the rules are already a single tested code path.
+
+**Verification at the end of this phase (concrete, no manual UI inspection needed):**
+
+- `uv run pytest` passes (target ~170+ tests; Phase 3.1's 111 + ~60 Phase 4 additions).
+- `curl -X POST localhost:8765/api/clips/<clip_id>/split -d '{"split_at_sec": ...}'` produces two new clips with proper IDs, removes the original, and writes exactly one snapshot file to `.clipfarm/snapshots/`. State round-trips through reload.
+- Each of `POST /api/clips/{id}/split`, `POST /api/clips/merge`, `PATCH /api/clips/{id}/boundaries`, `POST /api/sources/{id}/clips`, `DELETE /api/clips/{id}` exercises `commit_state_with_snapshot()` exactly once per call. **Snapshot count == op count** is a tested invariant.
+- **Live verification on `btc.0.4`:** ingest, pick a mis-segmented clip (one we identify by inspection — the 91-clip baseline lets us pick a clip and split/merge it without losing track), apply a split via curl, confirm: (a) original clip gone, (b) two new clips with adjacent boundaries summing to the original, (c) snapshot file present in `.clipfarm/snapshots/`, (d) `curl /api/sources/4/transcript` reflects the change.
+- **Synthetic-tag + synthetic-attempt propagation tests pass.** Each propagation rule from the spec is tested with hand-built `ClipProjectTag` + `Attempt` data injected into state.
+
+### Scope
+
+**Backend (`clipfarm/` package — new for Phase 4):**
+
+- **`clipfarm/boundary.py`** — pure orchestration functions for each operation. All take `(state: ClipFarmState, ...args)` and mutate state in place; **none touch disk and none load transcripts** — every clip-producing function takes the source's already-loaded `WhisperTranscript` as a parameter (the route layer calls `load_transcript_for_source` once and passes it in). Keeps `boundary.py` I/O-free, mirrors the Phase 2/3 architectural seam.
+  - `split_clip(state, clip_id, split_at_sec, transcript) -> tuple[str, str]` — split one clip into two at the given timestamp. Validates `clip.start_sec < split_at_sec < clip.end_sec` (raises `ValueError` otherwise — surfaced as 400). Allocates two new clip IDs via the same `{stem}__HH-MM-SS.mmm__HH-MM-SS.mmm` encoding as ingest. Removes the original clip from `state.clips`. Recomputes `transcript_text` for each new range from the supplied `transcript` (or stores `""` if `transcript is None` — footage-only). Runs tag propagation (clone with `stale=True`) and attempt propagation (assign to first half + `needs_review=True`).
+  - `merge_clips(state, clip_ids: list[str], transcript) -> str` — merge ≥ 2 clips on the same source into one. Validates: same `source_id`, **no overlap** (each next clip's `start_sec >= prev.end_sec` after sorting — silence between clips is folded into the merged range; that's the spec's "merged because you didn't pause long enough" path). The merged range is `(min_start, max_end)`. Allocates one new clip ID, recomputes `transcript_text` over the new range from the supplied `transcript`, removes the originals, runs union-merge tag propagation (dedupe on `(project_id, project_tag_id, category)`) and attempt reassignment.
+  - `adjust_clip_boundaries(state, clip_id, start_sec, end_sec, transcript) -> None` — extend or shrink an existing clip's `start_sec`/`end_sec`. Clip ID stays the same (spec invariant: ID is opaque after creation). Validates: `start_sec < end_sec`, both within source duration if known, **hard 400 on any overlap with adjacent clips on the same source** (no auto-shrink of neighbors — frontend handles "shrink neighbor and retry?" UX deliberately). Recomputes `transcript_text` for the new range. Calls `clamp_attempt_trims_for_clip(state, clip_id)` to keep per-attempt offsets coherent (see precise rules in `propagation.py` below).
+  - `create_clip_from_range(state, source_id, start_sec, end_sec, transcript) -> str` — new clip with a fresh ID. Validates the range doesn't overlap an existing clip on the same source (hard 400 on overlap). Recomputes `transcript_text` from the supplied `transcript`. **Footage-only behavior**: if the source has `transcript_path is None` (or the route layer passes `transcript=None`), `transcript_text=""` and the clip is still created. The spec allows manual clip creation on transcript-less sources via numeric range input.
+  - `delete_clip(state, clip_id) -> None` — remove clip from `state.clips`, drop matching `clip_project_tags`, mark every attempt that referenced this clip with `needs_review=True` but **leave the attempt's `clips[i].clip_id` pointing at the now-deleted ID**. The resolver / render layer (Phase 7+) detects `state.clips.get(clip_id) is None` and renders a "removed — pick a replacement" placeholder. (Don't silently drop the attempt-clip — the user needs to know there's a hole.) No transcript needed.
+
+- **`clipfarm/propagation.py`** — pure helpers shared by `boundary.py`.
+  - `clone_tags_to_pair(state, src_clip_id, dst_clip_ids: list[str], *, stale: bool) -> int` — clones every `clip_project_tags` row pointing at `src_clip_id` to each of `dst_clip_ids` with `stale=stale`. Returns count of rows cloned.
+  - `union_merge_tags(state, src_clip_ids: list[str], dst_clip_id: str) -> int` — union-merge: collect every tag row across `src_clip_ids`, point them at `dst_clip_id`, dedupe on `(project_id, project_tag_id, category)`. Returns count after dedupe.
+  - `drop_tags_for_clip(state, clip_id) -> int` — removes every `clip_project_tags` row pointing at `clip_id`.
+  - `reassign_attempt_refs(state, src_clip_id: str, dst_clip_id: str, *, mark_needs_review: bool) -> int` — walks every `Attempt.clips[i]`, swaps `src_clip_id` → `dst_clip_id`. If `mark_needs_review=True`, also flips `Attempt.needs_review=True` on every affected attempt. Returns count of attempts touched.
+  - `mark_attempts_needs_review_for_clip(state, clip_id) -> int` — for delete: don't reassign, just flip `needs_review=True` on every attempt referencing this clip. Returns count.
+  - `clamp_attempt_trims_for_clip(state, clip_id) -> int` — Phase 1 advance-note stub goes live. For every `Attempt.clips[i]` referencing `clip_id`, clamps `trim_start_offset` / `trim_end_offset` so the effective range stays inside the (now updated) base `start_sec` / `end_sec`. Returns count of attempt-clips whose offsets were modified.
+    - **Trim convention** (per spec): `trim_start_offset` is added to `clip.start_sec` to get the effective start. **Negative** values extend past the base into raw source range; **positive** values shrink inward. Same for `trim_end_offset` (negative extends past `end_sec`; positive shrinks). Negative offsets are bounded by source duration, not by the base clip — they don't need clamping against base boundaries.
+    - **Clamp rules** — exactly four cases for what an `adjust_clip_boundaries` call can do to existing positive offsets:
+      - **Base `start_sec` moves inward (later).** If `trim_start_offset > 0`, the effective start was already inward of the old base; the new base may now overshoot it. Clamp `trim_start_offset = max(0, old_effective_start - new_base_start)` so effective start still ≥ new base. If the old effective start was already ≥ the new base, the offset becomes the difference; if it was < the new base (because the user dragged the base past it), clamp to 0 (the trim collapses; effective start == new base).
+      - **Base `end_sec` moves inward (earlier).** Symmetric. Clamp `trim_end_offset = max(0, new_base_end - old_effective_end)`.
+      - **Base moves outward** (either side). Positive offsets are still fully inside the new base — no clamping needed. Negative offsets are still bounded by source duration — also unaffected. No-op for this side.
+      - **Pathological clamp: effective_start ≥ effective_end after clamping.** Means the new base is so narrow that the existing positive trims collide. **Locked behavior: collapse both offsets to 0 for that `AttemptClip` (effective range == new base), emit a `WARNING` log naming `(attempt_id, clip_id)`, and continue.** The boundary adjustment is the user's explicit ask; we don't fail it on a downstream trim conflict. The flipped `Attempt.needs_review` flag (set by the same op) gives the UI a hook to surface "trim was reset on this attempt" later.
+
+- **`clipfarm/routes/clips.py`** — new route module for the five operations.
+  - `POST /api/clips/{clip_id}/split` body `{"split_at_sec": float}` → 200 with `{old_clip_id, new_clip_ids: [a, b], snapshot}` or 400 on invalid range, 404 on unknown clip, 409 on freeze.
+  - `POST /api/clips/merge` body `{"clip_ids": [str, ...]}` → 200 with `{new_clip_id, merged: [...], snapshot}` or 400 if not same-source / not adjacent, 404, 409.
+  - `PATCH /api/clips/{clip_id}/boundaries` body `{"start_sec": float, "end_sec": float}` → 200 with `{clip_id, start_sec, end_sec, snapshot}` or 400 on invalid range / overlap, 404, 409.
+  - `POST /api/sources/{source_id}/clips` body `{"start_sec": float, "end_sec": float}` → 200 with `{new_clip_id, snapshot}` or 400 on overlap, 404, 409.
+  - `DELETE /api/clips/{clip_id}` → 200 with `{deleted_clip_id, affected_attempts: int, dropped_tag_rows: int, snapshot}` or 404, 409.
+  - Every route routes through `commit_state_with_snapshot(app, reason=...)` (the helper from Phase 1.1) — that's how the **snapshot-per-op invariant** is enforced. `reason` strings are kebab-case + searchable, matching the route name root: `"split-clip"`, `"merge-clips"`, `"adjust-boundaries"`, `"create-clip"`, `"delete-clip"`.
+
+- **Shared helper extracted from `ingest.py`** — `transcript_text_for_range(transcript, start_sec, end_sec) -> str` becomes a public function used by both ingest (during initial segmentation) and `boundary.create_clip_from_range`. No behavior change; just stops the helper being private + duplicated.
+
+**Frontend (`web/src/pages/Library.tsx`):**
+
+- Hook off the existing `data-word-index` / `data-start` / `data-end` / `data-clip-id` attributes left in the transcript view.
+- **Split UI:** clicking the gap *between* two words (a tiny hit area between word spans) opens a small popover anchored there: "Split clip here?" + a confirm button + Esc-to-cancel. On confirm, POST to `/api/clips/{id}/split` with `split_at_sec = (prev_word.end + next_word.start) / 2`. State refresh on success; toast + revert on failure.
+- **Merge UI:** click a clip to select it, shift-click additional clips to multi-select, then press `m` to merge the selection. No "find the adjacent next clip" auto-detection — the user explicitly picks what's getting merged. Same shape as the backend (`clip_ids: list[str]`). A "Merge N clips" button appears in the panel when ≥ 2 clips on the same source are selected.
+- **Extend / shrink UI:** select a clip, then `[` and `]` shift the *start* boundary by one word; `,` and `.` shift the *end* boundary by one word. (Symbol choice matches the Trim Mode future-ideas note in the spec.) Per-press: PATCH the new boundaries. Visual: the clip's left/right edge slides to the new word.
+- **Create-from-scratch UI:** drag-select a word range in the transcript (uses the native browser text selection over the spans); a "Create clip from selection" button appears in a corner; click → POST to `/api/sources/{id}/clips`. v0 limitation: the selection has to be inside the transcript area; we don't try to handle cross-source selections.
+- **Delete UI:** select a clip, then `Cmd`/`Ctrl + Backspace` → confirmation dialog ("you can restore from the .clipfarm/snapshots/ folder if you regret this") → DELETE. **v0: always confirm**; the "disable confirmation" setting is deferred until Settings has real persistence (currently a placeholder page). TODO comment in the handler points at the future hook.
+- All five operations show a small toast on success ("Split → 2 clips" / "Merged 3 clips" / etc.) and on failure ("Server returned 400: clips not adjacent").
+- After every op: `refetch /api/state` + `refetch /api/sources/{currentSource}/transcript` (which is cache-fast since the transcript itself didn't change). Selected clip becomes the new clip on split/merge/create, or `null` on delete.
+
+**Tests:**
+
+- `tests/test_boundary.py` (~25): the pure functions in `boundary.py` and `propagation.py`. No HTTP, no disk. Synthetic state with hand-built `Source`, `Clip`, `ClipProjectTag`, `Attempt` entries.
+  - `split_clip`: in-range split produces 2 clips with right boundaries; midword split via `split_at_sec` is fine (we don't snap to word boundaries — that's frontend UX); out-of-range raises; original clip removed.
+  - `merge_clips`: two-adjacent merge produces 1 clip with summed range; three-clip merge works; non-adjacent raises; cross-source raises; single-clip raises; out-of-order input gets sorted.
+  - `adjust_clip_boundaries`: extend in both directions stays in place (ID-stable); shrink works; overlap with neighbor raises; out-of-bounds raises.
+  - `create_clip_from_range`: new ID, no inbound refs, transcript_text populated from sidecar.
+  - `delete_clip`: removes clip + tag rows + flips needs_review on affected attempts.
+- `tests/test_propagation.py` (~15): synthetic tags + attempts; each propagation helper tested in isolation.
+  - Split: `clone_tags_to_pair` with 3 tags on the original → 6 tag rows after (3 per new clip), all with `stale=True`; one attempt referencing original → both new clips ignored at first, then `reassign_attempt_refs` to the first half with `mark_needs_review=True`.
+  - Merge: `union_merge_tags` dedupes on `(project_id, project_tag_id, category)` — two clips with overlapping tag sets produce N unique rows, not 2N. `reassign_attempt_refs` retargets every reference.
+  - Delete: `drop_tags_for_clip` removes only matching rows. `mark_attempts_needs_review_for_clip` flips the flag on every affected attempt but leaves the attempt's `clips[i].clip_id` pointing at the now-deleted ID (the dangling-tombstone case the spec calls for).
+  - Boundary adjust: `clamp_attempt_trims_for_clip` with synthetic attempts (no attempts in real state) — verify that an attempt with `trim_start_offset=5.0` referencing a clip whose `start_sec` just moved inward by 3.0 sees the offset clamped to `2.0`, not left dangling. **This is the test the Phase 10 advance note calls out as landing for real here, with synthetic data.**
+- `tests/test_routes_clips.py` (~20): one happy-path + error-mode test per route.
+  - **Snapshot invariant** is its own helper: `_count_snapshots_after_op(client, op_fn)` that wraps any route call, asserts exactly one new file appeared in `.clipfarm/snapshots/` matching the op's reason segment (`"split"`, `"merge"`, etc.). Every route's happy-path test runs through this helper. **Snapshot count == op count** is enforced uniformly.
+  - 400s on invalid input (out-of-range split, non-adjacent merge, overlap).
+  - 404s on unknown clip/source IDs.
+  - 409s when `app.state.writes_frozen` is set.
+  - Lock invariant carried from Phase 2.1: each route holds `app.state.save_lock` during the orchestrator call (use the same patch-and-inspect technique).
+- `tests/test_ingest.py` gets one new case: extracted `transcript_text_for_range` is unchanged in behavior (regression check — ingest's clip texts before and after the extraction are byte-identical).
+
+### Decisions locked from plan review
+
+All six open questions resolved during plan review; behavior is locked in the function/route descriptions above:
+
+1. **Split-at:** frontend hands a precise `split_at_sec` (typically the gap midpoint between two word spans). Server takes it at face value; no server-side word-boundary snapping.
+2. **Merge:** accepts any non-overlapping ordering on the same source. Silence between clips is folded into the merged range. The merged clip's `transcript_text` is recomputed over `(min_start, max_end)`.
+3. **Overlap policy on adjust/create:** hard 400 on any overlap with an adjacent clip. Frontend offers "shrink neighbor and retry?" as a deliberate UX, not a silent server behavior.
+4. **Delete leaves attempt refs dangling:** `clips[i].clip_id` stays pointing at the deleted ID; affected attempts get `needs_review=True`. The "removed — pick a replacement" placeholder lands in Phase 7+.
+5. **Snapshot cap stays at 50.** ~4.4MB at current scale; revisit if a regret-snapshot is ever lost.
+6. **`delete_clip` route emits `affected_attempts` and `dropped_tag_rows` even when both are 0.** Forward-compatible response shape; avoids a future schema bump.
+
+Architectural clarifications from plan review:
+
+7. **`WhisperTranscript` is a parameter, not a side-channel.** Every boundary function that produces a clip whose `transcript_text` needs computing (`split_clip`, `merge_clips`, `adjust_clip_boundaries`, `create_clip_from_range`) takes `transcript: Optional[WhisperTranscript]` as an explicit argument. The route layer loads via `load_transcript_for_source` once and passes it in. `boundary.py` stays I/O-free — no cache imports, no sidecar reads — same seam as Phase 2/3.
+8. **Footage-only clip creation supported.** When `transcript is None` (source has `transcript_path is None`), `transcript_text=""` and the clip is created normally. Matches the spec's allowance for manual clip creation on transcript-less sources.
+9. **Pathological-clamp behavior locked.** When `clamp_attempt_trims_for_clip` produces `effective_start >= effective_end` for an attempt-clip, **both offsets collapse to 0** (effective range == new base), a `WARNING` log line names `(attempt_id, clip_id)`, and the boundary adjustment succeeds. The `Attempt.needs_review` flag (already set by the same op) gives the UI a future hook for "trim was reset on this attempt."
+
+### Out of scope for Phase 4 (explicit)
+
+- Per-attempt trim adjustments (Phase 10's `[` `]` `,` `.` keys on AttemptClip — different operation, different target).
+- Real attempts or real tags being mutated by the app (Phases 6 + 8 — Phase 4 only tests the propagation rules with synthetic data).
+- Auto-snap-to-word for split/create (frontend picks the timestamp; server takes it at face value).
+- Trim Mode auto-replay (Future Ideas; Phase 4 ships the static keyboard nudges only).
+- Undo beyond file-level snapshot revert (the spec's locked decision; no in-app undo system).
+- Cross-source operations (merge across sources, etc. — every op is scoped to one source).
+- Bulk operations (multi-clip delete, etc. — Future Ideas).
+
+### Notes carried into later phases
+
+- **Phase 6** (tagging) will write into `state.clip_project_tags` for the first time. The propagation helpers from `propagation.py` are ready and tested with synthetic data; Phase 6 just provides the writes, no re-implementation.
+- **Phase 8** (premade attempts) will write into `state.attempts` for the first time. Same story — `reassign_attempt_refs` and friends are tested with synthetic attempts in Phase 4.
+- **Phase 9** (live preview) will need the dangling-clip tombstone handling. The placeholder render path is sketched in Phase 4 but only takes effect once attempts exist — Phase 8/9 land the real UI.
+- **Phase 10** (attempt editing) will exercise `clamp_attempt_trims_for_clip` with real attempts. The Phase 4 test asserts the function does the right thing on synthetic data; Phase 10 tests it end-to-end through the attempt-trim UI.
 
 ## Phase 5 — Brief editor + project creation
 

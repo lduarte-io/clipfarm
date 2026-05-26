@@ -124,4 +124,34 @@ def load_transcript_for_source(source: Source) -> Optional[WhisperTranscript]:
     return transcript
 
 
-__all__ = ["cache", "load_transcript_for_source"]
+def transcript_text_for_range(
+    transcript: WhisperTranscript, start: float, end: float
+) -> str:
+    """Concatenate every word from `transcript` whose timing falls inside
+    `[start, end)`. Word strings carry their own leading space
+    (faster_whisper convention) — no separator needed; the result is
+    `.strip()`-ed at the end so the displayed clip text doesn't start
+    with an awkward leading space.
+
+    Shared by `ingest._segment_into_clips` (during initial segmentation)
+    and `boundary.split_clip` / `boundary.merge_clips` /
+    `boundary.adjust_clip_boundaries` / `boundary.create_clip_from_range`
+    (during user-driven boundary correction). Pure: no I/O, no state.
+
+    Half-open: a word with `w.start == end` belongs to the NEXT clip;
+    matches the half-open `[start, end)` invariant from
+    `clipfarm/routes/search.py:_clip_id_for_timestamp`.
+    """
+    parts: list[str] = []
+    for seg in transcript.segments:
+        for w in seg.words:
+            if w.end <= start:
+                continue
+            if w.start >= end:
+                # Past the range — segments are time-ordered, so we're done.
+                return "".join(parts).strip()
+            parts.append(w.word)
+    return "".join(parts).strip()
+
+
+__all__ = ["cache", "load_transcript_for_source", "transcript_text_for_range"]

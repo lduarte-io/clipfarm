@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-// Phase 3 layout: left rail for ingest controls + source list, main panel
-// for the selected source's transcript with clip boundaries marked inline,
-// search bar at the top with debounced live results.
+// Phase 4 adds boundary correction: split / merge / adjust / create /
+// delete operations against the transcript view. Multi-clip selection via
+// cmd-click; action bar shows the available ops; Cmd+Backspace + always-
+// confirm dialog for delete.
 
 type Source = {
   filename: string;
@@ -30,10 +31,10 @@ type IngestResult = {
   clips_detected: number;
 };
 
-type WhisperWord = { start: number; end: number; word: string; probability?: number };
+type WhisperWord = { start: number; end: number; word: string };
 type WhisperSegment = { id?: number; start: number; end: number; text?: string; words: WhisperWord[] };
 type ClipRange = { clip_id: string; start_sec: number; end_sec: number };
-type TranscriptView = {
+type TranscriptViewData = {
   source_id: string;
   filename: string;
   duration_sec: number | null;
@@ -86,12 +87,60 @@ function formatTimestamp(sec: number): string {
     : `${m}:${String(s).padStart(2, "0")}`;
 }
 
-// Alternating tints so adjacent clip ranges read as distinct without being
-// loud. Stronger highlight is applied to the selected clip via `data-selected`.
 const CLIP_TINTS = ["bg-neutral-800/60", "bg-neutral-700/60"];
 
 // ───────────────────────────────────────────────────────────────────────────
-// Ingest panel — same affordance as Phase 2, now collapsible in the left rail.
+// API helpers — small wrappers around the boundary routes. Each rejects on
+// non-2xx and returns the parsed body.
+// ───────────────────────────────────────────────────────────────────────────
+
+async function callJson(url: string, init: RequestInit): Promise<unknown> {
+  const r = await fetch(url, init);
+  if (!r.ok) {
+    const text = await r.text();
+    let detail = text;
+    try {
+      const parsed = JSON.parse(text);
+      detail = typeof parsed.detail === "string" ? parsed.detail : text;
+    } catch {}
+    throw new Error(`${r.status} ${r.statusText}: ${detail}`);
+  }
+  return r.json();
+}
+
+const api = {
+  split: (clipId: string, splitAtSec: number) =>
+    callJson(`/api/clips/${encodeURIComponent(clipId)}/split`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ split_at_sec: splitAtSec }),
+    }),
+  merge: (clipIds: string[]) =>
+    callJson(`/api/clips/merge`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clip_ids: clipIds }),
+    }),
+  adjust: (clipId: string, startSec: number, endSec: number) =>
+    callJson(`/api/clips/${encodeURIComponent(clipId)}/boundaries`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ start_sec: startSec, end_sec: endSec }),
+    }),
+  create: (sourceId: string, startSec: number, endSec: number) =>
+    callJson(`/api/sources/${encodeURIComponent(sourceId)}/clips`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ start_sec: startSec, end_sec: endSec }),
+    }),
+  remove: (clipId: string) =>
+    callJson(`/api/clips/${encodeURIComponent(clipId)}`, {
+      method: "DELETE",
+    }),
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ingest panel
 // ───────────────────────────────────────────────────────────────────────────
 
 function IngestPanel({ onAfterIngest }: { onAfterIngest: () => void }) {
@@ -212,7 +261,158 @@ function IngestPanel({ onAfterIngest }: { onAfterIngest: () => void }) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Transcript view — words rendered inline, clip boundaries tinted.
+// Confirm dialog
+// ───────────────────────────────────────────────────────────────────────────
+
+function ConfirmDialog({
+  title,
+  body,
+  confirmLabel,
+  destructive,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  destructive?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+      if (e.key === "Enter") onConfirm();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onCancel, onConfirm]);
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+      <div className="bg-neutral-900 border border-neutral-700 rounded-md p-5 max-w-md w-full mx-4 space-y-3">
+        <h3 className="font-semibold">{title}</h3>
+        <p className="text-sm text-neutral-300 whitespace-pre-wrap">{body}</p>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 text-sm rounded-md border border-neutral-700 hover:bg-neutral-800"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`px-3 py-1.5 text-sm rounded-md font-medium ${
+              destructive
+                ? "bg-red-600 text-white hover:bg-red-700"
+                : "bg-white text-neutral-950 hover:bg-neutral-200"
+            }`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Create-clip dialog (numeric range entry — works on footage-only sources too)
+// ───────────────────────────────────────────────────────────────────────────
+
+function CreateClipDialog({
+  sourceId,
+  duration,
+  onClose,
+  onCreated,
+}: {
+  sourceId: string;
+  duration: number | null;
+  onClose: () => void;
+  onCreated: (newId: string) => void;
+}) {
+  const [startSec, setStartSec] = useState("");
+  const [endSec, setEndSec] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    const s = parseFloat(startSec);
+    const e = parseFloat(endSec);
+    if (Number.isNaN(s) || Number.isNaN(e)) {
+      setError("Both fields must be numbers (seconds).");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const body = (await api.create(sourceId, s, e)) as { new_clip_id: string };
+      onCreated(body.new_clip_id);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+      <div className="bg-neutral-900 border border-neutral-700 rounded-md p-5 max-w-md w-full mx-4 space-y-3">
+        <h3 className="font-semibold">Create clip</h3>
+        <p className="text-sm text-neutral-400">
+          Enter the start and end timestamps in seconds. Range must not
+          overlap an existing clip on this source.
+          {duration != null && ` Source duration: ${formatTimestamp(duration)}.`}
+        </p>
+        <div className="space-y-2">
+          <label className="block text-xs">
+            Start (seconds)
+            <input
+              autoFocus
+              type="number"
+              step="0.001"
+              value={startSec}
+              onChange={(e) => setStartSec(e.target.value)}
+              className="block w-full mt-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm font-mono"
+              disabled={busy}
+            />
+          </label>
+          <label className="block text-xs">
+            End (seconds)
+            <input
+              type="number"
+              step="0.001"
+              value={endSec}
+              onChange={(e) => setEndSec(e.target.value)}
+              className="block w-full mt-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm font-mono"
+              disabled={busy}
+            />
+          </label>
+        </div>
+        {error && <div className="text-red-400 text-xs whitespace-pre-wrap">{error}</div>}
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-3 py-1.5 text-sm rounded-md border border-neutral-700 hover:bg-neutral-800"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="px-3 py-1.5 text-sm rounded-md bg-white text-neutral-950 font-medium hover:bg-neutral-200"
+          >
+            {busy ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Transcript view — adds multi-clip selection + action bar + ops.
 // ───────────────────────────────────────────────────────────────────────────
 
 type FocusRequest = { wordIndex: number; nonce: number };
@@ -220,44 +420,49 @@ type FocusRequest = { wordIndex: number; nonce: number };
 function TranscriptView({
   sourceId,
   focus,
-  onClipSelect,
+  refreshNonce,
+  pushToast,
+  onAfterMutation,
 }: {
   sourceId: string | null;
   focus: FocusRequest | null;
-  onClipSelect: (clipId: string | null) => void;
+  refreshNonce: number;
+  pushToast: (kind: "ok" | "err", text: string) => void;
+  onAfterMutation: () => void;
 }) {
-  const [data, setData] = useState<TranscriptView | null>(null);
+  const [data, setData] = useState<TranscriptViewData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedClip, setSelectedClip] = useState<string | null>(null);
+  const [selectedClips, setSelectedClips] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
+  // Fetch / refetch the transcript when source or refreshNonce changes.
   useEffect(() => {
     setData(null);
     setError(null);
-    setSelectedClip(null);
+    setSelectedClips(new Set());
     if (!sourceId) return;
     let cancelled = false;
     (async () => {
       const r = await fetch(`/api/sources/${encodeURIComponent(sourceId)}/transcript`);
       if (cancelled) return;
       if (r.status === 422) {
-        setError("This source has no transcript yet (footage-only).");
+        setError("This source has no transcript yet (footage-only). You can still create clips by numeric range.");
         return;
       }
       if (!r.ok) {
         setError(`Failed to load transcript: ${r.status} ${r.statusText}`);
         return;
       }
-      const body: TranscriptView = await r.json();
+      const body: TranscriptViewData = await r.json();
       setData(body);
     })();
     return () => {
       cancelled = true;
     };
-  }, [sourceId]);
+  }, [sourceId, refreshNonce]);
 
-  // Flatten words once with word_index + the clip range they belong to (if
-  // any). The Phase 4 split/merge popovers will reuse this index.
   const flatWords = useMemo(() => {
     if (!data) return [];
     const out: Array<{ idx: number; word: WhisperWord; clipId: string | null }> = [];
@@ -272,10 +477,9 @@ function TranscriptView({
       }
     }
     return out;
-  }, [data]);
+  }, [data?.segments, data?.clips]);
 
-  // Handle external focus (search-result jump): scroll to the word + flash
-  // its containing clip.
+  // Search-result focus jump.
   useEffect(() => {
     if (!focus || !containerRef.current) return;
     const el = containerRef.current.querySelector(
@@ -285,15 +489,166 @@ function TranscriptView({
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     const clipId = el.getAttribute("data-clip-id");
     if (clipId) {
-      setSelectedClip(clipId);
-      onClipSelect(clipId);
+      setSelectedClips(new Set([clipId]));
     }
     el.classList.add("ring-2", "ring-amber-400");
     const tid = setTimeout(() => {
       el.classList.remove("ring-2", "ring-amber-400");
     }, 1600);
     return () => clearTimeout(tid);
-  }, [focus, onClipSelect]);
+  }, [focus]);
+
+  // ─── Selected-clip derived values ────────────────────────────────────────
+  const selectedClipMeta = useMemo(() => {
+    if (!data) return [];
+    const ids = Array.from(selectedClips);
+    return data.clips.filter((c) => selectedClips.has(c.clip_id));
+  }, [data, selectedClips]);
+
+  const singleSelected = selectedClipMeta.length === 1 ? selectedClipMeta[0] : null;
+
+  // ─── Op wrappers — refresh state + transcript on success ────────────────
+  const runMutation = useCallback(
+    async (label: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+        pushToast("ok", label);
+        onAfterMutation();
+      } catch (e) {
+        pushToast("err", `${label} failed: ${String(e)}`);
+      }
+    },
+    [pushToast, onAfterMutation]
+  );
+
+  // ─── Action handlers ─────────────────────────────────────────────────────
+  const doSplit = useCallback(() => {
+    if (!singleSelected) return;
+    const mid = (singleSelected.start_sec + singleSelected.end_sec) / 2;
+    runMutation("Split", async () => {
+      const body = (await api.split(singleSelected.clip_id, mid)) as {
+        new_clip_ids: [string, string];
+      };
+      setSelectedClips(new Set(body.new_clip_ids));
+    });
+  }, [singleSelected, runMutation]);
+
+  const doMerge = useCallback(() => {
+    const ids = Array.from(selectedClips);
+    if (ids.length < 2) return;
+    runMutation(`Merge ${ids.length} clips`, async () => {
+      const body = (await api.merge(ids)) as { new_clip_id: string };
+      setSelectedClips(new Set([body.new_clip_id]));
+    });
+  }, [selectedClips, runMutation]);
+
+  // Word-boundary nudge helpers for extend/shrink.
+  const nudge = useCallback(
+    (side: "start" | "end", dir: "out" | "in") => {
+      if (!singleSelected || !data) return;
+      const clip = singleSelected;
+      // Find current word boundaries on either side of the current edge.
+      const wordEdges = flatWords.map((fw) => fw.word.start).concat(
+        flatWords.length ? [flatWords[flatWords.length - 1].word.end] : []
+      );
+      let newStart = clip.start_sec;
+      let newEnd = clip.end_sec;
+      if (side === "start") {
+        // "out" → earlier word boundary; "in" → later.
+        const sorted = [...wordEdges].sort((a, b) => a - b);
+        if (dir === "out") {
+          const prev = [...sorted].reverse().find((t) => t < clip.start_sec);
+          if (prev !== undefined) newStart = prev;
+        } else {
+          const next = sorted.find((t) => t > clip.start_sec && t < clip.end_sec);
+          if (next !== undefined) newStart = next;
+        }
+      } else {
+        const sorted = [...wordEdges].sort((a, b) => a - b);
+        if (dir === "out") {
+          const next = sorted.find((t) => t > clip.end_sec);
+          if (next !== undefined) newEnd = next;
+        } else {
+          const prev = [...sorted].reverse().find((t) => t < clip.end_sec && t > clip.start_sec);
+          if (prev !== undefined) newEnd = prev;
+        }
+      }
+      if (newStart === clip.start_sec && newEnd === clip.end_sec) {
+        pushToast("err", "Already at a word boundary");
+        return;
+      }
+      runMutation("Adjust", async () => {
+        await api.adjust(clip.clip_id, newStart, newEnd);
+      });
+    },
+    [singleSelected, data, flatWords, pushToast, runMutation]
+  );
+
+  const requestDelete = useCallback(() => {
+    if (!singleSelected) return;
+    setDeleteTarget(singleSelected.clip_id);
+  }, [singleSelected]);
+
+  const confirmDelete = useCallback(() => {
+    if (!deleteTarget) return;
+    const id = deleteTarget;
+    setDeleteTarget(null);
+    runMutation("Delete", async () => {
+      await api.remove(id);
+      setSelectedClips(new Set());
+    });
+  }, [deleteTarget, runMutation]);
+
+  // ─── Keyboard shortcuts ──────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Don't fire when typing in any input field.
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      // m = merge (≥2 selected on same source)
+      if (e.key === "m" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (selectedClips.size >= 2) {
+          e.preventDefault();
+          doMerge();
+          return;
+        }
+      }
+      // [ ] , .  with one selected → adjust boundaries
+      if (singleSelected) {
+        if (e.key === "[") {
+          e.preventDefault();
+          nudge("start", "out");
+          return;
+        }
+        if (e.key === "]") {
+          e.preventDefault();
+          nudge("start", "in");
+          return;
+        }
+        if (e.key === ",") {
+          e.preventDefault();
+          nudge("end", "in");
+          return;
+        }
+        if (e.key === ".") {
+          e.preventDefault();
+          nudge("end", "out");
+          return;
+        }
+      }
+      // Cmd/Ctrl + Backspace → delete with confirm
+      if (e.key === "Backspace" && (e.metaKey || e.ctrlKey)) {
+        if (singleSelected) {
+          e.preventDefault();
+          requestDelete();
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedClips, singleSelected, doMerge, nudge, requestDelete]);
 
   if (!sourceId) {
     return (
@@ -302,6 +657,37 @@ function TranscriptView({
       </div>
     );
   }
+
+  // Footage-only source still supports create-from-numeric-range.
+  if (error && error.includes("footage-only")) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="border-b border-neutral-800 pb-3 mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold font-mono">(no transcript)</h2>
+          <button
+            onClick={() => setShowCreateDialog(true)}
+            className="text-xs px-2 py-1 rounded-md border border-neutral-700 hover:bg-neutral-800"
+          >
+            Create clip by range
+          </button>
+        </div>
+        <div className="text-amber-300/80 text-sm p-6">{error}</div>
+        {showCreateDialog && (
+          <CreateClipDialog
+            sourceId={sourceId}
+            duration={null}
+            onClose={() => setShowCreateDialog(false)}
+            onCreated={() => {
+              setShowCreateDialog(false);
+              pushToast("ok", "Create clip");
+              onAfterMutation();
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
   if (error) {
     return <div className="text-amber-300 text-sm p-6">{error}</div>;
   }
@@ -309,7 +695,6 @@ function TranscriptView({
     return <div className="text-neutral-500 text-sm p-6">Loading…</div>;
   }
 
-  // Build a per-clip tint index so adjacent clips alternate colors.
   const tintFor = (clipId: string | null): string => {
     if (!clipId) return "";
     const idx = data.clips.findIndex((c) => c.clip_id === clipId);
@@ -319,18 +704,86 @@ function TranscriptView({
   return (
     <div className="flex flex-col h-full">
       <div className="border-b border-neutral-800 pb-3 mb-3">
-        <h2 className="text-lg font-semibold font-mono">{data.filename}</h2>
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold font-mono truncate">{data.filename}</h2>
+          <button
+            onClick={() => setShowCreateDialog(true)}
+            className="shrink-0 text-xs px-2 py-1 rounded-md border border-neutral-700 hover:bg-neutral-800"
+          >
+            + Create clip by range
+          </button>
+        </div>
         <div className="text-xs text-neutral-400 mt-1">
           {formatDuration(data.duration_sec)} · {data.clips.length} clips ·{" "}
           {flatWords.length} words
         </div>
       </div>
+
+      {/* Action bar */}
+      <div className="mb-3 min-h-[2.5rem]">
+        {selectedClips.size === 0 && (
+          <div className="text-xs text-neutral-500">
+            Click a word in a clip to select it. Hold ⌘ to multi-select clips.
+            Press <kbd>m</kbd> to merge. <kbd>[</kbd>/<kbd>]</kbd> /{" "}
+            <kbd>,</kbd>/<kbd>.</kbd> nudge boundaries.{" "}
+            <kbd>⌘ ⌫</kbd> to delete.
+          </div>
+        )}
+        {singleSelected && (
+          <div className="flex flex-wrap gap-2 items-center text-xs">
+            <span className="text-neutral-400">
+              <code>{singleSelected.clip_id}</code> ·{" "}
+              {formatTimestamp(singleSelected.start_sec)} →{" "}
+              {formatTimestamp(singleSelected.end_sec)}
+            </span>
+            <button
+              onClick={doSplit}
+              className="px-2 py-1 rounded-md border border-neutral-700 hover:bg-neutral-800"
+              title="Split at midpoint"
+            >
+              Split @midpoint
+            </button>
+            <span className="text-neutral-500">|</span>
+            <button onClick={() => nudge("start", "out")} className="px-2 py-1 rounded-md border border-neutral-700 hover:bg-neutral-800" title="[ — extend start outward">[</button>
+            <button onClick={() => nudge("start", "in")} className="px-2 py-1 rounded-md border border-neutral-700 hover:bg-neutral-800" title="] — shrink start inward">]</button>
+            <button onClick={() => nudge("end", "in")} className="px-2 py-1 rounded-md border border-neutral-700 hover:bg-neutral-800" title=", — shrink end inward">,</button>
+            <button onClick={() => nudge("end", "out")} className="px-2 py-1 rounded-md border border-neutral-700 hover:bg-neutral-800" title=". — extend end outward">.</button>
+            <span className="text-neutral-500">|</span>
+            <button
+              onClick={requestDelete}
+              className="px-2 py-1 rounded-md border border-red-800 text-red-300 hover:bg-red-900/30"
+            >
+              Delete
+            </button>
+          </div>
+        )}
+        {selectedClips.size >= 2 && (
+          <div className="flex flex-wrap gap-2 items-center text-xs">
+            <span className="text-neutral-400">
+              {selectedClips.size} clips selected
+            </span>
+            <button
+              onClick={doMerge}
+              className="px-3 py-1 rounded-md bg-white text-neutral-950 font-medium hover:bg-neutral-200"
+            >
+              Merge {selectedClips.size} clips
+            </button>
+            <button
+              onClick={() => setSelectedClips(new Set())}
+              className="px-2 py-1 rounded-md border border-neutral-700 hover:bg-neutral-800"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+      </div>
+
       <div
         ref={containerRef}
         className="flex-1 overflow-y-auto leading-7 text-sm whitespace-pre-wrap"
       >
         {flatWords.map(({ idx, word, clipId }) => {
-          const isSelected = selectedClip && clipId === selectedClip;
+          const isSelected = clipId !== null && selectedClips.has(clipId);
           const tint = tintFor(clipId);
           return (
             <span
@@ -342,11 +795,21 @@ function TranscriptView({
               className={`${tint} ${
                 isSelected ? "ring-1 ring-amber-400/80 rounded-sm" : ""
               } ${clipId ? "cursor-pointer" : ""}`}
-              onClick={() => {
+              onClick={(e) => {
                 if (!clipId) return;
-                const next = clipId === selectedClip ? null : clipId;
-                setSelectedClip(next);
-                onClipSelect(next);
+                setSelectedClips((prev) => {
+                  const next = new Set(prev);
+                  if (e.metaKey || e.ctrlKey) {
+                    // Toggle this clip in/out of selection.
+                    if (next.has(clipId)) next.delete(clipId);
+                    else next.add(clipId);
+                  } else {
+                    // Replace selection with just this clip.
+                    next.clear();
+                    next.add(clipId);
+                  }
+                  return next;
+                });
               }}
               title={
                 clipId
@@ -359,12 +822,36 @@ function TranscriptView({
           );
         })}
       </div>
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete clip?"
+          body={`This removes ${deleteTarget} from the library. You can restore from the .clipfarm/snapshots/ folder if you regret this.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {showCreateDialog && (
+        <CreateClipDialog
+          sourceId={sourceId}
+          duration={data.duration_sec}
+          onClose={() => setShowCreateDialog(false)}
+          onCreated={() => {
+            setShowCreateDialog(false);
+            pushToast("ok", "Create clip");
+            onAfterMutation();
+          }}
+        />
+      )}
     </div>
   );
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Search results — debounced live results inline below the search bar.
+// Search panel
 // ───────────────────────────────────────────────────────────────────────────
 
 function SearchPanel({
@@ -376,10 +863,10 @@ function SearchPanel({
   const [response, setResponse] = useState<SearchResponse | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Debounce the actual fetch.
   useEffect(() => {
     const q = query.trim();
-    if (!q) {
+    if (q.length < 2) {
+      // Minimum query length defends against ?q=a returning the whole library.
       setResponse(null);
       return;
     }
@@ -405,7 +892,7 @@ function SearchPanel({
         <input
           type="search"
           className="flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-          placeholder='Search every transcript ("custody", "bitcoin", ...)'
+          placeholder='Search every transcript (≥ 2 chars; "custody", "bitcoin", …)'
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -446,13 +933,40 @@ function SearchPanel({
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Library page — composes everything together.
+// Toasts
+// ───────────────────────────────────────────────────────────────────────────
+
+type Toast = { id: number; kind: "ok" | "err"; text: string };
+
+function Toasts({ toasts }: { toasts: Toast[] }) {
+  return (
+    <div className="fixed bottom-4 right-4 z-40 flex flex-col gap-2">
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          className={`px-3 py-2 rounded-md text-sm shadow ${
+            t.kind === "ok"
+              ? "bg-emerald-700 text-white"
+              : "bg-red-700 text-white"
+          }`}
+        >
+          {t.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Library page
 // ───────────────────────────────────────────────────────────────────────────
 
 export default function Library() {
   const [state, setState] = useState<AppState | null>(null);
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [toasts, setToasts] = useState<Toast[]>([]);
 
   const refreshState = useCallback(async () => {
     const r = await fetch("/api/state");
@@ -461,6 +975,19 @@ export default function Library() {
 
   useEffect(() => {
     refreshState();
+  }, [refreshState]);
+
+  const pushToast = useCallback((kind: "ok" | "err", text: string) => {
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id, kind, text }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, kind === "ok" ? 1800 : 4500);
+  }, []);
+
+  const onAfterMutation = useCallback(() => {
+    refreshState();
+    setRefreshNonce((n) => n + 1);
   }, [refreshState]);
 
   const sources = state ? Object.entries(state.sources) : [];
@@ -476,8 +1003,6 @@ export default function Library() {
 
   const onHitClick = useCallback((sourceId: string, wordIndex: number) => {
     setSelectedSource(sourceId);
-    // Nonce forces the effect in TranscriptView to re-fire even if the
-    // user clicks the same hit twice.
     setFocusRequest({ wordIndex, nonce: Date.now() });
   }, []);
 
@@ -486,15 +1011,16 @@ export default function Library() {
       <div>
         <h1 className="text-2xl font-semibold">Library</h1>
         <p className="text-neutral-400 text-sm mt-1">
-          Pick a source on the left for its raw transcript; clip boundaries
-          appear inline. Search to scan every transcript at once.
+          Pick a source; clip boundaries appear inline. Select clips to
+          split / merge / adjust / delete them. Boundary correction writes a
+          snapshot before every change — restore from <code>.clipfarm/snapshots/</code>{" "}
+          if needed.
         </p>
       </div>
 
       <SearchPanel onHitClick={onHitClick} />
 
       <div className="flex-1 grid grid-cols-[280px_1fr] gap-4 min-h-0">
-        {/* Left rail */}
         <div className="space-y-3 overflow-y-auto pr-2">
           <IngestPanel onAfterIngest={refreshState} />
           <div className="rounded-md border border-neutral-800 bg-neutral-900/50">
@@ -547,15 +1073,18 @@ export default function Library() {
           </div>
         </div>
 
-        {/* Main panel */}
         <div className="rounded-md border border-neutral-800 bg-neutral-900/30 p-4 min-h-0">
           <TranscriptView
             sourceId={selectedSource}
             focus={focusRequest}
-            onClipSelect={() => {}}
+            refreshNonce={refreshNonce}
+            pushToast={pushToast}
+            onAfterMutation={onAfterMutation}
           />
         </div>
       </div>
+
+      <Toasts toasts={toasts} />
     </section>
   );
 }
