@@ -31,9 +31,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import Field
 
 from clipfarm.llm import DEFAULT_MODEL, chat_with_json_schema
+from clipfarm.llm_anthropic import chat_with_json_schema_anthropic
 from clipfarm.models import Attempt, ClipFarmState, StrictModel
 from clipfarm.premade import generate_premade_attempts
 from clipfarm.routes.deps import commit_state_with_snapshot_locked
+from clipfarm.settings import load_settings
 from clipfarm.store import WritesFrozenError
 
 router = APIRouter(prefix="/api", tags=["premade"])
@@ -104,12 +106,29 @@ async def premade_attempts_route(
             ),
         )
 
-    # LLM client wired in. Tests inject a fake by patching
-    # `clipfarm.routes.premade.chat_with_json_schema`. Note: unlike
-    # tagging, this route does NOT ping Ollama beforehand — the
-    # canned-fallback naming path handles connection failures cleanly.
-    def llm_client(messages, schema):
-        return chat_with_json_schema(messages, schema, model=DEFAULT_MODEL)
+    # Pick the LLM client based on user settings. Same provider toggle
+    # as the tagging route. Unlike tagging, this route does NOT ping
+    # Ollama beforehand — the canned-fallback naming path handles
+    # connection failures cleanly (canned names per strategy).
+    settings = load_settings()
+    tagging_settings = settings.tagging
+    if (
+        tagging_settings.provider == "anthropic"
+        and tagging_settings.anthropic_api_key
+    ):
+        api_key = tagging_settings.anthropic_api_key
+        anthropic_model = tagging_settings.anthropic_model
+
+        def llm_client(messages, schema):
+            return chat_with_json_schema_anthropic(
+                messages, schema,
+                api_key=api_key, model=anthropic_model,
+            )
+    else:
+        ollama_model = tagging_settings.ollama_model
+
+        def llm_client(messages, schema):
+            return chat_with_json_schema(messages, schema, model=ollama_model)
 
     # Phase 8.1 — progress callback merges partial updates into the
     # global slot on app.state. Tolerant of mid-run resets (returns

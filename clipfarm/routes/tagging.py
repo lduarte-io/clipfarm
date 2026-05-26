@@ -40,8 +40,10 @@ from clipfarm.llm import (
     chat_with_json_schema,
     ping_ollama,
 )
+from clipfarm.llm_anthropic import chat_with_json_schema_anthropic
 from clipfarm.models import ClipFarmState
 from clipfarm.routes.deps import commit_state_with_snapshot_locked
+from clipfarm.settings import load_settings
 from clipfarm.store import WritesFrozenError
 from clipfarm.tagging import (
     DEFAULT_BATCH_SIZE,
@@ -108,22 +110,50 @@ async def tag_route(
             ),
         )
 
-    # Ping Ollama before acquiring the save lock. If it's down, return
-    # 502 immediately so the user knows to start the service rather
-    # than wait through 15 batches of timeouts.
-    if not dry_run and not ping_ollama():
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "Ollama is unreachable at OLLAMA_HOST. Is "
-                "`brew services start ollama` running?"
-            ),
-        )
+    # Pick the LLM client based on user settings (Ollama vs Anthropic).
+    # Settings file: .clipfarm/settings.json. Default is Ollama with
+    # llama3.1:8b — no UI interaction required to keep the v0 path.
+    settings = load_settings()
+    tagging_settings = settings.tagging
 
-    # Real LLM client wired into the orchestrator. Tests inject a fake
-    # by patching `clipfarm.routes.tagging.chat_with_json_schema`.
-    def llm_client(messages, schema):
-        return chat_with_json_schema(messages, schema, model=DEFAULT_MODEL)
+    if tagging_settings.provider == "anthropic":
+        # No precondition ping for Anthropic — the SDK + network can
+        # fail in many ways; we surface that as per-batch retries and
+        # eventually `untagged_batches` like any other LLM failure.
+        # API key validation already happened at settings-save time.
+        if not tagging_settings.anthropic_api_key:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "tagging provider is 'anthropic' but no API key is set. "
+                    "Set one on the Settings page first."
+                ),
+            )
+        api_key = tagging_settings.anthropic_api_key
+        anthropic_model = tagging_settings.anthropic_model
+
+        def llm_client(messages, schema):
+            return chat_with_json_schema_anthropic(
+                messages, schema,
+                api_key=api_key, model=anthropic_model,
+            )
+    else:
+        # Ollama. Ping before acquiring the save lock — if it's down,
+        # return 502 immediately rather than tying up the lock through
+        # a long run of retries.
+        if not dry_run and not ping_ollama():
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Ollama is unreachable at OLLAMA_HOST. Is "
+                    "`brew services start ollama` running? "
+                    "(Or switch to Anthropic in Settings.)"
+                ),
+            )
+        ollama_model = tagging_settings.ollama_model
+
+        def llm_client(messages, schema):
+            return chat_with_json_schema(messages, schema, model=ollama_model)
 
     # Phase 8.1 — progress slot lives on app.state. The callback merges
     # partial updates into the existing dict so polling clients see

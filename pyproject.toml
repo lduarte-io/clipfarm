@@ -11,6 +11,10 @@ dependencies = [
     "watchdog>=5.0",
     "pyyaml>=6.0",
     "httpx>=0.28",
+    # Anthropic API as the optional alternative to local Ollama for
+    # tagging + premade-attempt naming. Imported lazily; only required
+    # when the user switches settings.provider to "anthropic".
+    "anthropic>=0.40",
 ]
 
 [dependency-groups]
