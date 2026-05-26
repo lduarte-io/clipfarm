@@ -56,8 +56,28 @@ type TakeGridView = {
 
 type ProjectListItem = { project_id: string; name: string };
 
+// Minimal Attempt shape for the Phase 8 summary panel — only the
+// fields the panel renders. Full Attempt detail lives on the Attempts
+// page; this page links over.
+type AttemptSummary = {
+  attempt_id: string;
+  name: string;
+  source: "ai-premade" | "hand-built" | "fork";
+  premade_bucket: "best" | "diagnostic" | null;
+  continuity_score: number | null;
+  clip_count: number;
+};
+
 type AppState = {
   projects: Record<string, { name: string }>;
+  attempts: Record<string, {
+    project_id: string;
+    name: string;
+    source: "ai-premade" | "hand-built" | "fork";
+    premade_bucket: "best" | "diagnostic" | null;
+    continuity_score: number | null;
+    clips: Array<unknown>;
+  }>;
 };
 
 const BUCKET_ORDER: Category[] = [
@@ -325,36 +345,117 @@ function BucketSection({
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Attempts summary panel (Phase 8) — best-plausible only; diagnostic
+// stays on /attempts because it's exploration, not assembly.
+// ───────────────────────────────────────────────────────────────────────────
+
+function continuityBar(score: number | null) {
+  if (score == null) return { cls: "bg-neutral-700", label: "—" };
+  const pct = Math.round(score * 100);
+  if (score >= 0.8) return { cls: "bg-emerald-500", label: `${pct}%` };
+  if (score >= 0.4) return { cls: "bg-amber-500", label: `${pct}%` };
+  return { cls: "bg-red-500", label: `${pct}%` };
+}
+
+function AttemptsSummaryPanel({
+  bestAttempts,
+  totalCount,
+  onNavigate,
+}: {
+  bestAttempts: AttemptSummary[];
+  totalCount: number;
+  onNavigate: () => void;
+}) {
+  if (bestAttempts.length === 0) return null;
+  return (
+    <details
+      open
+      className="rounded-md border border-neutral-800 bg-neutral-950/40"
+    >
+      <summary className="cursor-pointer px-3 py-2 select-none flex items-center gap-2">
+        <span className="text-sm font-medium">Premade attempts</span>
+        <span className="text-xs text-neutral-500">
+          {bestAttempts.length} best-plausible
+        </span>
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigate();
+          }}
+          className="ml-auto text-xs text-neutral-400 hover:text-white underline"
+        >
+          See all attempts ({totalCount}) →
+        </button>
+      </summary>
+      <div className="border-t border-neutral-800 divide-y divide-neutral-800">
+        {bestAttempts.map((a) => {
+          const tone = continuityBar(a.continuity_score);
+          return (
+            <button
+              key={a.attempt_id}
+              onClick={onNavigate}
+              className="w-full text-left px-3 py-2 hover:bg-neutral-900 flex items-center gap-3"
+            >
+              <span className="text-[10px] font-mono text-neutral-600 w-8 shrink-0">
+                #{a.attempt_id}
+              </span>
+              <span className="flex-1 text-sm text-neutral-200 truncate min-w-0">
+                {a.name}
+              </span>
+              <span className="text-xs text-neutral-500 shrink-0">
+                {a.clip_count} clips
+              </span>
+              <div className="w-24 h-2 rounded-full bg-neutral-800 overflow-hidden shrink-0">
+                <div
+                  className={`h-full ${tone.cls}`}
+                  style={{ width: `${(a.continuity_score ?? 0) * 100}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-mono text-neutral-400 w-10 text-right shrink-0">
+                {tone.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Page
 // ───────────────────────────────────────────────────────────────────────────
 
 export default function Project() {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<ProjectListItem[] | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [grid, setGrid] = useState<TakeGridView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<TakeCard | null>(null);
+  const [appAttempts, setAppAttempts] = useState<AppState["attempts"]>({});
+  const [generatingAttempts, setGeneratingAttempts] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
-  // Load the project list once; pick the first project as the active one.
+  const loadAppState = useCallback(async () => {
+    const r = await fetch("/api/state");
+    if (!r.ok) return;
+    const s: AppState = await r.json();
+    const list = Object.entries(s.projects ?? {}).map(([pid, p]) => ({
+      project_id: pid,
+      name: p.name,
+    }));
+    setProjects(list);
+    setAppAttempts(s.attempts ?? {});
+    if (list.length > 0 && projectId == null) {
+      setProjectId(list[0].project_id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  // Load the project list + attempts once; pick the first project.
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/state")
-      .then((r) => r.json() as Promise<AppState>)
-      .then((s) => {
-        if (cancelled) return;
-        const list = Object.entries(s.projects ?? {}).map(([pid, p]) => ({
-          project_id: pid,
-          name: p.name,
-        }));
-        setProjects(list);
-        if (list.length > 0 && projectId == null) {
-          setProjectId(list[0].project_id);
-        }
-      })
-      .catch((e) => !cancelled && setLoadError(String(e)));
-    return () => {
-      cancelled = true;
-    };
+    loadAppState().catch((e) => setLoadError(String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -389,6 +490,65 @@ export default function Project() {
     for (const b of Object.values(grid.buckets)) n += b.cards.length;
     return n;
   }, [grid]);
+
+  // Phase 8: best-plausible-only summary panel. Diagnostic stays on
+  // /attempts — see the plan's "diagnostic is exploration, not
+  // assembly" decision.
+  const { bestAttemptsForProject, totalAttemptsForProject } = useMemo(() => {
+    if (!projectId) {
+      return { bestAttemptsForProject: [], totalAttemptsForProject: 0 };
+    }
+    const best: AttemptSummary[] = [];
+    let total = 0;
+    for (const [aid, att] of Object.entries(appAttempts)) {
+      if (att.project_id !== projectId) continue;
+      total++;
+      if (att.premade_bucket === "diagnostic") continue;
+      best.push({
+        attempt_id: aid,
+        name: att.name,
+        source: att.source,
+        premade_bucket: att.premade_bucket,
+        continuity_score: att.continuity_score,
+        clip_count: att.clips.length,
+      });
+    }
+    best.sort(
+      (a, b) =>
+        (b.continuity_score ?? 0) - (a.continuity_score ?? 0)
+        || a.name.localeCompare(b.name),
+    );
+    return {
+      bestAttemptsForProject: best,
+      totalAttemptsForProject: total,
+    };
+  }, [appAttempts, projectId]);
+
+  const generatePremade = useCallback(async () => {
+    if (!projectId) return;
+    setGeneratingAttempts(true);
+    setGenerateError(null);
+    try {
+      const r = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/premade-attempts`,
+        { method: "POST" },
+      );
+      const body = await r.json();
+      if (!r.ok) {
+        setGenerateError(
+          typeof body.detail === "string" ? body.detail : r.statusText,
+        );
+        return;
+      }
+      // Navigate to the Attempts page after a successful run so the
+      // user immediately sees what was generated.
+      navigate("/attempts");
+    } catch (e) {
+      setGenerateError(String(e));
+    } finally {
+      setGeneratingAttempts(false);
+    }
+  }, [projectId, navigate]);
 
   // ---- Empty / error states ----
 
@@ -467,6 +627,46 @@ export default function Project() {
         <div className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-300">
           Failed to load take grid: {loadError}
         </div>
+      )}
+
+      {/* Phase 8: attempts summary or CTA. Surfaces above the Take Grid
+          so the user can see "what's already generated" before diving
+          into per-line scanning. */}
+      {grid && totalCardsInGrid > 0 && (
+        <>
+          {bestAttemptsForProject.length > 0 ? (
+            <AttemptsSummaryPanel
+              bestAttempts={bestAttemptsForProject}
+              totalCount={totalAttemptsForProject}
+              onNavigate={() => navigate("/attempts")}
+            />
+          ) : (
+            <div className="rounded-md border border-neutral-800 bg-neutral-900/40 p-3 flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium">
+                  No premade attempts yet
+                </div>
+                <div className="text-xs text-neutral-500">
+                  Generate candidate videos from your tagged clips. ~30s.
+                </div>
+              </div>
+              <button
+                onClick={generatePremade}
+                disabled={generatingAttempts}
+                className="text-xs rounded-md bg-white text-neutral-950 font-medium hover:bg-neutral-200 px-3 py-1.5 disabled:opacity-50"
+              >
+                {generatingAttempts
+                  ? "Generating…"
+                  : "Generate premade attempts"}
+              </button>
+            </div>
+          )}
+          {generateError && (
+            <div className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-300">
+              {generateError}
+            </div>
+          )}
+        </>
       )}
 
       {grid && totalCardsInGrid === 0 && (
