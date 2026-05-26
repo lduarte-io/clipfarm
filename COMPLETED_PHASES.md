@@ -4,6 +4,49 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 8.1 — Long-run progress UI
+
+**Verified by Lillian:** ✅ 2026-05-26 (reviewer: "small, focused, well-engineered").
+
+**Built (2026-05-26):**
+
+Addresses Phase 6 open follow-up #1 — the "is this thing still alive?" problem Lillian hit during a 2026-05-26 tag run.
+
+- **Backend single-slot pattern.** `app.state.tag_progress` + `app.state.premade_progress` initialized to `None` in lifespan. None = idle; populated dict = run-in-progress. Single slot per op type is correct for single-user v0 (the save lock already enforces one run at a time).
+- **Orchestrator progress callback.** `tag_project` and `generate_premade_attempts` gain optional `progress: Callable[[dict], None] | None` parameter. Emits at known phase transitions:
+  - Tagging: `preflight` → `batching` (per batch, with `current_batch` / `total_batches`) → `committing`.
+  - Premade: `preflight` → `running_strategies` (per strategy, with `strategy_name`) → `naming` → `persisting`.
+  - Callback exceptions are logged + swallowed via `_safe_progress` helpers — *"progress is observability, not correctness."*
+- **Routes initialize + finalize the slot inside `try/finally`** so a crashing orchestrator can't leave pollers staring at a stale "running" state. The `write_progress` closure also tolerates the slot being wiped mid-call (defense-in-depth on the race window between orchestrator-emit and route-finalize).
+- **New endpoints**: `GET /api/tag/progress` + `GET /api/premade/progress`. Cheap, no lock acquisition. Return `{running: false}` when idle or `{running: true, ...info}` when active.
+- **Frontend**: new `web/src/components/RunProgress.tsx` — shared `useRunProgress(endpoint, active)` hook (polls every 2s while active; stops on flip-to-false) + `<TagProgressPanel>` + `<PremadeProgressPanel>`. Three uses (Brief, Attempts, Project) = real abstraction trigger.
+- **UX details locked**: phase labels live in the frontend (machine keys in backend), ETA formula = `elapsed * (total - current) / current` and only shows for ≥10s estimates, color-coded progress bars (sky for tagging, violet for premade) so the two run types are visually distinct.
+
+**Tests added (9 new — 390 total passing, up from 381):**
+
+- `tests/test_routes_progress.py`: idle-shape for both endpoints; running-state visible to a concurrent reader (ThreadPoolExecutor race coverage matching Phase 6.1's pattern); slot cleared on orchestrator exception; per-batch + per-strategy callback emit sequence; swallowed-callback-exception path.
+- Updated existing route test stubs in `tests/test_routes_tagging.py` + `tests/test_routes_premade.py` to accept the new `progress=None` kwarg.
+
+**Files touched in Phase 8.1:**
+
+```
+NEW:
+  clipfarm/routes/progress endpoints (in routes/tagging.py + routes/premade.py)
+  tests/test_routes_progress.py
+  web/src/components/RunProgress.tsx
+
+MODIFIED:
+  clipfarm/app.py          — app.state.tag_progress + premade_progress init
+  clipfarm/tagging.py      — ProgressCallback + _safe_progress helper + emit points
+  clipfarm/premade.py      — same pattern
+  clipfarm/routes/tagging.py — try/finally slot management + GET /api/tag/progress
+  clipfarm/routes/premade.py — same pattern for premade
+  web/src/pages/Brief.tsx + Attempts.tsx + Project.tsx — wire useRunProgress
+  tests/test_routes_tagging.py + test_routes_premade.py — accept progress=None kwarg
+```
+
+---
+
 ## Phase 8 — Premade attempts generation
 
 **Verified by Lillian:** ✅ 2026-05-26 (reviewer approval: "ship it"; all 7 plan-review items landed; 3 advisory observations noted below for follow-up).
