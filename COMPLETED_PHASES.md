@@ -4,9 +4,127 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
-## Phase 5 — Brief editor + project creation
+## Phase 6 — Ollama tagging (batched)
 
 **Verified by Lillian:** ⏳ pending
+
+**Built (2026-05-25):**
+
+The first phase where ClipFarm actually uses Llama 3.1 8B. A brief + ingested footage + one button → tagged library. Phase 7's take grid reads these rows to build the per-line columns.
+
+- **Phase 6 kickoff cleanups (the Phase 4 architectural carries + the Phase 5 review residue):**
+  - **`serialize_state` moved inside the save lock** in both `save_state` and `save_state_with_snapshot`. Closes the Phase 4 race where two concurrent route handlers could each capture a serialized form before the other wrote, then race on which version landed on disk.
+  - **`commit_state_to_disk_locked(app)` and `commit_state_with_snapshot_locked(app, reason)` added** — caller-already-holds-lock variants. **All six mutating routes migrated to the new one-critical-section-per-op pattern**: Phase 2 ingest, Phase 4 clips (split / merge / adjust / create / delete), Phase 5 projects (create / update / delete). Each now does `async with save_lock: { mutate; <locked commit> }`. The lock-held-during-orchestrator tests carry over; new tests assert the commit also runs inside the same lock scope.
+  - **`ClipProjectTag` uniqueness validator activated** (the Phase 1 stub). Duplicate `(clip_id, project_id, project_tag_id, category)` is rejected at construction time + on load. Same `project_tag_id` with a different `category` is allowed (a clip can be `on-script` AND `standalone-idea` for the same line tag if the LLM categorized it both ways). 7 new tests in `tests/test_uniqueness_validator.py`.
+  - **`_project_detail` section sort O(N²) → O(N)** via a precomputed `name → order_idx` lookup.
+  - **`_full_brief_md` reconstruction branch documented** with a one-line comment ("reachable only via direct programmatic API").
+
+- **`clipfarm/llm.py`** — thin Ollama HTTP client.
+  - `chat_with_json_schema(messages, schema, ...)` posts to `/api/chat` with the JSON-schema `format` field, returns parsed dict or `None` on any failure (HTTP error, malformed JSON, content not JSON-parseable, connection refused, timeout). Never raises — the orchestrator handles `None` as "this batch failed."
+  - `ping_ollama(timeout=3.0)` does a cheap `GET /api/tags` reachability check. The tagging route uses this as the precondition before kicking off a long run, so the user gets a 502 immediately on a down LLM instead of waiting through 15 retries.
+  - `OLLAMA_HOST` env var override. Temperature locked at 0.2 for tagging — consistent categorization, not creative writing. Streaming off (one JSON response, simpler parse path).
+
+- **`clipfarm/tagging.py`** — pure orchestrator.
+  - `tag_project(state, project_id, *, llm_client, batch_size, dry_run) -> TaggingResult`. Pre-flight: KeyError on unknown project, ValueError on empty brief (no script, no sections, no tags — the route translates to 400).
+  - Builds the candidate list: every clip without a row for this project, OR every clip with at least one `stale=True` row. Stale rows for candidates are pre-dropped so the fresh write replaces them cleanly.
+  - System prompt built per project: name, "what's good" body, script-line IDs, section IDs, ad-hoc tag IDs, plus the category enum. User prompt per batch: a JSON-ish "Tag these clips" block. Output: `{results: [{clip_id, line_tag_id, section_tag_id, category, confidence}, ...]}` with the JSON schema enforced in the request `format`.
+  - **All seven LLM-output validation rules from the plan landed**: unknown `clip_id` (drop), unknown `line_tag_id` (drop), invalid `category` (drop), missing required field (drop), out-of-range `confidence` (clamp to [0, 1] + log, keep row), batch-size mismatch (clip-ID reconstruction — partial wins are real), non-dict row (drop). All logged with the row's `clip_id` named.
+  - **Retry policy**: once per batch on `None` from the LLM client OR empty post-validation row set. On second failure, batch lands in `untagged_batches` with the reason + a 300-char raw excerpt. Run continues to the next batch.
+  - **Cross-project isolation tested**: tagging project A doesn't touch project B's rows. This is the spec's "multi-project tagging is the engine" principle becoming a verified invariant.
+
+- **`clipfarm/routes/tagging.py`** — `POST /api/projects/{project_id}/tag`.
+  - Query params: `batch_size` (default 10, range 1-30), `dry_run` (default false).
+  - Pre-flight error mapping: 404 unknown, 400 empty brief, 409 frozen, 502 Ollama unreachable (`ping_ollama` runs before the lock acquire so a down LLM doesn't tie up the save lock).
+  - Holds `app.state.save_lock` across the entire batched run + the locked commit. One snapshot per `/tag` call, reason `tag-clips`.
+  - **Documented v0 deliberate choices** in the module docstring + route comments: lock-held-for-the-duration blocks every other mutating route during a tag run; freeze-during-tagging loses the in-memory results (correct behavior, user retries after resolving); synchronous architecture fits ~20s expected runtime, polling/SSE land later if a project ever needs minutes.
+
+- **Frontend (`web/src/pages/Brief.tsx`):** "Tag N clips" button next to Save/Delete on the Brief page.
+  - Counts untagged + stale clips for the selected project, shows the number in the button label.
+  - Disabled when the brief is dirty (save first), when there are 0 clips to tag, or while a tag run is in progress.
+  - On success: emerald result banner showing `Tagged N clips in M batches · 30s · K already tagged · L rows dropped`, with collapsible details if any batches failed.
+  - On 502: clear "Ollama is unreachable. Is `brew services start ollama` running?" error message.
+  - On 409 / 400 / 404: surface the server's detail verbatim.
+
+- **Tests added (48 new — 280 total passing, up from 232):**
+  - `tests/test_uniqueness_validator.py` (7): activation tests.
+  - `tests/test_llm.py` (12): canned-httpx tests for every failure mode (HTTP 500, connection error, timeout, malformed wrapper JSON, missing message.content, content-not-JSON, `OLLAMA_HOST` override) + happy path + the `ping_ollama` polarity tests.
+  - `tests/test_tagging.py` (19): happy path, batch splitting, idempotency, stale-flagged re-tag, no-op when all tagged, **cross-project isolation**, every validation rule (unknown line_tag_id / invalid category / missing field / clamp confidence / hallucinated clip_id / batch-size mismatch keeps partial), retry-on-empty-then-clean, retry-failure-buckets-batch-continues, llm-returns-None buckets-after-retry, empty-brief raises, unknown-project raises, dry_run-writes-no-rows, batch-size-out-of-range raises.
+  - `tests/test_routes_tagging.py` (10): happy path through TestClient with a mocked LLM client + ping; 404 unknown project; 400 empty brief; 409 freeze; 502 Ollama unreachable; lock-held-during-orchestrator; **commit-inside-same-lock-scope assertion (the new Phase 6 invariant)**; idempotency over the route; dry_run writes nothing + no snapshot; snapshot-once-per-call.
+
+**Manual verification run (all green) — real Ollama call against btc.0.4:**
+
+- Ingested just `btc.0.4.mov` + sidecar into a clean state: 1 source, 91 clips.
+- Created the project from a real brief (3 script lines, 3 sections, 2 ad-hoc tags).
+- `POST /api/projects/1/tag?batch_size=10` against real Ollama running locally — `llama3.1:8b` (4.7GB, Q4_K_M):
+  - 10 batches dispatched.
+  - **77 clips tagged on the first pass** (85% coverage). 14 rows dropped to validation (LLM hallucinated tag IDs or returned invalid categories).
+  - 0 untagged batches — every batch had at least one valid row.
+  - Total runtime: **5.5 minutes** for the full 91 clips. **Significantly slower than the spec's ~20-second estimate** — flag for the open-follow-ups list below. The model is slow on this machine; per-batch latency ~30s.
+- **Second call (idempotent retry)**: 77 clips skipped (already tagged + non-stale), 14 clips re-attempted (the previously-dropped ones, which look untagged at row-level), 10 more tagged + 4 dropped. Total coverage 87/91 = 95.6%.
+- **Category distribution on first-pass tags:**
+  - `off-topic`: 30 (Lillian's birthday / cat / chatter)
+  - `fragment`: 17 (false starts, single-word noises)
+  - `on-script`: 13 (matched a script line)
+  - `related-but-different`: 10 (Bitcoin-adjacent insights not in the script)
+  - `standalone-idea`: 7 (could be its own short)
+- **Five-clip sample (sanity-check the qualitative output):**
+  - `"turned 23 last week"` → **off-topic** ✓ (her birthday, not Bitcoin)
+  - `"can't multiply your way out of zero going from zero to one..."` → **related-but-different** ✓ (Bitcoin-adjacent insight)
+  - `"It's okay to appreciate where you have been..."` → **on-script** ✓
+  - `"I'm calling it break the chrysalis..."` → **on-script** ✓
+  - `"Okay, the log 15 minutes I'm"` → **fragment** ✓ (false start)
+
+The categorization is qualitatively correct on this sample. Lillian should spot-check ~20 more on her own dogfood pass before judging quality.
+
+**Assumptions made + deviations from the plan:**
+
+- **Llama 3.1 8B is much slower than the spec estimated.** Plan: ~20s for 150 clips. Actual: 5.5 minutes for 91 clips (≈3.6s per clip). The model is doing 10 clips per batch × 30s/batch ≈ 30 inference steps. Three possible causes:
+  - The machine's M-chip is running the 4-bit quant on CPU (Ollama's default), not Metal.
+  - Prompt is longer than estimated — each batch carries the full brief + 10 clip transcripts.
+  - Per-token generation is slower at the prompt's depth than at shallow benchmarks.
+  - **Action**: leave as-is for v0 — the run completes, output is correct. Worth checking `ollama ps` to confirm Metal is in use; if not, that's a 5-10× speedup left on the table. Flag for the polish layer.
+- **Confidence is a useless signal in practice (so far).** The 5-clip sample shows the model returning `1.00` for "on-script" matches and `0.00` for everything off-topic — basically binary. The spec's "surface visually in the take grid" UX still works, but the slider expectation (mid-confidence cases worth manual review) won't materialize until the LLM matures. v0 ships it; Phase 7's UI can decide how loud to make it.
+- **`section_tag_id` left null even when the LLM tried to fill it.** Several rows came back with `section_tag_id` set, but Phase 5's flat-lines simplification means we ignore it. The data stays null on disk (the orchestrator drops `row.get("section_tag_id")` into the model without re-validation). Phase 7+ activates the field once the brief format gains section→line hierarchy.
+
+**Open follow-ups for the reviewer to evaluate:**
+
+1. **Per-clip-batch progress UI** — at 5.5 min for 91 clips, the synchronous spinner is genuinely uncomfortable. The plan called this out as "Phase 9+ swap to background tasks if needed." Real-world runtime suggests Lillian will hit this discomfort on dogfood. Worth considering whether Phase 6.1 adds an SSE progress stream (cheap; the orchestrator already runs in a loop where we can yield events).
+2. **Ollama Metal acceleration check.** `ollama ps` should report Metal usage; if it's CPU-only, that's the easy speed win. Worth a sanity check before Phase 7.
+3. **`brew services start ollama` vs `ollama serve` quirks.** Service mode worked but the runtime suggests it may not be using all available resources. Document the recommended start-up incantation in CLAUDE.md / README once we have the right answer.
+
+**Files touched in Phase 6:**
+
+```
+NEW:
+  clipfarm/llm.py
+  clipfarm/tagging.py
+  clipfarm/routes/tagging.py
+  tests/test_llm.py
+  tests/test_tagging.py
+  tests/test_routes_tagging.py
+  tests/test_uniqueness_validator.py
+
+MODIFIED:
+  clipfarm/models.py        — uniqueness validator activated (Phase 1 stub)
+  clipfarm/store.py         — serialize_state inside lock; new save_state_locked + save_state_with_snapshot_locked
+  clipfarm/routes/deps.py   — new commit_state_to_disk_locked + commit_state_with_snapshot_locked
+  clipfarm/routes/ingest.py — migrated to single-critical-section pattern
+  clipfarm/routes/clips.py  — five routes migrated
+  clipfarm/routes/projects.py — three mutating routes migrated + O(N²) section sort fix
+  clipfarm/projects.py      — _full_brief_md reconstruction-branch comment
+  clipfarm/app.py           — include tagging router
+  pyproject.toml + uv.lock  — httpx now a main dep (was dev-only)
+  web/src/pages/Brief.tsx   — Tag N clips button + result/error display
+  web/dist/...              — rebuilt
+  PHASES.md                 — Phase 5 marked verified, Phase 6 plan landed (with seven plan-review fixes folded in)
+  COMPLETED_PHASES.md       — Phase 5 verified stamp + this Phase 6 entry
+```
+
+---
+
+## Phase 5 — Brief editor + project creation
+
+**Verified by Lillian:** ✅ 2026-05-25
 
 **Built (2026-05-25):**
 

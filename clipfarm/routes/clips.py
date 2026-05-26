@@ -27,7 +27,7 @@ from clipfarm.boundary import (
     split_clip,
 )
 from clipfarm.models import ClipFarmState, StrictModel
-from clipfarm.routes.deps import commit_state_with_snapshot
+from clipfarm.routes.deps import commit_state_with_snapshot_locked
 from clipfarm.store import WritesFrozenError
 from clipfarm.transcripts import load_transcript_for_source
 
@@ -116,11 +116,12 @@ def _transcript_for_source_id(state: ClipFarmState, source_id: str):
     return load_transcript_for_source(source)
 
 
-async def _commit_with_reason(app, reason: str) -> Optional[str]:
-    """Wrap `commit_state_with_snapshot`, returning the snapshot filename
-    for the response (or None if the state file didn't exist yet)."""
+def _commit_with_reason_locked(app, reason: str) -> Optional[str]:
+    """Locked-variant commit — caller MUST hold app.state.save_lock.
+    Returns the snapshot filename for the response (or None if the
+    state file didn't exist yet)."""
     try:
-        snap_path = await commit_state_with_snapshot(app, reason)
+        snap_path = commit_state_with_snapshot_locked(app, reason)
     except WritesFrozenError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return snap_path.name if snap_path is not None else None
@@ -144,8 +145,8 @@ async def split_route(clip_id: str, body: SplitRequest, request: Request) -> Spl
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         app.state.dirty = True
+        snapshot = _commit_with_reason_locked(app, "split-clip")
 
-    snapshot = await _commit_with_reason(app, "split-clip")
     return SplitResponse(
         old_clip_id=clip_id, new_clip_ids=(c1, c2), snapshot=snapshot
     )
@@ -171,8 +172,8 @@ async def merge_route(body: MergeRequest, request: Request) -> MergeResponse:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         app.state.dirty = True
+        snapshot = _commit_with_reason_locked(app, "merge-clips")
 
-    snapshot = await _commit_with_reason(app, "merge-clips")
     return MergeResponse(
         new_clip_id=new_id, merged=list(body.clip_ids), snapshot=snapshot
     )
@@ -197,8 +198,8 @@ async def adjust_route(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         app.state.dirty = True
+        snapshot = _commit_with_reason_locked(app, "adjust-boundaries")
 
-    snapshot = await _commit_with_reason(app, "adjust-boundaries")
     return AdjustResponse(
         clip_id=clip_id,
         start_sec=body.start_sec,
@@ -226,8 +227,8 @@ async def create_route(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         app.state.dirty = True
+        snapshot = _commit_with_reason_locked(app, "create-clip")
 
-    snapshot = await _commit_with_reason(app, "create-clip")
     return CreateResponse(new_clip_id=new_id, snapshot=snapshot)
 
 
@@ -243,8 +244,8 @@ async def delete_route(clip_id: str, request: Request) -> DeleteResponse:
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e))
         app.state.dirty = True
+        snapshot = _commit_with_reason_locked(app, "delete-clip")
 
-    snapshot = await _commit_with_reason(app, "delete-clip")
     return DeleteResponse(
         deleted_clip_id=clip_id,
         dropped_tag_rows=dropped,

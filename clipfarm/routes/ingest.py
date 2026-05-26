@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from clipfarm.ingest import IngestResult, ingest_folder
-from clipfarm.routes.deps import commit_state_to_disk
+from clipfarm.routes.deps import commit_state_to_disk_locked
 from clipfarm.store import WritesFrozenError
 
 router = APIRouter(prefix="/api", tags=["ingest"])
@@ -47,30 +47,24 @@ async def ingest_route(body: IngestRequest, request: Request) -> IngestResult:
             ),
         )
 
-    # Hold the save lock across the entire orchestrator call. `ingest_folder`
-    # mutates `app.state.clipfarm` (allocates source IDs from
-    # `max(existing) + 1`, appends clips). Under current asyncio semantics
-    # the orchestrator is fully sync so no preemption can happen mid-call,
-    # but the lock makes the "mutation requires the lock" invariant
-    # explicit ahead of Phase 4's destructive routes — and protects future
-    # ingest variants that go async (network, ML probes, etc.) from a real
-    # ID-allocation race. `commit_state_to_disk` re-acquires the lock
-    # internally for the on-disk write; that's two separate critical
-    # sections, both safe because no other mutator can interleave between
-    # them (any other route would also have to acquire this lock first).
+    # Mutation + commit in ONE critical section (Phase 6 architectural
+    # cleanup carried from the Phase 4 review). `ingest_folder` mutates
+    # `app.state.clipfarm` (source-ID allocation, clip insertion), and
+    # the persist is `commit_state_to_disk_locked` which assumes the
+    # lock is already held. No other mutating route can interleave
+    # between our mutate and our write.
     async with app.state.save_lock:
         state = app.state.clipfarm
         result = ingest_folder(state, folder)
-
-    if (
-        result.sources_added
-        or result.sources_updated
-        or result.clips_detected
-    ):
-        app.state.dirty = True
-        try:
-            await commit_state_to_disk(app)
-        except WritesFrozenError as e:
-            raise HTTPException(status_code=409, detail=str(e))
+        if (
+            result.sources_added
+            or result.sources_updated
+            or result.clips_detected
+        ):
+            app.state.dirty = True
+            try:
+                commit_state_to_disk_locked(app)
+            except WritesFrozenError as e:
+                raise HTTPException(status_code=409, detail=str(e))
 
     return result

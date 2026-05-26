@@ -91,7 +91,10 @@ def probe_video(path: Path) -> ProbeResult:
             check=False,
             capture_output=True,
             text=True,
-            timeout=15.0,
+            # 30s cushion — metadata reads are near-instant in practice,
+            # but ffprobe can stall briefly on large files under system
+            # load (e.g. concurrent Ollama tagging burns CPU).
+            timeout=30.0,
         )
     except (subprocess.SubprocessError, OSError) as e:
         log.warning("ffprobe: subprocess failed on %s: %s", path, e)

@@ -198,7 +198,14 @@ def _build_tags_from_brief(
 def _full_brief_md(parsed: ParsedBrief, source_text: Optional[str]) -> str:
     """Project.brief_md stores the original text the user typed; if the
     caller passes that via `source_text`, use it. Otherwise reconstruct a
-    minimal canonical form."""
+    minimal canonical form.
+
+    The reconstruction branch (`source_text is None`) is reachable only
+    via direct programmatic API (tests, future migrations). The route
+    layer always passes `brief_md_source=body.brief_md`, so under normal
+    HTTP flow this branch is dead code — kept for round-trip
+    correctness in non-route call sites.
+    """
     if source_text is not None:
         return source_text
     # Minimal reconstruction — only used when we don't have the source.

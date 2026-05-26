@@ -35,6 +35,25 @@ type ParseError = {
   column?: number;
 };
 
+type TaggingResult = {
+  batches: number;
+  clips_tagged: number;
+  clips_skipped: number;
+  rows_dropped: number;
+  untagged_batches: { clip_ids: string[]; reason: string }[];
+  duration_sec: number;
+};
+
+type AppState = {
+  sources: Record<string, unknown>;
+  clips: Record<string, { source_id: string; start_sec: number; end_sec: number }>;
+  clip_project_tags: {
+    clip_id: string;
+    project_id: string;
+    stale: boolean;
+  }[];
+};
+
 const EXAMPLE_BRIEF = `---
 name: your project name
 script:
@@ -121,11 +140,24 @@ export default function Brief() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [tagging, setTagging] = useState(false);
+  const [tagResult, setTagResult] = useState<TaggingResult | null>(null);
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [appState, setAppState] = useState<AppState | null>(null);
 
   const refreshProjects = useCallback(async () => {
     const r = await fetch("/api/projects");
     if (r.ok) setProjects(await r.json());
   }, []);
+
+  const refreshAppState = useCallback(async () => {
+    const r = await fetch("/api/state");
+    if (r.ok) setAppState(await r.json());
+  }, []);
+
+  useEffect(() => {
+    refreshAppState();
+  }, [refreshAppState]);
 
   useEffect(() => {
     refreshProjects();
@@ -223,6 +255,57 @@ export default function Brief() {
       setSaveError(String(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Count of clips needing tagging for the selected project:
+  // (every clip in state.clips) minus (clips with a non-stale row for
+  // this project_id) — i.e. untagged + stale rows count toward the
+  // button label.
+  const untaggedCount = (() => {
+    if (selected === null || selected === "new" || !appState) return 0;
+    const taggedClipIds = new Set(
+      appState.clip_project_tags
+        .filter((r) => r.project_id === selected && !r.stale)
+        .map((r) => r.clip_id)
+    );
+    let count = 0;
+    for (const cid of Object.keys(appState.clips)) {
+      if (!taggedClipIds.has(cid)) count++;
+    }
+    return count;
+  })();
+
+  async function runTagging() {
+    if (selected === null || selected === "new") return;
+    setTagging(true);
+    setTagError(null);
+    setTagResult(null);
+    try {
+      const r = await fetch(
+        `/api/projects/${encodeURIComponent(selected)}/tag`,
+        { method: "POST" }
+      );
+      if (r.status === 502) {
+        setTagError(
+          "Ollama is unreachable. Is `brew services start ollama` running?"
+        );
+        return;
+      }
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({ detail: r.statusText }));
+        setTagError(
+          typeof body.detail === "string" ? body.detail : JSON.stringify(body)
+        );
+        return;
+      }
+      const result: TaggingResult = await r.json();
+      setTagResult(result);
+      await refreshAppState();
+    } catch (e) {
+      setTagError(String(e));
+    } finally {
+      setTagging(false);
     }
   }
 
@@ -343,15 +426,70 @@ export default function Brief() {
                     {saving ? "Saving…" : selected === "new" ? "Create" : "Save"}
                   </button>
                   {selected !== "new" && (
-                    <button
-                      onClick={() => setDeleteConfirm(selected)}
-                      className="px-3 py-1.5 text-sm rounded-md border border-red-800 text-red-300 hover:bg-red-900/30"
-                    >
-                      Delete
-                    </button>
+                    <>
+                      <button
+                        onClick={runTagging}
+                        disabled={tagging || untaggedCount === 0 || dirty}
+                        title={
+                          dirty
+                            ? "Save your brief edits before tagging"
+                            : untaggedCount === 0
+                              ? "All clips tagged for this project."
+                              : ""
+                        }
+                        className="px-3 py-1.5 text-sm rounded-md bg-emerald-700 text-white font-medium hover:bg-emerald-600 disabled:opacity-50 disabled:bg-neutral-800 disabled:text-neutral-500"
+                      >
+                        {tagging
+                          ? "Tagging…"
+                          : untaggedCount === 0
+                            ? "All tagged"
+                            : `Tag ${untaggedCount} clip${untaggedCount === 1 ? "" : "s"}`}
+                      </button>
+                      <button
+                        onClick={() => setDeleteConfirm(selected)}
+                        className="px-3 py-1.5 text-sm rounded-md border border-red-800 text-red-300 hover:bg-red-900/30"
+                      >
+                        Delete
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
+              {tagResult && (
+                <div className="mb-3 p-3 rounded-md border border-emerald-800 bg-emerald-900/20 text-xs">
+                  <div className="text-emerald-200">
+                    Tagged {tagResult.clips_tagged} clip
+                    {tagResult.clips_tagged === 1 ? "" : "s"} in{" "}
+                    {tagResult.batches} batch
+                    {tagResult.batches === 1 ? "" : "es"} ·{" "}
+                    {tagResult.duration_sec.toFixed(1)}s ·{" "}
+                    {tagResult.clips_skipped} already tagged
+                    {tagResult.rows_dropped > 0 && (
+                      <> · {tagResult.rows_dropped} rows dropped (LLM validation)</>
+                    )}
+                  </div>
+                  {tagResult.untagged_batches.length > 0 && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-amber-300">
+                        {tagResult.untagged_batches.length} batches failed —
+                        click for details
+                      </summary>
+                      <ul className="mt-1 ml-4 list-disc text-amber-200 space-y-1">
+                        {tagResult.untagged_batches.map((b, i) => (
+                          <li key={i}>
+                            <code>{b.clip_ids.length}</code> clips — {b.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
+              {tagError && (
+                <div className="mb-3 p-3 rounded-md border border-red-800 bg-red-900/20 text-xs text-red-300 whitespace-pre-wrap">
+                  {tagError}
+                </div>
+              )}
 
               <textarea
                 value={draftBrief}

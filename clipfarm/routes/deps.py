@@ -14,7 +14,12 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 
 from clipfarm.models import ClipFarmState
-from clipfarm.store import save_state, save_state_with_snapshot
+from clipfarm.store import (
+    save_state,
+    save_state_locked,
+    save_state_with_snapshot,
+    save_state_with_snapshot_locked,
+)
 from clipfarm.watcher import StateFileWatcher
 
 
@@ -68,4 +73,48 @@ async def commit_state_with_snapshot(app: FastAPI, reason: str) -> Path | None:
     return snap_path
 
 
-__all__ = ["commit_state_to_disk", "commit_state_with_snapshot", "get_state"]
+def commit_state_to_disk_locked(app: FastAPI) -> None:
+    """Caller-already-holds-lock variant of `commit_state_to_disk`. Used
+    by routes that do `async with save_lock: { mutate; await commit_locked }`
+    — mutation + commit in ONE critical section, not two. The Phase 6
+    architectural fix carried from the Phase 4 review: no other route
+    can interleave between our mutate and our write.
+
+    Callers MUST hold `app.state.save_lock`.
+    """
+    watcher: StateFileWatcher = app.state.watcher
+    save_state_locked(
+        app.state.clipfarm,
+        app.state.state_path,
+        writes_frozen=app.state.writes_frozen,
+        post_write=watcher.update_last_known_hash,
+    )
+    app.state.dirty = False
+
+
+def commit_state_with_snapshot_locked(app: FastAPI, reason: str) -> Path | None:
+    """Caller-already-holds-lock variant of `commit_state_with_snapshot`.
+    Snapshot + write + hash-install inside the caller's existing critical
+    section.
+
+    Callers MUST hold `app.state.save_lock`.
+    """
+    watcher: StateFileWatcher = app.state.watcher
+    snap_path, _ = save_state_with_snapshot_locked(
+        app.state.clipfarm,
+        app.state.state_path,
+        reason,
+        writes_frozen=app.state.writes_frozen,
+        post_write=watcher.update_last_known_hash,
+    )
+    app.state.dirty = False
+    return snap_path
+
+
+__all__ = [
+    "commit_state_to_disk",
+    "commit_state_to_disk_locked",
+    "commit_state_with_snapshot",
+    "commit_state_with_snapshot_locked",
+    "get_state",
+]

@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2.9",
     "watchdog>=5.0",
     "pyyaml>=6.0",
+    "httpx>=0.28",
 ]
 
 [dependency-groups]

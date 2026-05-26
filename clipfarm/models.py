@@ -248,27 +248,29 @@ class ClipFarmState(StrictModel):
 
     @model_validator(mode="after")
     def _check_clip_project_tag_uniqueness(self) -> "ClipFarmState":
-        """Stubbed at v0 — no tags exist yet. Activated in Phase 6 by removing
-        the early return; the rule is `(clip_id, project_id, project_tag_id,
-        category)` must be unique across `clip_project_tags`.
+        """Activated in Phase 6 — `(clip_id, project_id, project_tag_id,
+        category)` must be unique across `clip_project_tags`. Same
+        `project_tag_id` with a different `category` is allowed (a clip
+        can be `on-script` AND `standalone-idea` for the same tag if the
+        LLM categorized it both ways).
 
-        Stub-then-activate means Phase 6 is a one-line change, not a hunt for
-        the right enforcement seam.
+        Duplicates are a hard error at the model level: the loader
+        rejects, in-memory mutations reject. The Phase 6 tagging
+        orchestrator pre-filters to avoid duplicates by construction;
+        this validator is the defense-in-depth net.
         """
         if not self.clip_project_tags:
             return self
-        # Phase 6: drop the early return below and let the seen-set check fire.
+        seen: set[tuple[str, str, Optional[str], str]] = set()
+        for t in self.clip_project_tags:
+            key = (t.clip_id, t.project_id, t.project_tag_id, t.category)
+            if key in seen:
+                raise ValueError(
+                    f"duplicate clip_project_tag for {key} — uniqueness "
+                    f"required on (clip_id, project_id, project_tag_id, category)"
+                )
+            seen.add(key)
         return self
-        # seen: set[tuple[str, str, Optional[str], str]] = set()
-        # for t in self.clip_project_tags:
-        #     key = (t.clip_id, t.project_id, t.project_tag_id, t.category)
-        #     if key in seen:
-        #         raise ValueError(
-        #             f"duplicate clip_project_tag for {key} — uniqueness "
-        #             f"required on (clip_id, project_id, project_tag_id, category)"
-        #         )
-        #     seen.add(key)
-        # return self
 
 
 def empty_state() -> ClipFarmState:

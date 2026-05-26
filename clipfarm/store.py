@@ -272,16 +272,46 @@ async def save_state(
     `writes_frozen=True` raises `WritesFrozenError` instead of writing — used
     by the conflict-freeze path. Callers should consult
     `app.state.writes_frozen` before calling.
+
+    `serialize_state` runs INSIDE the lock — Phase 6 race closure. Under
+    concurrent route handlers, capturing the serialized form before the
+    lock could let two writers race on a stale snapshot of state.
+    """
+    if writes_frozen:
+        raise WritesFrozenError(
+            "writes are frozen due to an unresolved external-edit conflict"
+        )
+    async with lock:
+        serialized = serialize_state(state)
+        atomic_write(state_path, serialized)
+        if post_write is not None:
+            post_write(hash_serialized(serialized))
+    return serialized
+
+
+def save_state_locked(
+    state: ClipFarmState,
+    state_path: Path,
+    *,
+    writes_frozen: bool = False,
+    post_write: "Callable[[str], None] | None" = None,
+) -> str:
+    """Synchronous variant of `save_state` that assumes the caller already
+    holds the save lock — used when a route does
+    `async with save_lock: { mutate; await commit_state_to_disk_locked }`
+    so mutation + commit happen in one critical section, not two.
+
+    No lock acquisition inside this function. The caller's responsibility
+    to hold `app.state.save_lock` across the whole sequence.
     """
     if writes_frozen:
         raise WritesFrozenError(
             "writes are frozen due to an unresolved external-edit conflict"
         )
     serialized = serialize_state(state)
-    async with lock:
-        atomic_write(state_path, serialized)
-        if post_write is not None:
-            post_write(hash_serialized(serialized))
+    atomic_write(state_path, serialized)
+    if post_write is not None:
+        post_write(hash_serialized(serialized))
     return serialized
 
 
@@ -310,12 +340,40 @@ async def save_state_with_snapshot(
         raise WritesFrozenError(
             "writes are frozen due to an unresolved external-edit conflict"
         )
-    serialized = serialize_state(state)
     async with lock:
+        serialized = serialize_state(state)
         snap_path = snapshot_before_destructive(state_path, reason)
         atomic_write(state_path, serialized)
         if post_write is not None:
             post_write(hash_serialized(serialized))
+    return snap_path, serialized
+
+
+def save_state_with_snapshot_locked(
+    state: ClipFarmState,
+    state_path: Path,
+    reason: str,
+    *,
+    writes_frozen: bool = False,
+    post_write: "Callable[[str], None] | None" = None,
+) -> tuple[Path | None, str]:
+    """Caller-already-holds-lock variant of `save_state_with_snapshot`.
+    Same contract: snapshot the pre-change file, atomic-write the new
+    state, install the hash. Used by routes doing one-critical-section-
+    per-op patterns.
+
+    No internal lock acquisition; the caller MUST hold
+    `app.state.save_lock`.
+    """
+    if writes_frozen:
+        raise WritesFrozenError(
+            "writes are frozen due to an unresolved external-edit conflict"
+        )
+    serialized = serialize_state(state)
+    snap_path = snapshot_before_destructive(state_path, reason)
+    atomic_write(state_path, serialized)
+    if post_write is not None:
+        post_write(hash_serialized(serialized))
     return snap_path, serialized
 
 
@@ -391,8 +449,10 @@ __all__ = [
     "load_state",
     "run_source_integrity_check",
     "save_state",
+    "save_state_locked",
     "save_state_sync",
     "save_state_with_snapshot",
+    "save_state_with_snapshot_locked",
     "serialize_state",
     "snapshot_before_destructive",
 ]

@@ -40,156 +40,148 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 4.
 
 ---
 
-## Phase 5 — Brief editor + project creation
+## Phase 5 — Verified ✅ 2026-05-25
 
-**Goal.** Land the *write* side of the project layer: a markdown brief editor that creates / updates / deletes `Project` records, with the script as a typed model (no more `script_json: dict`) and sections + lines materialized as `ProjectTag` entries ready for Phase 6's LLM to write `clip_project_tags` against. Phase 5 doesn't tag anything itself; it builds the structure tagging will populate.
+See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 5.
 
-**Verification at the end of this phase (concrete, no manual UI inspection needed):**
-
-- `uv run pytest` passes (target ~210+ tests; Phase 4's 182 + Phase 5 additions).
-- `curl -X POST localhost:8765/api/projects -H 'content-type: application/json' -d '{"brief_md":"..."}'` parses a valid brief, creates a `Project` entry with name + `script.lines` + `ProjectTag` entries for sections + lines, returns the new `project_id`.
-- `curl -X PATCH localhost:8765/api/projects/<id>` with a modified brief: re-parses, updates the Project + ProjectTag entries, **marks every `clip_project_tags` row pointing at this project as `stale: true`** per the spec's "explicit retag" rule. **One snapshot per brief edit** via `commit_state_with_snapshot(app, reason="edit-brief")` — the snapshot-per-destructive-op invariant from Phase 4 carries over.
-- `curl -X DELETE localhost:8765/api/projects/<id>`: removes the project + its `tags` + every `clip_project_tags` row for the project. Writes a snapshot (`reason="delete-project"`). Affected attempts (if any — Phase 8+) get `needs_review=true`.
-- **Malformed-brief test**: a brief with invalid YAML frontmatter or missing required fields → 400 with a clear error pointing at the problem (line + column when available). State unchanged.
-- **Hand-edit roundtrip**: write a `Project` with `script: {lines: [...]}` and `tags: {"1": ProjectTag(...), ...}` directly into `clipfarm.json`, reload, confirm the Project + tags load cleanly through the new model.
-- **Unknown-key handling** through the refactored `_log_unknown_keys`: an unknown key at top level, inside a `Project`, inside a `ProjectTag`, AND inside the `dict[str, ProjectTag]` value position all get logged with their full dotted path. Locks the heuristic kill in `test_load_unknown_keys.py`.
-
-### Scope
-
-**Phase 5 kickoff cleanups (Phase 4 review residue + the Phase 1 follow-up that's now load-bearing):**
-
-These ride along on Phase 5 the way Phase 1 punch-list rode in on Phase 2.
-
-- **`_log_unknown_keys` heuristic refactor** (deferred since the Phase 1 review). `Project.tags: dict[str, ProjectTag]` is the dict-of-model stress case the heuristic was guessing at. Replace `_looks_like_dict_of_model` with explicit `typing.get_origin` + `typing.get_args` annotation inspection: walk `dict[str, X]` differently from `Optional[X]` / `list[X]` / direct `X`. Determinism over inference. Add test cases covering each annotation shape against `ClipFarmState`'s new Project structure.
-- **(Phase 4 architectural carry — flagged but NOT fixed here.)** `serialize_state` is called outside the save lock in `store.py` (`save_state` and `save_state_with_snapshot`); mutation + commit are two locked sections in `routes/clips.py`. Both unreachable under v0's single-user-UI fire-one-mutation-at-a-time pattern. Phase 6 (LLM tagging — long-running mutations) is the right time to land the fix because that's the first phase where the race could actually trigger. Phase 5 leaves them as-is to keep scope contained.
-
-**Brief markdown format (locking with this plan):**
-
-YAML frontmatter for structured metadata + markdown body for prose. The body becomes `Project.brief_md` (Phase 6's LLM context); the frontmatter parses into typed sub-fields.
-
-```markdown
 ---
-name: btc explainer v0.4
-script:
-  - Hey, today I want to talk about Bitcoin self-custody.
-  - The reason it matters is...
-  - And here's how to actually do it.
-sections:
-  - the hook
-  - the why
-  - the how
-tags:
-  - hook
-  - self-custody
-  - mistakes
----
-
-# What's good
-
-Energy, not over-rehearsed. Tone: smart but accessible. Length: under 90s
-ideally, hard cap at 2 min.
-
-# Notes
-
-- Avoid the "OK so" intro
-- Spend more time on the why than the how
-```
-
-Rationale: matches the spec/CLAUDE.md pattern (structured frontmatter + free-prose body), well-known format, easy to hand-edit. YAML's whitespace sensitivity is a minor pitfall worth documenting in the editor's inline help.
-
-**Alternatives considered + rejected:**
-
-- *Pure markdown with H2 anchors* — order-sensitive, bespoke parsing, fragile to user edits.
-- *JSON code blocks in markdown* — JSON's strict quoting is annoying for natural prose like script lines with quotes.
-
-**Backend (`clipfarm/` package — new for Phase 5):**
-
-- **Model changes in `clipfarm/models.py`:**
-  - **New** `Script(StrictModel)` with `lines: list[str]`. The advance note from Phase 1.
-  - **Replace** `Project.script_json: dict` with `Project.script: Optional[Script] = None`. Brief-less projects (rare; the explicit "no brief" path) have `script=None`.
-  - **Sections are ProjectTags.** Sections in the brief become `ProjectTag(kind="section", name=...)` entries in `Project.tags`; script lines become `ProjectTag(kind="line", name=..., parent_id=<section-tag-id-or-None>, order_idx=...)`. No new Section model — the existing ProjectTag hierarchy handles it via `parent_id`. **Migration concern**: existing `clipfarm.json` files don't have `Project` entries yet (Phase 5 is the first writer), so no `v1_to_v2.py` migration needed. The empty migration placeholder stays empty.
-
-- **`clipfarm/brief.py`** — pure parser.
-  - `parse_brief(text: str) -> ParsedBrief` returns a structured Pydantic model: `name: str` (**required, non-empty string** — empty / non-string / missing raises), `script: Optional[Script]`, `sections: list[str]`, `tags: list[str]` (user-defined ad-hoc tags), `body_md: str` (the markdown after the frontmatter).
-  - Uses `PyYAML` (added to `pyproject.toml`) for the frontmatter. Strict mode (`yaml.safe_load`) — no arbitrary Python objects.
-  - On any YAML error: raise `BriefParseError` with the YAML library's line/column info. Route layer turns it into a 400 with the position info preserved.
-  - **`name` validation**: must be present in the frontmatter, must be a string, must be non-empty after `.strip()`. Pydantic + a custom validator enforce this; missing or empty `name` raises `BriefParseError`.
-  - **No body-only path.** A brief without YAML frontmatter (or without a `name` field) is invalid. Frontmatter-with-just-a-`name` is the minimal valid brief; pure prose without metadata is "not yet a project" — keeping the door closed prevents Phase 6's tagging code from having to special-case projects with missing structure.
-  - **Duplicate script lines are tolerated** (don't dedupe, don't reject). The parser keeps them; their `order_idx` differentiates them at the ProjectTag level; the LLM in Phase 6 matches by content + position.
-  - **Tests cover**: valid full brief; valid minimal brief (just `name`); missing `name` raises with a clear error; empty / non-string `name` raises; malformed YAML raises with position; nested frontmatter shapes (sections + tags) parse correctly; duplicate script lines preserved as separate entries.
-
-- **`clipfarm/projects.py`** — pure orchestration (matches `boundary.py` pattern).
-  - `create_project(state: ClipFarmState, parsed: ParsedBrief) -> str` — allocates a new `project_id` (monotonic string-int like `Source`), builds Project + ProjectTag entries from `parsed`, mutates state. Returns the project_id.
-  - `update_project(state: ClipFarmState, project_id: str, parsed: ParsedBrief) -> int` — replaces the Project's `name`, `brief_md`, `script`, `tags` using the **name-keyed merge** (see locked decisions below). Sets `stale: true` on every `clip_project_tags` row referencing this project. Returns the count of tag rows flipped to stale.
-  - **`POST /api/projects/parse`** is a read-only preview endpoint that runs the same `parse_brief` and returns a small summary `{name, lines_count, sections, tags}` — no state mutation, no snapshot. Used by the frontend's debounced live preview so there's a single parser implementation (Python), not a duplicated `js-yaml` ruleset that can drift.
-  - `delete_project(state: ClipFarmState, project_id: str) -> tuple[int, int]` — removes the Project + its `tags` (in the Project's own dict) + every `clip_project_tags` row for this project (in the top-level state list). Marks any attempts for this project with `needs_review=True`, then drops them too (see open questions). Returns `(dropped_tag_rows, deleted_attempts)`.
-  - `list_projects(state: ClipFarmState) -> list[ProjectSummary]` — used by `GET /api/projects`. Returns name, project_id, created_at, line count, section count, tag count.
-
-- **`clipfarm/routes/projects.py`** — 6 routes (5 CRUD + 1 read-only parse preview):
-  - `POST /api/projects` body `{"brief_md": "..."}` → 200 with `{project_id, snapshot}`. 400 on parse error (returns the parser's line/column info verbatim where available). Snapshot reason: `"create-project"`.
-  - `GET /api/projects` → list of project summaries.
-  - `GET /api/projects/{id}` → full project shape (name, brief_md, script, tags). 404 unknown.
-  - `PATCH /api/projects/{id}` body `{"brief_md": "..."}` → re-parses, updates, returns `{project_id, stale_tag_rows, snapshot}`. Snapshot reason: `"edit-brief"`.
-  - `DELETE /api/projects/{id}` → returns `{project_id, dropped_tag_rows, deleted_attempts, snapshot}`. Snapshot reason: `"delete-project"`. Same forward-compatible-counts pattern as `delete_clip`.
-  - **`POST /api/projects/parse` body `{"brief_md": "..."}` → 200 with `{name, lines_count, sections, tags}` or 400 with parse error.** Read-only, no lock, no snapshot. The frontend's debounced live preview calls this on every textarea change.
-  - Every mutating route holds `app.state.save_lock` around the orchestrator call (Phase 2.1 pattern) and routes through `commit_state_with_snapshot`.
-
-**Frontend (`web/`):**
-
-- **`web/src/pages/Brief.tsx`** — replace the Phase 1 placeholder with a real editor:
-  - **Left rail**: project list + "New project" button.
-  - **Main panel**: when a project is selected (or "new" clicked), shows a `<textarea>` with the brief markdown + a "Save" button + a "Delete project" button (with always-confirm dialog).
-  - **Live parse preview** (small, below the textarea): shows the parsed name, line count, section count, tag count — updates on debounce (200ms). Tells the user "the parser saw 12 lines and 3 sections" without committing.
-  - **Save**: POSTs `/api/projects` (new) or PATCHes `/api/projects/{id}` (existing). On 400, surfaces the parser error inline.
-  - **Inline help** below the textarea: a `<details>` block with a minimal example brief, so the YAML frontmatter expectation is discoverable.
-- The **other pages stay placeholders** — Phase 5 doesn't wire projects into the Library or Take Grid (those are Phase 7).
-
-**Tests (target ~30 new):**
-
-- `tests/test_brief.py` (~10): parse a valid full brief; minimal (just `name`); missing `name` raises with a clear error; malformed YAML raises with position; body-only (no frontmatter) is OK with empty structured fields; nested frontmatter shapes (sections + tags) parse correctly; round-trip a known brief through dump + parse.
-- `tests/test_projects.py` (~10): `create_project` allocates monotonic IDs; `update_project` flips all matching `clip_project_tags` rows to stale (synthetic tags injected to prove the rule fires); `update_project` name-stable merge preserves existing ProjectTag IDs when names change; `delete_project` drops the project + its ProjectTags + every clip_project_tags row (synthetic data again) + hard-deletes attempts (synthetic attempts).
-- `tests/test_routes_projects.py` (~8): 5 happy-path tests (one per route, each running through `_count_snapshots_after_op` to assert exactly one new snapshot with the right reason on mutating ones). 400 on malformed brief. 404 on unknown project. 409 on freeze. Lock-held assertion on at least one mutating route (carry from Phase 2.1).
-- `tests/test_load_unknown_keys.py` enhancements (~4 new cases): unknown key inside a `dict[str, ProjectTag]` value, unknown key inside a top-level `dict[str, Project]`, unknown key inside the `Script` model, unknown key inside an `Optional[Script]` field. Each test asserts the warning carries the correct dotted path (e.g. `projects.1.tags.2._unknown`).
-- `tests/test_models_round_trip.py` enhancements (~2 new cases): Project with `script=None` round-trips; Project with full `Script(lines=[...])` round-trips.
-
-### Decisions locked with this plan
-
-- **Snapshot on every Phase-5 mutating route** (create / update / delete). Spec's "every destructive op writes a snapshot first" invariant — broadly read. Failing to snapshot a botched brief edit would lose the prior version with no recovery path.
-- **Name-keyed tag merge on `update_project`** — locking the **name-stable** (not position-stable) identity rule. Reordering script lines is the common case during brief iteration; renames are the deliberate "this is a different point now" case. The rule:
-  - **Section identity:** `name`. Reordering sections preserves IDs; renaming a section creates a new ProjectTag for the renamed one and removes the old. Clip refs to the removed section's ProjectTag become dangling tombstones (`clip_project_tags.project_tag_id` left pointing at the deleted ID, `stale: true` flipped — same pattern as the Phase 4 delete-clip tombstone).
-  - **Line identity:** `(parent_section_name, line_text, occurrence_index_in_section)`. Reordering lines within a section preserves their IDs; renaming a line creates a new one; moving a line between sections creates a new one. `occurrence_index` differentiates duplicate lines (chorus / repeated phrase) — the first occurrence of `" hook line "` in section `intro` is index 0, the second is index 1, etc.
-  - Tags that no longer appear in the new brief get removed; their `clip_project_tags` rows flip to `stale: true` with `project_tag_id` left as the dangling tombstone. The user's next "Retag" run (Phase 6) is the explicit-action moment when those dangling refs get rewritten.
-- **`Project.brief_md` carries the full original markdown** (frontmatter + body) — canonical source for the editor to re-render. Parsed structured fields are derived; can always be rebuilt by re-parsing.
-- **PyYAML is the dependency** (well-established, ~120KB, only used here).
-- **Project deletion hard-deletes the project's attempts** (Phase 8+ is the first writer of attempts — no live data lost in v0). Snapshot is the safety net.
-- **Sections are ProjectTags, not a separate model.** Existing `ProjectTag.parent_id` hierarchy is enough; the brief parser builds the tree from the YAML.
-- **YAML escaping is documented, not bypassed.** Script lines that start with `-`, `#`, or contain `:` need to be quoted with `'...'` (standard YAML). The Brief.tsx inline help block calls this out with one short example. Lillian can absorb that friction; redesigning the brief format to dodge it isn't worth the cost.
-
-### Out of scope for Phase 5 (explicit)
-
-- LLM tagging (Phase 6 — Phase 5 just creates the `ProjectTag` shells).
-- Project-aware UI on the Library page (Phase 7).
-- Brief editor with live transcript preview / link-from-line-to-clip (Phase 7+).
-- Voice-tag projects (Future Ideas).
-- Multi-author / shared briefs (not a v0 concern — single user).
-- Cross-project tag transfer ("apply this project's tags to that project") — Phase 6+ if ever.
-- WYSIWYG markdown editor — v0 ships a textarea. Markdown rendering as a preview is acceptable polish if cheap; not blocking.
-
-### Notes carried into later phases
-
-- **Phase 6** (LLM tagging) writes `clip_project_tags` rows pointing at the `ProjectTag` IDs Phase 5 creates. The shape is locked here; Phase 6 doesn't touch the Project / ProjectTag schemas.
-- **Phase 7** (take grid) reads `Project.script` and `Project.tags` to build the per-line row layout.
-- **Phase 8** (premade attempts) writes `state.attempts` with `project_id` set. The deletion-cleanup path Phase 5 ships for "delete project" already wires in the attempt cleanup (synthetic-tested here).
-- **The serialize-outside-lock + two-section route pattern issues** are flagged from the Phase 4 review for Phase 6's kickoff. Phase 6 is the first phase where the race window could matter (long-running LLM calls in mutation paths).
 
 ## Phase 6 — Ollama tagging (batched)
 
-*To be planned before execution.*
+**Goal.** Run a project's brief through Llama 3.1 8B and produce `clip_project_tags` rows for every clip the LLM thinks belongs to one of the project's script lines / sections / categories. The first phase where ClipFarm actually uses its local LLM and the first writer of real tag data.
 
-**Advance notes** (carry into the plan when written):
-- Activate the `ClipProjectTag` uniqueness root_validator stubbed in Phase 1. Once tags get written, enforce uniqueness on `(clip_id, project_id, project_tag_id, category)` at the model level.
-- Plan for malformed LLM responses: retry-once on JSON parse failure, then mark the batch as "untagged — retry available" rather than aborting the whole tagging run. Don't pretend Ollama's JSON-schema mode is 100% reliable.
-- **Voice annotation scope creep watchout**: the `VoiceAnnotation` model exists. The *feature* is v2+. Phase 6 should not start hooking it up.
+After Phase 6: a brief + ingested footage + one button press produces a tagged library. Phase 7's take grid then reads the tags to lay out the per-line columns.
+
+**Verification at the end of this phase (concrete, no manual UI inspection needed):**
+
+- `uv run pytest` passes (target ~270+ tests; Phase 5's 232 + Phase 6 additions).
+- `curl -X POST localhost:8765/api/projects/<id>/tag` against an ingested + brief'd project returns `{batches: N, clips_tagged: M, untagged_batches: list[BatchFailure], duration_sec: float}`. One snapshot per call via `commit_state_with_snapshot(app, reason="tag-clips")`.
+- After tagging, `curl localhost:8765/api/state | jq '.clip_project_tags | length'` shows the new tag rows. Every row has a non-null `category` from the 5-value enum and (for `on-script` rows) a `line_tag_id` matching an entry in the project's `Project.tags`.
+- **Idempotency**: running the tag route a second time without changes is a no-op — non-stale clips are already tagged for this project and get skipped. Returns `{batches: 0, clips_tagged: 0}`.
+- **Stale retag**: edit the project's brief (PATCH triggers `stale: true` on every row), call `/tag` again → the LLM gets re-run only on the stale clips, fresh tag rows replace the old, `stale: true` flips back to `false`.
+- **Uniqueness validator fires**: hand-write `clipfarm.json` with two `clip_project_tags` rows that share `(clip_id, project_id, project_tag_id, category)`. Server reload via the watcher → `ValidationError` surfaces in the log + reload aborts, in-memory state stays the old version. Tests assert this end-to-end.
+- **JSON-parse retry**: if the LLM returns malformed JSON, the orchestrator retries the same batch once; if the retry still fails the batch lands in `untagged_batches` with a clear reason and the rest of the run continues. The route response shows N successful + K failed batches.
+- **Live verification on `05.19.26/`**: create a brief for `btc.0.4`, tag it, manually inspect 5 random clips. The categorizations should make qualitative sense (the LLM isn't deterministic; we're checking it's roughly working, not pixel-perfect output). Empirical baseline (tag count + categories distribution) gets written into `COMPLETED_PHASES.md` for future regression visibility.
+
+### Scope
+
+**Phase 6 kickoff cleanups (the Phase 4 architectural carries + the Phase 5 polish residue):**
+
+These all ride along on Phase 6 because Phase 6 is the first phase where the relevant invariants matter or the new surfaces stress the existing code.
+
+- **`serialize_state` moved inside the save lock** (`store.py`'s `save_state` and `save_state_with_snapshot`). Phase 6 introduces long-running mutation routes (tagging holds work for tens of seconds across batched LLM calls); concurrent route handlers across that window are the first plausible reproducer for the race the Phase 4 reviewer flagged. One-line move; tests don't change behaviorally.
+- **Mutation + commit inside one locked critical section, across ALL six mutating routes.** Today's `routes/*.py` pattern is "acquire lock → mutate → release lock → commit acquires lock again." Two separate lock acquisitions. Fix:
+  - Add `commit_state_with_snapshot_locked(app, reason)` (snapshot variant) AND `commit_state_to_disk_locked(app)` (no-snapshot variant) — both assume the caller already holds `app.state.save_lock`.
+  - Migrate **every** mutating route to the new pattern: `async with save_lock: { mutate; await <locked variant> }`. That's the Phase 4 clips routes (5) + Phase 5 projects routes (3) + the Phase 2 **ingest route**. Ingest joins the new pattern instead of staying behind — leaving two coexisting patterns is the silent-inconsistency footgun the next implementer trips on.
+  - Existing tests already assert lock-held-during-orchestrator; they keep passing. New test: a single test asserts the *commit* also happens inside the same lock (counts lock acquire/release events around the route call).
+- **Activate `ClipProjectTag` uniqueness validator** (the Phase 1 stub). `ClipFarmState._check_clip_project_tag_uniqueness` currently has an early-return + commented seen-set check. Uncomment, drop the early return. Tests cover: duplicate triple on load raises; duplicate triple constructed in-memory raises on next validation pass.
+- **Phase 5 polish residue from the reviewer's pass:**
+  - `_project_detail`'s O(N²) section sort → build a `name→order_idx` map once, look up in the key. ~3 lines.
+  - `_full_brief_md` reconstruction branch gets a one-line comment noting it's reachable only via direct API (programmatic creation in tests), not the routes — which always pass `brief_md_source=body.brief_md`.
+  - `_build_tags_from_brief`'s `"<unknown>"` fallback for missing-parent-section lookups is unreachable under v0 (lines have `parent_id=None`); add a test that exercises it with a synthesized "future hierarchy" state OR remove it with a TODO comment. **Recommendation: keep the fallback (defensive for Phase 7's hierarchy), add a test.**
+
+**Backend — Ollama client (`clipfarm/llm.py`):**
+
+- Thin `httpx` wrapper around Ollama's `/api/chat` endpoint. No third-party Ollama SDK — the surface is small enough that direct HTTP is cleaner and one fewer dep.
+- `chat_with_json_schema(messages, schema, *, model="llama3.1:8b", host="http://localhost:11434", timeout=60.0) -> dict | None` returns the parsed JSON or `None` on any failure (HTTP error, non-JSON response, schema mismatch). Never raises.
+- The `format` parameter in the request body carries the JSON schema (Ollama supports this natively for JSON-schema-constrained output).
+- `OLLAMA_HOST` env var overrides the default `localhost:11434`.
+- Logs at INFO level the prompt length + response length + latency per call so the dogfood run produces readable timing data.
+
+**Backend — Tagging orchestrator (`clipfarm/tagging.py`):**
+
+- Pure orchestration. Takes `(state, project_id)` + an `llm_client` callable (so tests can inject a fake). Mutates `state.clip_project_tags` in place. Returns a `TaggingResult`.
+- **What gets tagged in one run:**
+  - Clips on every source in `state.sources` (no per-project source scoping in v0 — every ingested clip is a candidate for every project).
+  - Filtered down to: clips with NO existing `clip_project_tags` row for this project_id, OR clips with at least one row that has `stale=True`.
+  - `stale=True` clips are re-tagged: drop the existing rows for `(clip_id, project_id)` before the fresh tag write.
+- **Prompt structure:**
+  - System prompt: project name, "what's good" body, the script lines with their tag IDs, the sections with their tag IDs, ad-hoc tags with their tag IDs. Compact, ~300-500 tokens.
+  - User prompt: a JSON array of `{clip_id, transcript_text}` for the batch (default size 10). The model returns a JSON array of `{clip_id, line_tag_id, section_tag_id, category, confidence}`.
+- **Output schema** (locked):
+  - `clip_id: str` — the clip this row tags. The LLM is asked to echo it back so we can match rows to clips even on batch-size mismatch.
+  - `line_tag_id: Optional[str]` — the ProjectTag ID of a `kind="line"` entry. Null when the clip doesn't match a script line (every category except `on-script`).
+  - `section_tag_id: Optional[str]` — Null in v0 (flat lines mean no section-to-clip linking yet); reserved for Phase 7+'s hierarchy.
+  - `category: Literal["on-script", "related-but-different", "standalone-idea", "off-topic", "fragment"]`.
+  - `confidence: float` (0.0–1.0).
+- **Batching:** default 10 clips per batch. Configurable via `batch_size` query param on the route (**1-30 range**). At 30 clips × ~200 words ≈ 6K tokens per batch + prompt overhead; the model handles that fine and per-clip output quality stays solid. Higher batches (50+) trade thoroughness for getting through the array — not worth the speed.
+- **Confidence threshold**: **v0 accepts every row regardless of confidence**. The score gets surfaced visually in Phase 7's take grid for the user to filter manually if they want. Don't auto-drop low-confidence rows — the LLM's confidence score isn't reliable enough to trust as a threshold.
+- **LLM-output validation rules** (per row, applied in `_validate_llm_row` before writing to state):
+  - **Unknown `line_tag_id`** (doesn't match any ProjectTag in the project) → drop row, log a warning naming the clip + the hallucinated ID.
+  - **Invalid `category`** (not in the 5-value enum) → drop row + log.
+  - **Missing required field** (no `category`, no `confidence`, no `clip_id`) → drop row + log.
+  - **Out-of-range `confidence`** (> 1.0 or < 0.0) → **clamp to [0, 1] + log a warning**, don't drop. The LLM is usually right about the row's contents and just bad at the scalar; clamping preserves the signal.
+  - **Unexpected `clip_id`** (not in the batch we sent) → drop row + log. Hallucinated clips do nothing useful.
+- **Batch-size mismatch policy** (LLM returns N ≠ requested batch_size): **try clip_id reconstruction first.** Walk the response, keep every row whose `clip_id` is in the batch we sent + passes the per-row validation rules above. If the resulting set is non-empty, write those rows; the missing clips just don't get tagged this run (no retry — partial wins are real and re-running tagging is cheap). If the set is empty (LLM completely off-script), treat as malformed → retry once → bucket on second failure.
+- **Retry policy:** if the LLM returns malformed JSON, OR the post-validation row set is empty, **retry once** with the same batch. If the retry also fails, the batch lands in `result.untagged_batches: list[BatchFailure]` with `{clip_ids, reason: str, raw_response_excerpt: str}` and the orchestrator continues to the next batch. **Never aborts the whole run on a single batch failure** — that would punish the user for one bad LLM call.
+- **Tag write:** for each successful clip, write a new `ClipProjectTag` row. The uniqueness validator enforces `(clip_id, project_id, project_tag_id, category)` uniqueness at the model level. If a duplicate would be created (shouldn't happen given the pre-filter, but defense in depth), drop the new write and log a warning.
+- **Voice annotations stay closed.** The `VoiceAnnotation` model is in the data model but Phase 6 ignores it entirely — that's a v2+ feature, the Phase 6 advance note explicitly flags it as scope-creep to avoid.
+
+**Backend — Route (`clipfarm/routes/tagging.py`):**
+
+- **`POST /api/projects/{project_id}/tag`** with optional query params `?batch_size=10` (default 10, **1-30 range**), `?dry_run=false`.
+- **Empty-brief 400**: a project with `name` but no `script.lines`, no `sections`, and no ad-hoc `tags` has nothing for the LLM to match against. The route returns 400 with detail `"project '{name}' has no script lines, sections, or tags — add at least one before tagging."` before any LLM call. Cheap defense against confused UX (a 20-second round trip producing zero useful output).
+- **Synchronous** for the duration of the run. The reviewer's call: at v0 scale (~150 clips, ~15 batches, ~20s total) the simpler architecture is correct. If a project ever needs minutes, Phase 9+ can swap in a background-task model. Document this with a comment so the next implementer knows the seam is on purpose.
+- Holds `app.state.save_lock` across the entire run. The `dirty` flag is set as soon as the first batch lands; commit happens once at the end (one snapshot per `/tag` call, not one per batch). This is the new locked pattern from the kickoff cleanups. **Side-effect to document in a route comment**: any other mutating route (boundary correction, ingest, brief edit) called concurrently will stall behind the tag run. v0 single-user-single-tab doesn't trigger this; the same trigger that makes that matter (multi-user, multi-tab, progress UI) is the same trigger to move to a background-task model.
+- 404 unknown `project_id`. 400 on empty brief (see above). 409 if `writes_frozen` (also: if the watcher fires mid-tag and `writes_frozen` flips True during the run, the locked commit at end-of-run raises `WritesFrozenError` → 409; all in-memory tags are lost. User resolves the freeze and retries. This is correct behavior — documented in a route comment so it doesn't look like a bug). 502 if Ollama is unreachable on the first batch (so the user knows the LLM endpoint is down, rather than waiting through 15 retries). Subsequent batch failures inside a run go into `untagged_batches` instead.
+- `dry_run=true` runs the batching + skips the LLM call (no mutation, no snapshot). Useful for debugging the batch composition.
+
+**Frontend (small, the real UI is Phase 7):**
+
+- On the **Brief page**, when an existing project is selected, add a "Tag clips" button near Save/Delete.
+- Button text shows the count of clips needing tagging: `Tag 47 clips` (untagged + stale). When 0 → button disabled with text "All clips tagged for this project."
+- On click → `POST /api/projects/{id}/tag` → spinner + progress text ("Tagging…" — synchronous so no real-time progress in v0). On success: toast with `clips_tagged` count + how many batches failed. On 502: toast "Ollama unreachable. Is `brew services start ollama` running?"
+- The actual tag inspection / per-line categorization view is **Phase 7** — Phase 6 ships the action and verifies via `/api/state`.
+
+**Tests (~40 new):**
+
+- `tests/test_llm.py` (~8): patched `httpx.post` returning canned JSON; happy-path schema-constrained response; malformed JSON returns None; HTTP 500 returns None; HTTP timeout returns None; ollama-host env var override; the JSON `format` field is correctly populated with the requested schema.
+- `tests/test_tagging.py` (~15): pure orchestrator with a fake `llm_client`.
+  - Clips not yet tagged → tagged (counts match).
+  - Already-tagged + non-stale → skipped (idempotency).
+  - Stale-flagged → existing rows dropped + fresh written, stale flips back to False.
+  - Cross-project: project A's tagging doesn't touch project B's rows.
+  - Batch boundaries respected (N=23, batch_size=10 → batches of 10/10/3).
+  - Batch failure: fake client returns malformed JSON → retry-once → on retry fail, batch lands in `untagged_batches` and the run continues.
+  - Output schema validation: an LLM hallucination that returns an unknown `line_tag_id` → that row is dropped + logged.
+  - Output schema validation: invalid `category` → row dropped + logged.
+- `tests/test_uniqueness_validator.py` (~5): the activated `ClipFarmState._check_clip_project_tag_uniqueness`. Constructing state with duplicate triples raises; loading `clipfarm.json` with duplicates raises during the model_validate pass; uniqueness key is `(clip_id, project_id, project_tag_id, category)` — same `project_tag_id` with different `category` is NOT a duplicate.
+- `tests/test_routes_tagging.py` (~10): one happy-path through TestClient with a mocked LLM client; 404 unknown project; 400 empty brief (no script, no sections, no tags); 409 freeze; lock-held assertion; **commit-also-inside-lock assertion** (the new invariant — single critical section per op); snapshot-count-equals-op-count (one snapshot per `/tag` call regardless of batch count); idempotency (second call to same project returns 0); 502 when Ollama is unreachable; `dry_run=true` mode produces no mutation + no snapshot.
+- `tests/test_store.py` enhancements (~3 new): serialize-inside-lock test, locked-commit variants for both `commit_state_to_disk_locked` + `commit_state_with_snapshot_locked`, behavior under concurrent locked mutations.
+
+### Decisions locked with this plan
+
+- **Synchronous route, no background-task system.** v0 scale (~20s on dogfood) makes the simpler architecture correct. Background-task / polling / SSE land later if a project ever takes minutes — the reviewer's three-option analysis is documented but the polling/SSE options are not built.
+- **Retry-once on malformed LLM response**, then bucket the failed batch into `untagged_batches` and continue. Don't punish the user for one bad call.
+- **Batch-size mismatch → clip-ID reconstruction.** When the LLM returns N ≠ batch_size rows, walk the response and keep every row that matches a `clip_id` in our batch + passes validation. Partial wins are real. Only treat as malformed if the resulting valid set is empty.
+- **Per-row validation rules locked**: unknown `line_tag_id` / invalid `category` / missing required field → drop + log. Out-of-range `confidence` → **clamp to [0, 1] + log**, don't drop.
+- **No confidence threshold at write time.** Every row that passes validation gets written. Phase 7's take grid surfaces confidence visually for manual filtering.
+- **Empty brief rejected with 400** before any LLM call.
+- **Uniqueness validator activated.** Duplicate `(clip_id, project_id, project_tag_id, category)` is a hard error at the model level — the loader rejects, in-memory mutations reject.
+- **Tagging ignores `VoiceAnnotation` entirely.** The model exists; the feature is v2+. Touching it in Phase 6 is scope creep that the advance note explicitly flagged.
+- **Stale flag drives re-tagging.** No separate "force retag" affordance in v0 — if a brief edit set `stale=true`, the next `/tag` call drops + rewrites those rows. If the user wants to retag clean rows too, they can hand-set `stale=true` in `clipfarm.json` (the file watcher reloads).
+- **`section_tag_id` is reserved but null in v0.** Phase 5's flat-lines simplification carries: lines have `parent_id=None`, so `section_tag_id` on tagging output stays null until the brief format gains section→line hierarchy in Phase 7+.
+- **Phase 4 architectural carries finally land — applied to ALL six mutating routes.** `serialize_state` inside the lock; new `commit_state_to_disk_locked` + `commit_state_with_snapshot_locked` variants. Phase 4 clips, Phase 5 projects, AND Phase 2 ingest all get migrated to the one-critical-section-per-op pattern in the same pass. Tests cover the new seam (lock held across both mutation + commit, single acquire/release per route).
+- **batch_size capped at 30**, not 50. Output quality degrades on larger batches as the model trades thoroughness for completing the array.
+
+### Out of scope for Phase 6 (explicit)
+
+- The take grid view (Phase 7 — Phase 6 ships the writes; Phase 7 ships the reads).
+- The Script TOC view (Phase 7b).
+- Premade attempts (Phase 8).
+- Live preview (Phase 9).
+- Per-clip / per-batch progress UI — v0 synchronous run shows a spinner only.
+- Background task system / SSE / polling — synchronous only.
+- "Force retag everything" affordance — stale-flag-driven only.
+- Voice annotations — explicit scope creep watchout.
+- Ollama model selection in Settings — hard-coded `llama3.1:8b` for v0.
+
+### Notes carried into later phases
+
+- **Phase 7** (take grid) reads `clip_project_tags` to build the per-line columns. The schema Phase 6 writes (`category`, `line_tag_id`, `confidence`) is what Phase 7 sorts and groups by.
+- **Phase 7b** (Script TOC view) reads the same tag rows from a different lens.
+- **Settings page** finally gets real content in a future polish pass: Ollama host + model + batch size. v0 hard-codes via env vars + a constant.
+- **Tagging quality observation hook**: the live verification on btc.0.4 writes a "5 sampled clips + their categorizations" snippet into `COMPLETED_PHASES.md`. If Llama 3.1 8B's quality is poor in real use, that's the data point for the spec's "revisit if tagging quality is inadequate" decision — the trigger to bump to Qwen 2.5 14B.
 
 ## Phase 7 — Take grid view
 

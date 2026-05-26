@@ -26,7 +26,7 @@ from clipfarm.projects import (
     list_projects,
     update_project,
 )
-from clipfarm.routes.deps import commit_state_with_snapshot
+from clipfarm.routes.deps import commit_state_with_snapshot_locked
 from clipfarm.store import WritesFrozenError
 
 router = APIRouter(prefix="/api", tags=["projects"])
@@ -96,9 +96,10 @@ def _brief_error_400(e: BriefParseError) -> HTTPException:
     return HTTPException(status_code=400, detail=detail)
 
 
-async def _commit_with_reason(app, reason: str) -> Optional[str]:
+def _commit_with_reason_locked(app, reason: str) -> Optional[str]:
+    """Locked-variant commit — caller MUST hold app.state.save_lock."""
     try:
-        snap_path = await commit_state_with_snapshot(app, reason)
+        snap_path = commit_state_with_snapshot_locked(app, reason)
     except WritesFrozenError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return snap_path.name if snap_path is not None else None
@@ -106,17 +107,15 @@ async def _commit_with_reason(app, reason: str) -> Optional[str]:
 
 def _project_detail(state: ClipFarmState, project_id: str) -> ProjectDetail:
     proj = state.projects[project_id]
-    sections = [
-        t.name for t in proj.tags.values()
-        if t.kind == "section" and t.parent_id is None
-    ]
-    sections.sort(key=lambda n: next(
-        t.order_idx
+    # Build a name → order_idx lookup once instead of doing the inner
+    # linear scan inside `sort(key=...)` (Phase 5 review residue).
+    section_order: dict[str, int] = {
+        t.name: t.order_idx
         for t in proj.tags.values()
-        if t.kind == "section" and t.name == n
-    ))
-    tags = [t.name for t in proj.tags.values() if t.kind == "tag"]
-    tags.sort()
+        if t.kind == "section" and t.parent_id is None
+    }
+    sections = sorted(section_order.keys(), key=lambda n: section_order[n])
+    tags = sorted(t.name for t in proj.tags.values() if t.kind == "tag")
     script_lines = proj.script.lines if proj.script is not None else []
     return ProjectDetail(
         project_id=project_id,
@@ -180,8 +179,8 @@ async def create_project_route(
     async with app.state.save_lock:
         pid = create_project(state, parsed, brief_md_source=body.brief_md)
         app.state.dirty = True
+        snapshot = _commit_with_reason_locked(app, "create-project")
 
-    snapshot = await _commit_with_reason(app, "create-project")
     return CreateProjectResponse(project_id=pid, snapshot=snapshot)
 
 
@@ -206,8 +205,8 @@ async def update_project_route(
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e))
         app.state.dirty = True
+        snapshot = _commit_with_reason_locked(app, "edit-brief")
 
-    snapshot = await _commit_with_reason(app, "edit-brief")
     return UpdateProjectResponse(
         project_id=project_id, stale_tag_rows=staled, snapshot=snapshot
     )
@@ -227,8 +226,8 @@ async def delete_project_route(
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e))
         app.state.dirty = True
+        snapshot = _commit_with_reason_locked(app, "delete-project")
 
-    snapshot = await _commit_with_reason(app, "delete-project")
     return DeleteProjectResponse(
         project_id=project_id,
         dropped_tag_rows=dropped,
