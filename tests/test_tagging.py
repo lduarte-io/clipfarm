@@ -226,6 +226,31 @@ def test_drops_row_with_unknown_line_tag_id():
     assert {r.clip_id for r in state.clip_project_tags} == {"c1"}
 
 
+def test_on_script_with_null_line_tag_id_demoted_to_related_but_different(caplog):
+    """Phase 6.2 (caught Phase 9 dogfood 2026-05-26): the LLM sometimes
+    emits on-script + line_tag_id=null when it senses relevance but
+    can't pin a specific line. Spec says on-script REQUIRES a line
+    match; the row is demoted to related-but-different rather than
+    dropped so the LLM's relevance signal isn't lost."""
+    state = _state_with_project(n_clips=2)
+    client = _fake_client([{"results": [
+        # The bug: on-script + null line_tag_id.
+        _row("c0", line_tag_id=None, category="on-script"),
+        _row("c1", line_tag_id="t1"),
+    ]}])
+    with caplog.at_level("WARNING", logger="clipfarm.tagging"):
+        result = tag_project(state, "p1", llm_client=client)
+    # Both rows kept — c0 was demoted, not dropped.
+    assert result.clips_tagged == 2
+    rows = {r.clip_id: r for r in state.clip_project_tags}
+    assert rows["c0"].category == "related-but-different"
+    assert rows["c0"].project_tag_id is None
+    assert rows["c1"].category == "on-script"
+    assert rows["c1"].project_tag_id == "t1"
+    # Demotion warning logged.
+    assert any("demoting to related-but-different" in m for m in caplog.messages)
+
+
 def test_drops_row_with_invalid_category():
     state = _state_with_project(n_clips=2)
     client = _fake_client([{"results": [

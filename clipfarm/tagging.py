@@ -165,8 +165,8 @@ def _system_prompt(project_name: str, project_brief_md: str, project_tags: dict)
         "  - line_tag_id: the id of a script line this clip matches, or null",
         "  - section_tag_id: the id of a section this clip belongs to, or null (leave null for v0)",
         "  - category: one of",
-        "      - on-script: matches a script line directly",
-        "      - related-but-different: relevant to the project but not a script line",
+        "      - on-script: matches a SPECIFIC script line directly. If you choose this, line_tag_id MUST be the id of that line — never null. If you can't pin a specific line, do NOT use on-script.",
+        "      - related-but-different: relevant to the project but doesn't match any specific script line. Use this when content is on-topic but you can't identify which line.",
         "      - standalone-idea: a good moment that could be its own short / callout",
         "      - off-topic: not for this project",
         "      - fragment: false start, single-word noise, restart, filler",
@@ -239,6 +239,24 @@ def _validate_row(
                 line_tag_id,
             )
             return None
+
+    # Phase 6.2 (caught during Phase 9 dogfood, 2026-05-26):
+    # on-script REQUIRES a specific line_tag_id per spec ("on-script —
+    # matched a script line"). The LLM sometimes emits on-script with
+    # line_tag_id=null when it senses content relevance but can't pin
+    # the line — that's semantically related-but-different, not
+    # on-script. Demote rather than drop so the LLM's relevance signal
+    # is preserved in the right category. Without this, downstream
+    # strategies (best_per_line, near_one_take, etc.) silently produce
+    # zero attempts because their candidate filter requires a non-null
+    # line_tag_id on on-script rows.
+    if category == "on-script" and line_tag_id is None:
+        log.warning(
+            "tagging: clip=%s tagged on-script with null line_tag_id — "
+            "demoting to related-but-different per spec",
+            cid,
+        )
+        category = "related-but-different"
 
     raw_confidence = row.get("confidence")
     if raw_confidence is None:

@@ -4,6 +4,82 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 9 — Live preview
+
+**Verified by Lillian:** ✅ 2026-05-26 (reviewer: "ship it, with one real correctness/efficiency flag for Phase 10 kickoff").
+
+**Built (2026-05-26):**
+
+First time the assembled work plays back. Click any clip anywhere → preview pane appears bottom-right and plays the clip's range. Click an attempt → pane plays through every clip in sequence. Pane survives navigation across pages so playback isn't interrupted.
+
+- **`clipfarm/resolver.py`** — pure `Attempt → list[ResolvedRange | TombstoneRange]`. Five-rule contract locked in module docstring (item order = AttemptClip order; tombstone = exactly one item; live clip = ≥1 ranges; trim offsets double-clamped — base by Phase 4, source-bounds here with warning logs; missing-transcript falls back to single un-expanded range with warning). `internal_pause_max_sec` semantic: **gap dropped entirely between sub-ranges**, not collapsed-to-max (plan-review #1, spec wording updated to match). **Shared with Phase 11 export** per the docstring so the trim + gap-drop + clamp rules live in one place.
+- **`clipfarm/routes/resolver.py`** — `GET /api/attempts/{id}/resolved`. Adds `source_url` + `source_filename` server-side so the frontend doesn't have to join against `/api/state`. Pure read.
+- **`clipfarm/routes/video.py`** — `GET /api/sources/{id}/video` with HTTP Range support. Locked range forms: `bytes=N-M` + `bytes=N-`; suffix `bytes=-N` and multi-range rejected with **416** (plan-review #3). 200/206/404/410/416. Content-Type derived from extension. 64KB chunked streaming. `Cache-Control: no-store` (dogfood-correct since source files can be replaced; the cache would mask that — worth revisiting in v1 because it disables browser seek optimization).
+- **`web/src/playback/context.tsx`** — `PlaybackProvider` + `usePlayback()` hook. Queue state lives outside `<Routes>` so the `<video>` element survives nav. `playClip` / `playAttempt` / `pause` / `resume` / `dismiss` / `advance` / `seekToIndex`.
+- **`web/src/playback/PreviewPane.tsx`** — floating bottom-right, default 480×270, drag-resizable from top-left corner (only growable corner since anchored BR). Min 320×180, max 80% of viewport. Size persisted to `localStorage["clipfarm.preview_pane_size"]`. Two alternating `<video>` elements (A/B) swap on `timeupdate`-vs-`effective_end` (50ms tolerance — native `ended` won't fire when we trim before file-end). `PRELOAD_AHEAD_SEC = 0.5` named constant with tuning comment (plan-review #4). Cross-source: hold-last-frame + `↻ Loading next clip…` overlay until new element fires `canplay`. Tombstone item: 2-second placeholder card then auto-advance. **Native `<video>` controls={false}** (plan-review #6) so the native scrubber can't seek out of the resolved range. Minimize-to-pill + dismiss controls.
+- **SidePanel extraction (Phase 9 kickoff carry per Phase 8 advance note)** — `web/src/components/SidePanel.tsx`, 58 lines, shell only (plan-review #5): chrome + close-X + scrollable body. Page-specific bodies stay inline. Project / ScriptTOC / Attempts swap in.
+- **Per-page playback wiring** — Project + ScriptTOC clicking a TakeCard calls `playClip`; Attempts clicking an AttemptCard calls `playAttempt`. App.tsx wraps `<Routes>` in `<PlaybackProvider>` + renders `<PreviewPane />` outside Routes.
+
+**Tests added (28 new — 418 total passing, up from 390):**
+
+- `tests/test_resolver.py` (14): single-clip no-trim, trim_start/trim_end, **negative effective_start clamped to 0**, **effective_end past source duration clamped**, **unknown source duration treated as infinity**, zero-duration after clamp raises, **dangling clip emits tombstone**, internal_pause no-gaps single range, internal_pause one gap >max splits in two, internal_pause gap exactly-at-max no split (strict `>` boundary locked), missing transcript with internal_pause set falls back to single range, multi-clip order preserved, unknown attempt raises KeyError.
+- `tests/test_routes_resolver.py` (4): happy path with `source_url` + `source_filename` derivation, 404 unknown, tombstone in response, read-only (no snapshot side effect).
+- `tests/test_routes_video.py` (10): 200 full + `Accept-Ranges`, 206 closed `bytes=N-M` with correct Content-Range and body, **206 open-ended `bytes=N-`** (the form browsers actually use), **416 suffix `bytes=-N` rejected** (plan-review #3 in code comment), **416 multi-range rejected**, 416 past EOF, 404 unknown, 410 unavailable, content-type for `.mp4` + `.mkv`.
+
+**Decisions resolved during execution:**
+
+- **Drag-resize handle on top-left corner only.** Pane is anchored bottom-right; the top-left is the only corner that growing makes sense from. Single tuning knob; sizes persisted to localStorage.
+- **`v.currentSrc.split("/api/")[1]` source comparison** is fragile (works because `currentSrc` is empty on first load → `undefined !== ...` evaluates True → cross-source path fires, which is accidentally correct). Reviewer flagged for the Phase 10 cross-source preload fix; compare `source_id` directly then.
+- **Word filter for `internal_pause_max_sec` expansion uses strict inclusion** (`w.start >= effective_start AND w.end <= effective_end`). Words that straddle the trim boundary don't participate in gap detection. Acceptable edge case for v0; flag for polish layer.
+
+**Real-data smoke on btc.0.4 (2.77 GB file):**
+
+```
+HEAD /api/sources/4/video         → 405 (browsers GET with Range, never HEAD for <video>)
+GET Range: bytes=0-1023           → 206  Content-Range: bytes 0-1023/2769128250  Content-Length: 1024
+GET Range: bytes=1000000-         → 206  (open-ended form)
+GET Range: bytes=-100             → 416  Content-Range: bytes */2769128250
+```
+
+**Reviewer assessment summary (2026-05-26, separate session):**
+
+> Top-line: ship it, with one real correctness/efficiency flag for Phase 10 kickoff. All three required plan-review items landed cleanly with named tests + code comments. All four advisory items addressed. Test count tracks: 14 resolver + 9+ video + 4-5 resolver-route = ~28 new. The architecture matches the plan exactly — backend resolver shared with future Phase 11 export, Range-aware video streaming, two-`<video>` swap with timeupdate detection, SidePanel extracted as a thin shell. Real-data smoke on btc.0.4 single-source means cross-source UX isn't visually verified (documented as a blind spot).
+
+**One real bug carry to Phase 10 kickoff (reviewer flag):**
+
+- **Cross-source preload is wasted.** In `PreviewPane.tsx:181-201`, the time-update handler calls `setActiveIdx` only for same-source swaps; cross-source falls through to `advance()` only, which causes the active-ref effect to re-fetch the source on the active element while the hidden element's preloaded file gets thrown away. Net: cross-source pays full file-load latency every time. Hold-last-frame UX still works (because `v.load()` doesn't blank the display until `canplay`) but it's worse than designed. Fix is ~5 lines — always `setActiveIdx` on range-end + advance; the previously-active element stays in DOM holding its last frame. **First multi-source assembly will feel slower than necessary; btc.0.4 is single-source so this didn't surface.**
+
+**Three smaller observations (non-blocking, polish layer):**
+
+1. **`v.currentSrc.split("/api/")[1]`** source-URL comparison is fragile. Compare `source_id` directly during the Phase 10 cross-source preload fix.
+2. **Word filter** `w.start >= effective_start AND w.end <= effective_end` excludes words straddling the trim boundary from gap detection. Edge case; v0 dogfood unlikely to hit it.
+3. **`Cache-Control: no-store`** disables browser-side seek optimization. Correct for dogfood (files can be replaced); revisit for v1.
+
+**Files touched in Phase 9:**
+
+```
+NEW:
+  clipfarm/resolver.py
+  clipfarm/routes/resolver.py
+  clipfarm/routes/video.py
+  tests/test_resolver.py
+  tests/test_routes_resolver.py
+  tests/test_routes_video.py
+  web/src/components/SidePanel.tsx
+  web/src/playback/context.tsx
+  web/src/playback/PreviewPane.tsx
+
+MODIFIED:
+  clipfarm/app.py               — include resolver + video routers
+  web/src/App.tsx               — wrap in PlaybackProvider + render PreviewPane outside Routes
+  web/src/pages/Project.tsx     — CardSidePanel uses extracted SidePanel; playClip on card click
+  web/src/pages/ScriptTOC.tsx   — same swap + playClip
+  web/src/pages/Attempts.tsx    — AttemptSidePanel uses extracted SidePanel; playAttempt on click
+  web/dist/...                  — rebuilt
+```
+
+---
+
 ## Phase 8.1 — Long-run progress UI
 
 **Verified by Lillian:** ✅ 2026-05-26 (reviewer: "small, focused, well-engineered").
