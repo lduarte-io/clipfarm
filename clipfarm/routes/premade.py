@@ -145,10 +145,19 @@ async def premade_attempts_route(
         app.state.dirty = True
         # Phase 8.1: initialize progress slot. try/finally below wipes
         # it AFTER the commit so the UI doesn't see an idle gap.
+        # Same provider/model surfacing as the tagging route.
+        _provider_name = tagging_settings.provider
+        _provider_model = (
+            tagging_settings.anthropic_model
+            if _provider_name == "anthropic"
+            else tagging_settings.ollama_model
+        )
         app.state.premade_progress = {
             "project_id": project_id,
             "phase": "starting",
             "elapsed_sec": 0.0,
+            "provider": _provider_name,
+            "model": _provider_model,
         }
         try:
             # Phase 6.1 bug #2: orchestrator on a worker thread keeps

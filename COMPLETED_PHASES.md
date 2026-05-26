@@ -4,6 +4,70 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 9.5 — Tagging provider toggle (Ollama / Anthropic API)
+
+**Verified by Lillian:** ⏳ pending (live verify in progress as of 2026-05-26).
+
+**Built (2026-05-26):** the Phase 6.1 deferred Sonnet-toggle decision finally lands. Switch between local Ollama (default, free, ~5 min per chrysalis-size run) and Anthropic API (opt-in, paid, ~30s with Sonnet 4.6) from `/settings`. Single dispatcher; orchestrators stay provider-agnostic.
+
+- **`clipfarm/settings.py`** — `TaggingSettings` (provider / ollama_model / anthropic_model / anthropic_api_key) inside a versioned `Settings` container. Storage: `.clipfarm/settings.json` (gitignored, deliberately separate from `clipfarm.json` since the API key must not go in the hand-editable project state). Atomic writes via tmp+rename. Corrupt-file load returns defaults with a warning so tagging can't break on bad config. `CLIPFARM_SETTINGS_PATH` env override for tests.
+- **`clipfarm/llm_anthropic.py`** — `chat_with_json_schema_anthropic` matches the existing `chat_with_json_schema` contract (returns parsed dict or `None`; never raises). Structured output via tool use: a single forced `submit_tags` tool whose `input_schema` is the caller's existing JSON schema. **Prompt caching** on the system message (`cache_control: {"type": "ephemeral"}`) so the shared brief context across N batches in a tagging run hits the 5-min cache. Lazy SDK import — users on Ollama don't pay the cost. Defensive extraction handles both typed-SDK and dict response shapes.
+- **`clipfarm/routes/settings.py`** — GET (key never returned; replaced with `anthropic_api_key_set: bool`), PATCH (update provider / model), POST `/anthropic-key` (Set + test affordance — tiny ~3-token call against the chosen model, persists only on success), DELETE (clear key).
+- **`clipfarm/routes/tagging.py` + `routes/premade.py`** — both reload `Settings` at request time, dispatch to the chosen client. Anthropic path skips the Ollama precondition ping. 400 if provider=anthropic with no key.
+- **Frontend `web/src/pages/Settings.tsx`** — provider radio, model dropdown with custom-value preservation, password-masked key input, Set+test / Set-without-test / Clear-key buttons, live "key is set" indicator.
+
+**Tests added (26 new — 419 → 445 total passing):**
+
+- `tests/test_settings.py` (6): round-trip, defaults on missing file, corrupt-file fallback, atomic write no leftover, parent-dir creation, on-disk plaintext contract.
+- `tests/test_llm_anthropic.py` (8): happy path verifies system extraction + cache_control + tool_choice; failure paths (empty key, missing SDK, create raises, no tool_use block) return None; `ping_anthropic` polarity tests.
+- `tests/test_routes_settings.py` (12): GET/PATCH/POST/DELETE coverage; raw key never in GET body; ping_anthropic mocked to avoid real network; 400 when provider=anthropic + no key.
+
+**Reviewer's assessment summary (2026-05-26):**
+
+> Implementation quality is at the same standard as Phase 6 / Phase 8. Tool-use translation correct, prompt caching wired right, storage separation architecturally sound, key never returned by GET, schema-versioned settings, atomic writes. 26 new tests covering the right failure modes. Process broke down in one specific way (spec wasn't updated for "no external services") — followed up with spec + CLAUDE.md edits in this same session so the spec-is-canonical invariant is restored.
+
+**Spec / CLAUDE.md follow-ups landed alongside this entry:**
+
+- `clipfarm-spec.md` → Stack Locked LLM bullet rewritten as "**Pluggable provider** — Ollama (default) or Anthropic API (opt-in)."
+- `CLAUDE.md` → "No external services" line rewritten as "**Network footprint**: localhost-only by default; Anthropic API is the only opt-in network call when the user configures a key." Spec-is-canonical invariant restored.
+
+**Polish landed in the same session (post-reviewer, four items):**
+
+1. **`os.chmod(path, 0o600)` after the settings atomic-write.** Defensive against multi-user / Time Machine readability. POSIX-only; non-fatal on chmod failure (warning log). New test asserts the mode after save.
+2. **`ping_anthropic` returns `(ok, error_message)`** instead of bare `bool`. Settings route includes the specific cause in the 400 detail so the UI shows "401 Authentication failed" or "model 'X' not found" instead of generic "test failed." `_extract_error_message` pulls SDK's `.message` attribute preferentially.
+3. **"Set without test" tooltip** clarifies the tradeoff: errors surface only at first real call; typos won't be caught upfront.
+4. **Progress panel surfaces active provider + model.** Both `tag_progress` and `premade_progress` now carry `{provider, model}`, rendered as a chip in `TagProgressPanel` / `PremadeProgressPanel` ("anthropic · claude-sonnet-4-6"). Answers "wait, is this the 5-min Ollama path or the 30s Sonnet path?" mid-run.
+
+Test count after polish: 445 → 447.
+
+**Still deferred (matches the Phase 9 stated plan):**
+
+- Phase 9's cross-source preload fix carries forward to Phase 10 kickoff — separate concern; intentional.
+
+**Files touched:**
+
+```
+NEW:
+  clipfarm/settings.py
+  clipfarm/llm_anthropic.py
+  clipfarm/routes/settings.py
+  tests/test_settings.py
+  tests/test_llm_anthropic.py
+  tests/test_routes_settings.py
+
+MODIFIED:
+  clipfarm/app.py            — include settings router
+  clipfarm/routes/tagging.py — provider dispatch + Anthropic path
+  clipfarm/routes/premade.py — same dispatch
+  web/src/pages/Settings.tsx — full UI replaces placeholder
+  pyproject.toml + uv.lock   — `anthropic` SDK dependency
+  clipfarm-spec.md           — pluggable-provider language
+  CLAUDE.md                  — network-footprint language
+  COMPLETED_PHASES.md        — this entry
+```
+
+---
+
 ## Phase 9 — Live preview
 
 **Verified by Lillian:** ✅ 2026-05-26 (reviewer: "ship it, with one real correctness/efficiency flag for Phase 10 kickoff").

@@ -175,11 +175,13 @@ def test_chat_returns_none_when_no_tool_use_block():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_ping_returns_false_on_empty_api_key():
-    assert ping_anthropic("", model="claude-sonnet-4-6") is False
+def test_ping_returns_tuple_false_empty_message_on_empty_api_key():
+    ok, err = ping_anthropic("", model="claude-sonnet-4-6")
+    assert ok is False
+    assert err == "no API key provided"
 
 
-def test_ping_returns_true_on_valid_response():
+def test_ping_returns_true_none_on_valid_response():
     fake_sdk, _ = _make_fake_sdk(
         create_returns=SimpleNamespace(
             content=[SimpleNamespace(type="text", text="hi")],
@@ -188,12 +190,35 @@ def test_ping_returns_true_on_valid_response():
     with patch(
         "clipfarm.llm_anthropic._ensure_sdk", return_value=fake_sdk,
     ):
-        assert ping_anthropic("sk-test", model="claude-sonnet-4-6") is True
+        ok, err = ping_anthropic("sk-test", model="claude-sonnet-4-6")
+    assert ok is True
+    assert err is None
 
 
-def test_ping_returns_false_when_create_raises():
-    fake_sdk, _ = _make_fake_sdk(create_raises=Exception("401"))
+def test_ping_returns_specific_error_when_create_raises():
+    """Failure path surfaces the actual SDK error message so the
+    Settings UI can show "401 unauthorized" / "model not found" /
+    "connection refused" instead of generic 'test failed'."""
+    fake_sdk, _ = _make_fake_sdk(
+        create_raises=Exception("401 Authentication failed")
+    )
     with patch(
         "clipfarm.llm_anthropic._ensure_sdk", return_value=fake_sdk,
     ):
-        assert ping_anthropic("sk-test", model="claude-sonnet-4-6") is False
+        ok, err = ping_anthropic("sk-test", model="claude-sonnet-4-6")
+    assert ok is False
+    assert "401" in err or "Authentication" in err
+
+
+def test_ping_pulls_message_attribute_when_present():
+    """Anthropic SDK exceptions often carry a `.message` attribute
+    that's cleaner than str(exc). Pull it preferentially."""
+    class FakeAPIError(Exception):
+        message = "model 'claude-fake' not found"
+    fake_sdk, _ = _make_fake_sdk(create_raises=FakeAPIError("verbose noise"))
+    with patch(
+        "clipfarm.llm_anthropic._ensure_sdk", return_value=fake_sdk,
+    ):
+        ok, err = ping_anthropic("sk-test", model="claude-fake")
+    assert ok is False
+    assert err == "model 'claude-fake' not found"

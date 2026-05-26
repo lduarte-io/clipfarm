@@ -74,7 +74,8 @@ def test_patch_models(client: TestClient):
 def test_set_anthropic_key_with_test_success(client: TestClient):
     """test=True → ping_anthropic is called; on success, key is saved."""
     with patch(
-        "clipfarm.routes.settings.ping_anthropic", return_value=True,
+        "clipfarm.routes.settings.ping_anthropic",
+        return_value=(True, None),
     ) as mock_ping:
         r = client.post("/api/settings/anthropic-key", json={
             "api_key": "sk-ant-good",
@@ -88,16 +89,21 @@ def test_set_anthropic_key_with_test_success(client: TestClient):
 def test_set_anthropic_key_with_test_failure_does_not_persist(
     client: TestClient,
 ):
-    """test=True → ping_anthropic returns False → 400, key NOT saved."""
+    """test=True → ping_anthropic returns (False, err) → 400 with
+    err in the detail, key NOT saved."""
     with patch(
-        "clipfarm.routes.settings.ping_anthropic", return_value=False,
+        "clipfarm.routes.settings.ping_anthropic",
+        return_value=(False, "401 invalid x-api-key"),
     ):
         r = client.post("/api/settings/anthropic-key", json={
             "api_key": "sk-ant-bad",
             "test": True,
         })
     assert r.status_code == 400
-    assert "test failed" in r.json()["detail"]
+    detail = r.json()["detail"]
+    assert "test failed" in detail
+    # The specific error message is surfaced.
+    assert "401 invalid x-api-key" in detail
     # Key was not persisted.
     r2 = client.get("/api/settings")
     assert r2.json()["tagging"]["anthropic_api_key_set"] is False
@@ -110,7 +116,8 @@ def test_set_anthropic_key_without_test_skips_validation(
     UI's 'set without test' affordance uses this when the user knows
     the key is good but doesn't want to spend a test call."""
     with patch(
-        "clipfarm.routes.settings.ping_anthropic", return_value=False,
+        "clipfarm.routes.settings.ping_anthropic",
+        return_value=(False, "would have failed"),
     ) as mock_ping:
         r = client.post("/api/settings/anthropic-key", json={
             "api_key": "sk-ant-untested",
@@ -132,7 +139,8 @@ def test_set_anthropic_key_empty_rejected(client: TestClient):
 def test_delete_anthropic_key(client: TestClient):
     """Set then delete; flag drops to False."""
     with patch(
-        "clipfarm.routes.settings.ping_anthropic", return_value=True,
+        "clipfarm.routes.settings.ping_anthropic",
+        return_value=(True, None),
     ):
         client.post("/api/settings/anthropic-key", json={
             "api_key": "sk-ant-good", "test": True,

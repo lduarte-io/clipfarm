@@ -180,10 +180,22 @@ async def tag_route(
         # endpoint reads it. The try/finally below resets to None
         # AFTER the commit so a polling client doesn't see an "idle"
         # gap between orchestrator-done and commit-done.
+        # Provider + model surfaced in progress so the UI's progress
+        # header can show which LLM is doing the work ("Tagging clips
+        # · anthropic · claude-sonnet-4-6"). Avoids "wait, is this the
+        # 5-min Ollama path or the 30s Sonnet path?"
+        _provider_name = tagging_settings.provider
+        _provider_model = (
+            tagging_settings.anthropic_model
+            if _provider_name == "anthropic"
+            else tagging_settings.ollama_model
+        )
         app.state.tag_progress = {
             "project_id": project_id,
             "phase": "starting",
             "elapsed_sec": 0.0,
+            "provider": _provider_name,
+            "model": _provider_model,
         }
         try:
             # `tag_project` is synchronous and the inner `httpx.post`

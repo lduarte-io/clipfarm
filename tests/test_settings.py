@@ -70,6 +70,20 @@ def test_save_creates_parent_dir(tmp_path, monkeypatch):
     assert p.exists()
 
 
+def test_settings_file_is_chmod_0o600(tmp_path, monkeypatch):
+    """Defensive: settings.json may contain the Anthropic API key, so
+    we chmod 0o600 after the atomic write. Owner read/write only;
+    other users on a multi-user machine + Time Machine backups can't
+    read it without elevated access."""
+    import os
+    import stat
+    p = tmp_path / "settings.json"
+    monkeypatch.setenv("CLIPFARM_SETTINGS_PATH", str(p))
+    save_settings(Settings())
+    mode = stat.S_IMODE(os.stat(p).st_mode)
+    assert mode == 0o600
+
+
 def test_secret_persists_to_disk_in_plain_text(tmp_path, monkeypatch):
     """Documenting the on-disk storage contract: the API key IS in the
     file at rest (gitignored). The route layer's GET masks it; the

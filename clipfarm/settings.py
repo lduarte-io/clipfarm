@@ -103,7 +103,15 @@ def load_settings(base_dir: Optional[Path] = None) -> Settings:
 
 def save_settings(settings: Settings, base_dir: Optional[Path] = None) -> None:
     """Atomically write settings to disk. Creates the parent dir if
-    needed. Same tmp+rename pattern as `store.save_state`."""
+    needed. Same tmp+rename pattern as `store.save_state`.
+
+    The final file is `chmod 0o600` (owner read/write only) after the
+    rename because it may contain the Anthropic API key. Single-user
+    laptop risk is approximately zero; the chmod is defensive for the
+    "Lillian shares this machine" or "Time Machine backup readable
+    by another user" cases. POSIX-only (skipped silently on Windows
+    where the call is a no-op anyway).
+    """
     path = _resolve_path(base_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = settings.model_dump_json(indent=2)
@@ -117,6 +125,12 @@ def save_settings(settings: Settings, base_dir: Optional[Path] = None) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_name, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError as e:
+            # Non-fatal — file is written, just not locked down. Log
+            # and continue.
+            log.warning("settings: chmod 0o600 failed on %s: %s", path, e)
     except Exception:
         # Best-effort cleanup of the tmp file.
         try:

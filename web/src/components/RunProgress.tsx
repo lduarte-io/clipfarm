@@ -8,6 +8,11 @@ export type RunProgress = {
   running: boolean;
   project_id?: string;
   phase?: string;
+  // Active LLM provider + model the route chose for this run.
+  // Lets the UI show "(anthropic · claude-sonnet-4-6)" so you know
+  // which path you're watching.
+  provider?: "ollama" | "anthropic";
+  model?: string;
   // Tagging fields:
   current_batch?: number;
   total_batches?: number;
@@ -99,6 +104,19 @@ function formatEta(elapsed: number, current: number, total: number): string | nu
 // Render
 // ─────────────────────────────────────────────────────────────────────────────
 
+function ProviderChip({ info }: { info: RunProgress }) {
+  if (!info.provider) return null;
+  return (
+    <span
+      className="text-[10px] font-mono uppercase tracking-wide rounded px-1.5 py-0.5 bg-neutral-900/60 text-neutral-300 border border-neutral-700"
+      title={`Provider: ${info.provider}${info.model ? ` · model: ${info.model}` : ""}`}
+    >
+      {info.provider}
+      {info.model && <span className="text-neutral-500"> · {info.model}</span>}
+    </span>
+  );
+}
+
 export function TagProgressPanel({ info }: { info: RunProgress | null }) {
   if (!info || !info.running) return null;
   const label = TAG_PHASE_LABELS[info.phase ?? ""] ?? info.phase ?? "Running…";
@@ -121,8 +139,9 @@ export function TagProgressPanel({ info }: { info: RunProgress | null }) {
 
   return (
     <div className="rounded-md border border-sky-900 bg-sky-950/40 p-3 space-y-2">
-      <div className="flex items-baseline gap-2 text-xs">
+      <div className="flex items-baseline gap-2 text-xs flex-wrap">
         <span className="font-medium text-sky-200">{label}</span>
+        <ProviderChip info={info} />
         {current != null && total != null && (
           <span className="text-sky-400 font-mono">
             batch {current} of {total}
@@ -162,8 +181,9 @@ export function PremadeProgressPanel({ info }: { info: RunProgress | null }) {
 
   return (
     <div className="rounded-md border border-violet-900 bg-violet-950/40 p-3 space-y-2">
-      <div className="flex items-baseline gap-2 text-xs">
+      <div className="flex items-baseline gap-2 text-xs flex-wrap">
         <span className="font-medium text-violet-200">{label}</span>
+        <ProviderChip info={info} />
         {info.strategy_name && (
           <span className="text-violet-400 font-mono truncate max-w-xs">
             {info.strategy_name}

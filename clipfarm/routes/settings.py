@@ -117,14 +117,13 @@ def set_anthropic_key(body: AnthropicKeyBody) -> SettingsView:
         # Test the key with the CURRENT anthropic_model — fall back to
         # the default if the user hasn't picked one yet.
         model = settings.tagging.anthropic_model
-        ok = ping_anthropic(new_key, model=model)
+        ok, err = ping_anthropic(new_key, model=model)
         if not ok:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"API key test failed for model {model!r} — either the "
-                    f"key is invalid or the model isn't accessible. "
-                    f"Key was not saved."
+                    f"API key test failed for model {model!r}: "
+                    f"{err or 'unknown error'}. Key was not saved."
                 ),
             )
 

@@ -69,7 +69,7 @@ The failure mode this defends against is silent assumption-stacking across a lon
   - **Convention ClipFarm relies on**: `<name>.mov` is paired with `<name>.whisper.json` in the same directory. ClipFarm does not run Whisper itself in v0; it only reads these files.
   - Ready-to-ingest sample data lives at `~/Desktop/AdAstra/2ndMind/Creation/PlanetLillian/Video/Scripts/mp4files/05.19.26/` — multiple `.mov` files with transcripts already generated (including `btc.0.4` which is the dogfood video).
 
-No external services, no auth, no network calls except Ollama on localhost. Built for one user.
+**Network footprint**: localhost-only by default. Ollama on `localhost:11434` is the only outbound call when ClipFarm is freshly installed. The user can opt into the **Anthropic API** for tagging + premade-attempt naming via `/settings` (provider toggle + API key); when set, those LLM calls go to `api.anthropic.com` instead of Ollama. No other external services, no auth, no telemetry. Built for one user.
 
 ## Build behavior guardrails
 

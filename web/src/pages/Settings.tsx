@@ -266,7 +266,7 @@ export default function Settings() {
                   onClick={() => setKey(false)}
                   disabled={keyBusy || !keyInput.trim()}
                   className="rounded-md border border-neutral-700 text-neutral-200 px-3 py-1 text-xs hover:bg-neutral-800 disabled:opacity-50"
-                  title="Save without making a test API call"
+                  title="Save without making a test API call. Errors will surface only when you try tagging — typos won't be caught upfront."
                 >
                   Set without test
                 </button>

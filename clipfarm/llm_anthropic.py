@@ -50,19 +50,27 @@ def _ensure_sdk():
         ) from e
 
 
-def ping_anthropic(api_key: str, *, model: str, timeout: float = 10.0) -> bool:
-    """Test the API key + model with a tiny request. Returns True on
-    success, False on auth failure / unknown model / network error.
+def ping_anthropic(
+    api_key: str, *, model: str, timeout: float = 10.0,
+) -> tuple[bool, Optional[str]]:
+    """Test the API key + model with a tiny request.
 
-    Cost: ~3 input tokens + ~3 output tokens. Negligible. Caller uses
-    this as the "Test connection" affordance in the Settings UI.
+    Returns `(True, None)` on success, or `(False, error_message)`
+    where `error_message` is a short user-facing string explaining
+    what failed (auth error, unknown model, network error). The
+    settings route includes this in the 400 detail so the UI can show
+    the specific cause instead of generic "test failed."
+
+    Cost on success: ~3 input + ~3 output tokens (negligible). On
+    failure: 0 tokens billed (request rejected at auth or model
+    resolution).
     """
     if not api_key:
-        return False
+        return False, "no API key provided"
     try:
         anthropic = _ensure_sdk()
-    except AnthropicUnavailableError:
-        return False
+    except AnthropicUnavailableError as e:
+        return False, str(e)
     try:
         client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
         response = client.messages.create(
@@ -70,10 +78,33 @@ def ping_anthropic(api_key: str, *, model: str, timeout: float = 10.0) -> bool:
             max_tokens=8,
             messages=[{"role": "user", "content": "say hi"}],
         )
-        return bool(response.content)
-    except Exception as e:  # broad — many SDK exception types
-        log.info("ping_anthropic: failed (%s)", e)
-        return False
+        if not response.content:
+            return False, "response had no content blocks"
+        return True, None
+    except Exception as e:
+        # Anthropic SDK raises a handful of typed exception classes
+        # (anthropic.APIStatusError, anthropic.APIConnectionError,
+        # anthropic.AuthenticationError, etc.). We don't want to
+        # depend on SDK-internal types, so extract the most specific
+        # short message we can.
+        msg = _extract_error_message(e)
+        log.info("ping_anthropic: failed (%s)", msg)
+        return False, msg
+
+
+def _extract_error_message(exc: Exception) -> str:
+    """Pull the most-specific human-readable message out of an
+    arbitrary SDK exception. Falls back to `str(exc)` or the class
+    name. Always returns a non-empty string."""
+    # Anthropic SDK typically exposes a `.message` attribute on
+    # APIStatusError subclasses; some carry `.body` with structured info.
+    msg = getattr(exc, "message", None)
+    if isinstance(msg, str) and msg.strip():
+        return msg.strip()
+    text = str(exc).strip()
+    if text:
+        return text
+    return type(exc).__name__
 
 
 def chat_with_json_schema_anthropic(
