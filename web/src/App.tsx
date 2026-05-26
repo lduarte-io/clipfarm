@@ -1,6 +1,7 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import Library from "./pages/Library";
 import Project from "./pages/Project";
+import ScriptTOC from "./pages/ScriptTOC";
 import Brief from "./pages/Brief";
 import Settings from "./pages/Settings";
 
@@ -33,6 +34,14 @@ export default function App() {
               Project
             </NavLink>
             <NavLink
+              to="/script"
+              className={({ isActive }) =>
+                `${navItem} ${isActive ? navActive : navInactive}`
+              }
+            >
+              Script
+            </NavLink>
+            <NavLink
               to="/brief"
               className={({ isActive }) =>
                 `${navItem} ${isActive ? navActive : navInactive}`
@@ -56,6 +65,7 @@ export default function App() {
           <Route path="/" element={<Library />} />
           <Route path="/library" element={<Library />} />
           <Route path="/project" element={<Project />} />
+          <Route path="/script" element={<ScriptTOC />} />
           <Route path="/brief" element={<Brief />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>

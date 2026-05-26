@@ -58,9 +58,43 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 7.
 
 ---
 
-## Phase 7b — Script TOC view (primary assembly workflow)
+## Phase 7b — Built ⏳ 2026-05-25 (awaiting manual verify)
 
-*Promoted to v0 — see spec build order. To be planned before execution. Reuses Phase 7's `build_take_grid` data, different layout.*
+**Goal.** Same data as Phase 7's take grid, vertical outline layout. The script displayed top-to-bottom with each line as a collapsible `<details>` showing that line's takes inside. Lillian's "browse the script as the script" view. The Take Grid (7) is for cross-line scanning; the TOC (7b) is the assembly workflow even though assembly itself ships in Phase 8.
+
+**Scope:** frontend-only.
+
+- `web/src/pages/ScriptTOC.tsx` — new page.
+  - Reuses `/api/projects/{project_id}/take-grid` — no backend changes.
+  - Vertical outline: each `LineRow` is a `<details>` element. Header shows line number + name + tag id + take-count badge. Expanded body lists takes vertically (compact card per take, ~280-char transcript snippet visible without scrolling).
+  - All lines collapsed by default. Outline state is component-local; reload = fresh-everything-collapsed.
+  - **Buckets section at the bottom**: same collapsible 4-bucket layout as Phase 7. Same visual pattern so users build one mental model across both pages.
+  - **Side panel** (right side, sticky): same shape as Phase 7's. Selected card shows full transcript + filename + timestamp + "Open in Library" deep-link.
+- `web/src/App.tsx` — add `/script` route + nav item ("Script") between "Project" and "Brief".
+- **No new tests** — `build_take_grid` is already exhaustively covered by Phase 7's 14 orchestrator tests + 7 route tests. Phase 7b is a re-layout of the same data; no new backend surface.
+
+**Decisions locked with this plan:**
+
+- **No "Pick this take" button in v0.** Visible-but-disabled UI is a nag; we'll add the assembly action in Phase 8 when there's actually a target attempt for it to write to.
+- **All lines collapsed by default.** The script structure is the read; takes expand on demand.
+- **Card layout for TOC is vertical-stack, not horizontal-strip.** Phase 7's horizontal strip is good for scanning across deliveries of one line; the TOC's vertical-stack-per-line is good for working one line top-to-bottom. Different layouts, same data, same Card shape underneath.
+- **Reuse Phase 7's Card + SidePanel components by duplication, not extraction.** Three would be the abstraction trigger; two is fine to duplicate. Phase 9 will swap the SidePanel body for a live `<video>` preview — that's the natural extraction point.
+- **Empty-line rows are de-emphasized** (italic, neutral-500 text) but still appear in the outline so the gap is visible. Same UX principle as Phase 7's empty rows.
+- **Line numbering shown.** The outline gets `01. line text`, `02. ...` to anchor the user's mental model of script order. Tag ID still shown in mono next to the name for debugging.
+
+**Verification (manual):**
+
+- `npm run build` succeeds.
+- Nav has a new "Script" item between "Project" and "Brief"; routes to `/script`.
+- Loads the same Take Grid data; renders the script as a top-to-bottom outline.
+- Clicking a take opens the side panel; "Open in Library" deep-links with `?source=&word=` exactly as on Phase 7.
+- Empty / no-projects / no-tags states surface with the same copy as Phase 7.
+
+**Out of scope:**
+
+- Reorderable outline (the spec's "reorderable script outline"): Phase 10+ (drag-and-drop reordering of script lines mutates the brief; that's an edit operation).
+- "Pick this take" assembly action: Phase 8.
+- Inline preview: Phase 9.
 
 ## Phase 8 — Premade attempts generation
 
