@@ -76,33 +76,18 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 8.1.
 
 ---
 
-## Phase 9 — Live preview (DRAFT — awaiting greenlight)
+## Phase 9 — Live preview (PLANNED — ready to execute)
 
 **Goal.** First time the assembled work actually plays back. Click any clip anywhere → it plays from the source file at the clip's range. Click an attempt → it plays through every clip in sequence. A persistent floating preview pane follows you across pages so playback survives navigation. **This is the phase where "the candidate videos you can pick from" becomes "the candidate videos you can watch."**
 
 Spec quote that anchors this phase:
 > "Live see" an attempt — play the assembled sequence instantly, no export step. Just plays the underlying clips back-to-back from the source files.
 
-### Open decisions for Lillian (resolve before code work)
+### Decisions resolved with Lillian (2026-05-26 before code work)
 
-1. **Preview pane position / size.** Three reasonable shapes:
-
-   - **(a) Floating bottom-right, resizable** — small (~480×270) by default; minimize to a thin pill anchored to viewport bottom-right when not needed. Least intrusive — page content stays at full width.
-   - **(b) Sticky top bar across all pages** — full-width 16:9 reflow above the content. Pushes page content down by ~270px. Always visible, hard to ignore.
-   - **(c) Right-side rail** — fixed 480px column on the right edge. Eats horizontal space; the existing per-page side panels would have to move or share.
-
-   **Recommendation:** **(a) floating bottom-right.** v0 ships a fixed 480×270 size with minimize-to-pill; drag-resize lands as a follow-up if dogfood says fixed feels cramped. The other two reshape every page; (a) is additive.
-
-2. **Click-to-preview default behavior.** When you click a `TakeCard` or an attempt:
-   - **(i) Auto-play immediately** — preview loads the clip/attempt and starts playing. Pane is visible if dismissed.
-   - **(ii) Load + show a play button** — preview pane appears with the clip queued, user clicks play. Quieter; more keyboard-controlled.
-
-   **Recommendation:** **(i) auto-play.** Spec language ("preview seeks and plays that range") suggests immediate playback is the natural UX. Pane has a pause button. Dismissing the pane stops playback.
-
-3. **SidePanel extraction — Phase 9 kickoff carry or stays inline?**
-   - Three pages duplicate the same "selected → slide-in panel with header + close X + body + sticky" shell (Project / ScriptTOC / Attempts). Phase 8 advance notes flagged this as "the third-use trigger."
-
-   **Recommendation:** **Extract as a Phase 9 carry** (~50-line refactor). Cleanup, not new behavior. Keeps the preview pane (new) from getting conflated with the per-page panels (existing).
+1. **Floating bottom-right pane WITH drag-resize in v0**, default 480×270. Minimize-to-pill button when not needed. Size persisted to `localStorage` (key `clipfarm.preview_pane_size`) so it sticks across reloads. Resize handle on the top-left corner of the pane (since the pane is anchored bottom-right, top-left is the only growable corner). Min 320×180, max 80% of viewport.
+2. **Auto-play immediately** on click. Dismissing the pane stops playback.
+3. **SidePanel shell extracted as Phase 9 kickoff carry** (~50-line refactor). Three pages swap to the shared shell.
 
 ### Verification (manual + automated)
 
@@ -167,14 +152,15 @@ Spec quote that anchors this phase:
   - `playAttempt(attempt_id)` — fetch `/api/attempts/{id}/resolved`, load full queue, start.
   - `pause()`, `resume()`, `dismiss()`, `seekToIndex(i)` — `seekToIndex` skips tombstone items automatically.
 
-- **`web/src/playback/PreviewPane.tsx`** — fixed-position floating pane, bottom-right of viewport (~480×270 v0).
+- **`web/src/playback/PreviewPane.tsx`** — floating pane anchored bottom-right of viewport.
+  - **Default size 480×270**, drag-resizable from the top-left corner (only growable corner since the pane is anchored bottom-right). Min 320×180, max 80% of viewport width/height. Size persisted to `localStorage["clipfarm.preview_pane_size"]` as `{width, height}` so it survives reloads. Restored on mount.
   - **Two alternating `<video>` elements** (visible / hidden, swapped on range-end). The currently-visible one plays the active range; the hidden one preloads the next range's source file at `effective_start`.
   - **End-of-range detection via `timeupdate`** comparing `currentTime` against `range.effective_end` (the file's natural `ended` event won't fire when we trim before file-end). Tolerance ~50ms to avoid overshoot.
   - **Swap behavior on range-end (locked for the cross-source case):**
     - **Same-source next**: the hidden element is already preloaded (preload="auto" + `currentTime = next.effective_start` set ~500ms before swap); swap is instant, no visible gap.
     - **Cross-source next** (different `source_id`): we set the hidden element's `src` as soon as we detect the source change in `currentIndex+1`, but the browser still needs to load file headers. UX during the gap: **the just-finished frame is HELD (current video element stays in DOM, paused on its last frame), and a small overlay shows `↻ Loading next clip…` until the new element fires `canplay`.** No black flash. Worst case: ~100–300ms with the "loading" overlay visible. Better than a black frame.
   - **Tombstone handling**: when `currentIndex` lands on a tombstone, the pane shows a "▢ Removed clip — pick a replacement" placeholder card in its body, holds for 2 seconds, then auto-advances to the next item. Replacement UI lives on the Attempts page (Phase 10).
-  - **Controls**: play/pause toggle, current-range label (`"3 of 7 · btc.0.4.mov · 1:23–1:31"`), minimize-to-pill button, dismiss (X) button. Single fixed size for v0.
+  - **Controls**: play/pause toggle, current-range label (`"3 of 7 · btc.0.4.mov · 1:23–1:31"`), minimize-to-pill button, dismiss (X) button.
   - Cross-source caveat surfaced as a code comment in the swap logic.
 
 - **`web/src/App.tsx`** — wrap routes in `<PlaybackProvider>`; render `<PreviewPane />` inside the provider (outside `<Routes>` so it survives nav).
@@ -204,7 +190,7 @@ Spec quote that anchors this phase:
 - **Tombstone UX in the pane: 2-second placeholder card, then auto-advance**. Replacement UI is Phase 10.
 - **`internal_pause_max_sec` expansion implemented in Phase 9 resolver**, field stays `null` everywhere until Phase 10 ships the UI toggle. Resolver code handles null as "no expansion." Missing-transcript fallback: emit a single un-expanded range + log warning.
 - **Persistent preview pane lives in App.tsx shell**, outside `<Routes>`. Survives page nav without remounting the `<video>` element.
-- **Single fixed 480×270 size for v0** with minimize-to-pill. Drag-resize is a follow-up.
+- **Floating bottom-right + drag-resizable in v0** (Lillian's call). Default 480×270, min 320×180, max 80% of viewport. Resize handle on the top-left corner. Size persisted to `localStorage`. Minimize-to-pill button when out-of-the-way is wanted.
 - **Auto-play on click**. Dismissing the pane stops playback.
 - **Per-page SidePanel shell extracted as a Phase 9 carry** (~50-line refactor).
 - **`/api/sources/{id}/video` is the URL form** — matches `/api/sources/{id}/transcript`.
@@ -214,7 +200,7 @@ Spec quote that anchors this phase:
 - **Per-attempt-clip trim editing UI** — Phase 10. Resolver supports trim offsets; UI ships in Phase 10.
 - **"Tighten internal pauses" UI toggle** — Phase 10. Resolver expansion lands now so Phase 10 just flips the field.
 - **Replacement UI for tombstones** — Phase 10 (the "pick a replacement" affordance on the attempt clip list).
-- **Drag-to-resize preview pane**. Fixed 480×270 for v0.
+- **Free-positioning (drag-to-move) preview pane**. v0 stays anchored bottom-right. Drag-to-resize lands in v0 per Lillian's call, but drag-to-move-anywhere is deferred.
 - **Keyboard shortcuts** (space-to-pause, arrow-to-seek, etc.). Add when dogfood says they're missed.
 - **Cross-source latency mitigation beyond preload-next + hold-last-frame**. MSE / true gapless playback is Stage 2 per the spec.
 - **Audio-only preview mode**.
