@@ -29,6 +29,121 @@ _FRONTMATTER_RE = re.compile(
     re.DOTALL,
 )
 
+# Keys whose values we'll accept in "loose block list" form (column-0
+# dashes, blank lines between items, multi-line continuations). Applied
+# only as a fallback when strict YAML parsing fails — well-formed YAML
+# is never rewritten.
+_LOOSE_LIST_KEYS: tuple[str, ...] = ("script", "sections", "tags")
+
+_TOP_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*$")
+_INLINE_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:")
+_ITEM_START_RE = re.compile(r"^\s*-\s+(.*)$")
+
+
+def _loosen_list_blocks(yaml_text: str) -> str:
+    """Rewrite the YAML so `script:` / `sections:` / `tags:` blocks
+    tolerate natural-paragraph formatting:
+
+      - column-0 dashes (not indented under the key),
+      - blank lines between items,
+      - multi-line items (lines after a `-` until the next `-` or
+        blank line get joined into one item with single spaces),
+
+    Output is canonical (`  - "item"`) YAML that strict parsing accepts.
+
+    Idempotent on already-well-formed YAML: re-running on the output
+    produces the same output. Only invoked as a fallback when the
+    initial `yaml.safe_load` raises — well-formed briefs never see
+    this rewrite path.
+    """
+    lines = yaml_text.splitlines()
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = _TOP_KEY_RE.match(line)
+        if not (m and m.group(1) in _LOOSE_LIST_KEYS):
+            out.append(line)
+            i += 1
+            continue
+
+        # Found a candidate key. Scan its block to the next top-level
+        # key (column-0 word followed by `:`) or end-of-text.
+        out.append(line)
+        i += 1
+        items: list[str] = []
+        current: list[str] = []
+        block_lines_consumed = 0
+        block_start = i
+
+        def _flush() -> None:
+            joined = " ".join(s.strip() for s in current if s.strip()).strip()
+            if joined:
+                items.append(joined)
+            current.clear()
+
+        while i < len(lines):
+            blk = lines[i]
+            # Next top-level key (must be col-0, contain `:`, match key pattern) → end of block.
+            if blk and not blk[0].isspace() and _INLINE_KEY_RE.match(blk):
+                break
+            if blk.strip() == "":
+                _flush()
+                i += 1
+                block_lines_consumed += 1
+                continue
+            im = _ITEM_START_RE.match(blk)
+            if im:
+                _flush()
+                current.append(im.group(1))
+                i += 1
+                block_lines_consumed += 1
+                continue
+            # Continuation of the current item (must be non-blank, non-item,
+            # not a new key, and we must already have an item in progress).
+            if current:
+                current.append(blk)
+                i += 1
+                block_lines_consumed += 1
+                continue
+            # Stray content before any `-` item under this key — refuse to
+            # rewrite this block; bail by restoring scanned lines.
+            out.extend(lines[block_start:i + 1])
+            i += 1
+            block_lines_consumed = 0
+            items = []
+            current = []
+            break
+        else:
+            # Loop ended at end-of-text — flush.
+            _flush()
+
+        # If we reached the end-of-block by hitting a key, flush remaining.
+        if current:
+            _flush()
+
+        if not items and block_lines_consumed == 0:
+            # Nothing scanned (empty block) — leave as-is.
+            continue
+        if not items:
+            # We consumed lines but found no parseable items. Restore
+            # them verbatim so the original error (if any) is preserved.
+            out.extend(lines[block_start:block_start + block_lines_consumed])
+            continue
+
+        # Emit the canonical block list. `yaml.safe_dump` handles all
+        # quoting edge cases (apostrophes, leading dashes, colons in text).
+        for item in items:
+            dumped = yaml.safe_dump(
+                item, default_flow_style=True, default_style='"',
+                allow_unicode=True, width=10**9,
+            ).rstrip("\n")
+            out.append(f"  - {dumped}")
+
+    # Preserve trailing newline if the original had one.
+    trailing = "\n" if yaml_text.endswith("\n") else ""
+    return "\n".join(out) + trailing
+
 
 class BriefParseError(ValueError):
     """Raised when a brief can't be parsed. Carries the offending line /
@@ -92,11 +207,27 @@ def parse_brief(text: str) -> ParsedBrief:
 
     try:
         front = yaml.safe_load(yaml_text)
-    except yaml.YAMLError as e:
-        mark = getattr(e, "problem_mark", None)
-        line = mark.line + 1 + 1 if mark is not None else None  # +1 for 1-indexed, +1 for '---' line
-        column = mark.column + 1 if mark is not None else None
-        raise BriefParseError(f"YAML parse error: {e}", line=line, column=column) from e
+    except yaml.YAMLError as primary_err:
+        # Fallback: try the loose-list rewrite for natural-paragraph
+        # script formatting (column-0 dashes, blank lines between items,
+        # multi-line continuations). Only kicks in on initial-parse
+        # failure — well-formed YAML never hits this path.
+        try:
+            loosened = _loosen_list_blocks(yaml_text)
+            if loosened != yaml_text:
+                front = yaml.safe_load(loosened)
+            else:
+                raise primary_err
+        except yaml.YAMLError:
+            # Either the rewrite was a no-op OR the rewrite's output
+            # still doesn't parse. Surface the ORIGINAL error — it
+            # points at the user's actual input, not our rewrite.
+            mark = getattr(primary_err, "problem_mark", None)
+            line = mark.line + 1 + 1 if mark is not None else None  # +1 for 1-indexed, +1 for '---' line
+            column = mark.column + 1 if mark is not None else None
+            raise BriefParseError(
+                f"YAML parse error: {primary_err}", line=line, column=column
+            ) from primary_err
 
     if front is None:
         front = {}

@@ -170,3 +170,142 @@ script:
     assert parsed.script is not None
     assert parsed.script.lines[0] == "Today's question: how does this work?"
     assert parsed.script.lines[1].startswith("- ")
+
+
+# ---- Loose-list fallback (natural-paragraph script formatting) ----
+
+
+def test_loose_script_column_zero_dashes_and_blank_lines():
+    """A brief pasted in 'natural paragraph' form — script lines at
+    column 0, separated by blank lines — should parse via the fallback
+    rewrite. Mirrors the brief Lillian hit in dogfood (2026-05-25).
+    """
+    text = """---
+name: break the chrysalis
+script:
+  - Working on my goals hasn't brought me closer to having them done.
+
+- I have a mostly finished app, a ton of unedited videos, and a note with 200 ideas.
+And the issue is that you can't multiply your way out of 0.
+
+- I turned 23 last week and decided it's the last birthday I'll feel slow.
+
+- I want to be downright overwhelmed next year.
+sections:
+  - the hook
+  - the why
+tags:
+  - hook
+  - mistakes
+---
+
+# What's good
+
+Energy.
+"""
+    parsed = parse_brief(text)
+    assert parsed.name == "break the chrysalis"
+    assert parsed.script is not None
+    assert len(parsed.script.lines) == 4
+    # Multi-line item got joined into one string.
+    assert parsed.script.lines[1].startswith("I have a mostly finished app")
+    assert "multiply your way out of 0" in parsed.script.lines[1]
+    # Sections + tags blocks below the loose script block still parsed.
+    assert parsed.sections == ["the hook", "the why"]
+    assert parsed.tags == ["hook", "mistakes"]
+
+
+def test_loose_script_all_column_zero_items():
+    """Edge case: every item is at column 0, not just some — still
+    rewritten correctly."""
+    text = """---
+name: x
+script:
+- one
+- two
+- three
+---
+"""
+    parsed = parse_brief(text)
+    assert parsed.script is not None
+    assert parsed.script.lines == ["one", "two", "three"]
+
+
+def test_loose_rewrite_idempotent_on_well_formed_yaml():
+    """Already-well-formed briefs MUST NOT take the rewrite path at all
+    — the original `yaml.safe_load` succeeds first. Lock that with a
+    spy: when we patch the rewriter to raise, well-formed input still
+    parses (proving the rewriter wasn't reached)."""
+    from unittest.mock import patch
+
+    text = """---
+name: ok
+script:
+  - line one
+  - line two
+sections:
+  - alpha
+---
+"""
+
+    def fail(_):
+        raise AssertionError("loose-rewrite should NOT run on well-formed YAML")
+
+    with patch("clipfarm.brief._loosen_list_blocks", side_effect=fail):
+        parsed = parse_brief(text)
+    assert parsed.script is not None
+    assert parsed.script.lines == ["line one", "line two"]
+
+
+def test_loose_rewrite_failure_surfaces_original_error():
+    """If the YAML is genuinely broken (not just loose-list formatting),
+    the user gets the ORIGINAL error message — pointing at their
+    actual input — not an artifact of our rewrite attempt. Here the
+    error is an unclosed quote on `name`, which the loose-list rewrite
+    can't touch (it only rewrites script/sections/tags blocks)."""
+    text = '''---
+name: "ok
+script:
+  - one
+---
+'''
+    with pytest.raises(BriefParseError) as exc_info:
+        parse_brief(text)
+    # Original error mentions YAML parse problem.
+    assert "YAML parse error" in str(exc_info.value)
+
+
+def test_loose_apostrophe_preserved():
+    """Common-case dogfood text contains apostrophes; the rewrite must
+    quote properly so they round-trip."""
+    text = """---
+name: x
+script:
+- I'm calling it break the chrysalis because I don't think it was wasted.
+---
+"""
+    parsed = parse_brief(text)
+    assert parsed.script is not None
+    assert "I'm calling it" in parsed.script.lines[0]
+    assert "don't think" in parsed.script.lines[0]
+
+
+def test_loose_continuation_lines_joined_with_single_space():
+    """Continuation lines (non-blank, non-item) get joined with single
+    spaces into the previous item — no preserved line breaks."""
+    text = """---
+name: x
+script:
+- first item with
+  some continuation
+  and more
+
+- second item
+---
+"""
+    parsed = parse_brief(text)
+    assert parsed.script is not None
+    assert parsed.script.lines == [
+        "first item with some continuation and more",
+        "second item",
+    ]

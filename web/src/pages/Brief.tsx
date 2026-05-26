@@ -76,7 +76,10 @@ const YAML_HELP = `Tips:
 - 'name' is required. Everything else is optional.
 - Script lines starting with '-', '#', or containing ':' need single
   quotes around them: '- this is a literal dash'.
-- Indent list items with 2 spaces under their key.
+- Indent list items with 2 spaces under their key (canonical form).
+- The parser also accepts natural-paragraph script blocks: items at
+  column 0 with blank lines between them, multi-line items joined
+  into one (single-space-joined continuation).
 `;
 
 function ConfirmDialog({
