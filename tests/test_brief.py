@@ -290,6 +290,56 @@ script:
     assert "don't think" in parsed.script.lines[0]
 
 
+def test_leading_preamble_before_frontmatter_tolerated():
+    """A leading title / header line above the `---` fence shouldn't
+    reject the brief. Mirrors a real dogfood paste (2026-05-25) where
+    'New project' UI text got captured above the frontmatter."""
+    text = """New project
+---
+name: ok
+script:
+  - one
+---
+
+# What's good
+
+energy
+"""
+    parsed = parse_brief(text)
+    assert parsed.name == "ok"
+    assert parsed.script is not None
+    assert parsed.script.lines == ["one"]
+    assert "energy" in parsed.body_md
+
+
+def test_blank_lines_before_frontmatter_tolerated():
+    text = "\n\n\n---\nname: ok\n---\n"
+    parsed = parse_brief(text)
+    assert parsed.name == "ok"
+
+
+def test_multi_line_preamble_tolerated():
+    text = """# My draft notes
+
+Some prose I forgot to delete.
+
+---
+name: ok
+---
+"""
+    parsed = parse_brief(text)
+    assert parsed.name == "ok"
+
+
+def test_no_frontmatter_at_all_still_rejected():
+    """The preamble-tolerance must not paper over a brief that has no
+    `---` fence anywhere. Pure prose is still 'not yet a project'."""
+    text = "Just some prose with no frontmatter at all.\n"
+    with pytest.raises(BriefParseError) as exc_info:
+        parse_brief(text)
+    assert "frontmatter" in str(exc_info.value)
+
+
 def test_loose_continuation_lines_joined_with_single_space():
     """Continuation lines (non-blank, non-item) get joined with single
     spaces into the previous item — no preserved line breaks."""

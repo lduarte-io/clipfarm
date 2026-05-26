@@ -29,6 +29,19 @@ _FRONTMATTER_RE = re.compile(
     re.DOTALL,
 )
 
+# Tolerate a leading preamble — blank lines, a title line, a header,
+# anything before the first `---` fence. The frontmatter delimiter itself
+# is still required (no preamble = no fence = "not yet a project"), but
+# we no longer demand that `---` is the literal first character.
+#
+# Triggered by real dogfood paste (2026-05-25): the Brief textarea had
+# "New project" at the top above the `---` fence, which the strict
+# `\A---` anchor rejected with a confusing error.
+_PREAMBLE_THEN_FRONTMATTER_RE = re.compile(
+    r"\A(?P<preamble>(?:[^\n]*\n)*?)---\s*\n(?P<yaml>.*?\n)---\s*(?:\n|\Z)(?P<body>.*)\Z",
+    re.DOTALL,
+)
+
 # Keys whose values we'll accept in "loose block list" form (column-0
 # dashes, blank lines between items, multi-line continuations). Applied
 # only as a fallback when strict YAML parsing fails — well-formed YAML
@@ -195,12 +208,18 @@ def parse_brief(text: str) -> ParsedBrief:
     """
     match = _FRONTMATTER_RE.match(text)
     if match is None:
-        raise BriefParseError(
-            "brief must start with YAML frontmatter delimited by '---' "
-            "fences (the first line is '---', then YAML, then another "
-            "'---' on its own line). Pure prose without frontmatter "
-            "isn't yet a project."
-        )
+        # Fallback: tolerate a leading preamble (blank lines, a title
+        # line, a markdown heading) before the first `---` fence. The
+        # fence itself is still required — pure prose without `---` is
+        # "not yet a project" and stays rejected.
+        match = _PREAMBLE_THEN_FRONTMATTER_RE.match(text)
+        if match is None:
+            raise BriefParseError(
+                "brief must include YAML frontmatter delimited by '---' "
+                "fences (a line that is '---' alone, then YAML, then "
+                "another '---' on its own line). Pure prose without "
+                "frontmatter isn't yet a project."
+            )
 
     yaml_text = match.group("yaml")
     body_md = match.group("body")
