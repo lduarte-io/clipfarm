@@ -43,6 +43,7 @@ from clipfarm.routes import projects as projects_routes
 from clipfarm.routes import search as search_routes
 from clipfarm.routes import state as state_routes
 from clipfarm.routes import tagging as tagging_routes
+from clipfarm.routes import take_grid as take_grid_routes
 from clipfarm.routes import transcripts as transcripts_routes
 from clipfarm.routes.deps import (
     commit_state_to_disk,
@@ -148,6 +149,7 @@ app.include_router(search_routes.router)
 app.include_router(clips_routes.router)
 app.include_router(projects_routes.router)
 app.include_router(tagging_routes.router)
+app.include_router(take_grid_routes.router)
 
 
 # --- Frontend hosting ---------------------------------------------------------

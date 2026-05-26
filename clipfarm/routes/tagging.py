@@ -1,16 +1,26 @@
 """POST /api/projects/{project_id}/tag — run a tagging job.
 
-Synchronous route. Holds `app.state.save_lock` for the entire batched
-LLM run, then commits via the locked-variant helper so mutation + write
-happen in one critical section.
+Holds `app.state.save_lock` for the entire batched LLM run, then commits
+via the locked-variant helper so mutation + write happen in one critical
+section. The synchronous orchestrator runs in a worker thread via
+`asyncio.to_thread` so the event loop stays responsive to other routes
+(e.g. `GET /api/state`) during the 5-minute LLM run.
 
 **v0 deliberate choice notes** for the next implementer to find:
 
-- Lock-held-for-20s blocks every other mutating route. Boundary
+- Lock-held-for-5min blocks every other mutating route. Boundary
   correction, ingest, project edits all stall behind a tag run. Single-
   user single-tab v0 doesn't trigger this. The same trigger that makes
   it matter (multi-user, multi-tab, progress UI) is the same trigger to
   switch to a background-task model (job_id + polling, or SSE).
+- `app.state.dirty = True` BEFORE the orchestrator call, not after. If
+  we set it after, the watcher's `has_unsaved_changes()` reads False
+  during the run, an external clipfarm.json edit routes to the silent-
+  reload path instead of the freeze path, the orchestrator's local
+  `state` reference is abandoned, and our end-of-run commit writes the
+  reloaded-from-disk state — dropping every tag we just produced.
+  Flipping dirty up front routes the watcher event to `on_conflict`
+  (freeze + 409), which is the right outcome.
 - Freeze-during-tagging: if the watcher fires mid-run (external
   clipfarm.json edit) and `writes_frozen` flips True, the locked commit
   at end-of-run raises `WritesFrozenError` → 409. All in-memory tags
@@ -21,8 +31,9 @@ happen in one critical section.
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import Field
 
 from clipfarm.llm import (
     DEFAULT_MODEL,
@@ -115,8 +126,22 @@ async def tag_route(
         return chat_with_json_schema(messages, schema, model=DEFAULT_MODEL)
 
     async with app.state.save_lock:
+        # Flip dirty BEFORE the orchestrator runs, not after — see the
+        # module docstring for the race this closes. Pre-LLM mutations
+        # (stale-row drop) start happening inside `tag_project` itself,
+        # so this is also true in the literal sense the moment the
+        # orchestrator gets work to do.
+        if not dry_run:
+            app.state.dirty = True
         try:
-            result = tag_project(
+            # `tag_project` is synchronous and the inner `httpx.post`
+            # calls block for up to ~20s per batch. Running it on a
+            # worker thread keeps the event loop free to serve
+            # concurrent reads (`GET /api/state`, etc.) — important for
+            # the future progress-UI Phase 8 will want. The save_lock
+            # is still held across the await; mutation-under-lock holds.
+            result = await asyncio.to_thread(
+                tag_project,
                 state,
                 project_id,
                 llm_client=llm_client,
@@ -132,8 +157,7 @@ async def tag_route(
             # No mutation → no commit, no snapshot.
             return result
 
-        if result.clips_tagged > 0 or result.batches > 0:
-            app.state.dirty = True
+        if result.mutated:
             try:
                 commit_state_with_snapshot_locked(app, "tag-clips")
             except WritesFrozenError as e:

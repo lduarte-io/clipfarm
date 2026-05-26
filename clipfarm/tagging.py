@@ -64,6 +64,12 @@ class TaggingResult(StrictModel):
     rows_dropped: int = 0   # per-row validation failures
     untagged_batches: list[BatchFailure] = []
     duration_sec: float = 0.0
+    # True iff state was actually mutated this run — either a new
+    # ClipProjectTag row was appended OR stale rows were dropped
+    # pre-LLM. The route checks this before snapshot+commit so a
+    # "every batch failed validation, no stale rows existed" run
+    # doesn't spuriously snapshot unchanged state.
+    mutated: bool = False
 
 
 # ---------- LLM client type --------------------------------------------------
@@ -242,10 +248,14 @@ def _validate_row(
         )
         confidence = max(0.0, min(1.0, confidence))
 
+    # `section_tag_id` is extracted from the LLM output (and reserved
+    # in the JSON schema) but not surfaced on `ClipProjectTag` for v0 —
+    # per Phase 5's flat-lines simplification, section→line parentage
+    # isn't expressed yet. Drop the field here so downstream code can't
+    # accidentally reach for it.
     return {
         "clip_id": cid,
         "line_tag_id": line_tag_id,
-        "section_tag_id": row.get("section_tag_id"),
         "category": category,
         "confidence": confidence,
     }
@@ -328,12 +338,24 @@ def tag_project(
 
     # Drop stale rows up front for the candidates we'll be re-tagging.
     # This is mutation; we own the save lock at this point (route holds it).
+    #
+    # **Tradeoff — deliberately accepted (Phase 6.1)**: if all LLM batches
+    # then fail validation, the stale rows are gone for good but no fresh
+    # rows replace them. The user retries `Tag clips`, which will see the
+    # affected clips as "untagged" (no rows at all) and tag them from
+    # scratch. The alternative (defer the drop until after a successful
+    # batch) leaves stale-and-fresh rows coexisting briefly, which
+    # complicates the validator and the UI's stale-vs-fresh disambiguation
+    # for a corner case that rarely matters in single-user v0.
     candidate_ids = {cid for cid, _ in candidates}
     if not dry_run:
+        before = len(state.clip_project_tags)
         state.clip_project_tags = [
             r for r in state.clip_project_tags
             if not (r.project_id == project_id and r.clip_id in candidate_ids)
         ]
+        if len(state.clip_project_tags) != before:
+            result.mutated = True
 
     # Iterate batches.
     for i in range(0, len(candidates), batch_size):
@@ -421,6 +443,7 @@ def tag_project(
             )
             existing_keys.add(key)
             result.clips_tagged += 1
+            result.mutated = True
 
     result.duration_sec = time.perf_counter() - started
     return result

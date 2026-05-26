@@ -4,9 +4,115 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase 7 — Take grid view (read-side of the project layer)
+
+**Verified by Lillian:** ✅ 2026-05-25 (reviewer approval: "ship it"; three advisory items deferred to Phase 8 kickoff or never).
+
+**Built (2026-05-25):**
+
+The read-side counterpart to Phase 6. After tagging writes `clip_project_tags`, this phase makes those rows legible: each script line becomes a row of "take cards" with the tagged clips ranked best-match-first; four collapsible buckets carry the off-line categories. **This is the moment editing `btc.0.4` actually gets fast** — scan multiple deliveries of one line side-by-side.
+
+- **Phase 7 kickoff cleanups (the Phase 6.1 carries):** all five items from the Phase 6 review fixed in this phase, with explicit tests for each.
+  - **Bug #1 — dirty-flag race closed.** `app.state.dirty = True` now flips BEFORE `tag_project` runs (inside the `save_lock`-held block). An external `clipfarm.json` edit during the LLM run now routes to `on_conflict` (freeze + 409) instead of silent reload. Module docstring on `routes/tagging.py` documents the race in plain language so future-Claude doesn't accidentally revert it. **Two tests** cover this: a precondition spy (`dirty=True` at orchestrator entry) and a full race-coverage simulation (mid-batch watcher fires → `writes_frozen` flips → commit raises → HTTP 409).
+  - **Bug #2 — event-loop responsiveness.** `result = await asyncio.to_thread(tag_project, ...)`. Save lock is still held across the await; mutation-under-lock invariant holds. **Test uses `concurrent.futures.ThreadPoolExecutor`** (not `httpx.AsyncClient`, per the reviewer's note that `ASGITransport` skips FastAPI lifespan and breaks tests that read `app.state` — Phase 2's review captured this). Asserts `GET /api/state` returns within 1s during a 2s mock LLM batch.
+  - **Cosmetic — `mutated: bool` on `TaggingResult`.** Replaces the looser `clips_tagged > 0 or batches > 0` commit gate. Set True exactly when a row is appended OR stale rows are dropped pre-LLM. Two tests cover the truth table (rows appended → True; only stale dropped → True; neither → False; dry-run never sets it).
+  - **Cosmetic — `section_tag_id` removed from `_validate_row` return.** Field was reserved-but-null per Phase 5's flat-lines simplification; extracting it into the validated row was a no-op vector for future bugs. Now: extracted from the LLM output (still in the JSON schema for completeness), then dropped before persistence.
+  - **Cosmetic — stale-drop tradeoff documented in code.** Comment in `tagging.py` near the pre-LLM stale-row drop explains the "stale rows gone if every batch fails" tradeoff (deliberate, accepted; user retries `Tag clips` which tags-from-scratch the affected clips).
+
+- **`clipfarm/take_grid.py`** — pure orchestrator.
+  - `build_take_grid(state, project_id) -> TakeGridView`. Pydantic models for the response shape (`TakeCard`, `LineRow`, `BucketView`, `TakeGridSummary`).
+  - **Sort order locked**: line cards by `confidence DESC, start_sec ASC`; bucket cards by `start_sec ASC` only (buckets aren't ranked against a specific match target).
+  - **Card payload**: `clip_id`, `source_id`, `filename` (resolved server-side from `state.sources`), `start_sec`, `end_sec`, `transcript_text`, `category`, `confidence`, `project_tag_id`, `stale`, `first_word_index` (index into the source's flattened Whisper word list — computed via the existing `transcripts.load_transcript_for_source` cache so it's nearly free on warm cache, one read per source on cold cache).
+  - **Empty lines preserved as rows**: every `ProjectTag(kind="line")` appears in `lines[]` even with zero matched cards. The user sees "line 4 has zero matches" as a visible gap, not silent absence.
+  - **Summary counters** with explicit semantics in code comments: `untagged_clips` (clips with NO rows for this project), `stale_clips` (clips with at least one stale row), `total_tagged` (clips with at least one row). Disjoint is **not** required — a clip with one stale + one fresh row counts toward both `stale_clips` AND `total_tagged`.
+  - **Defensive: `clip is None` skip + `on-script` with `project_tag_id=None` drop** — both unreachable in well-formed state today but cheap defense against future bugs in the propagation/delete paths.
+  - Pure: reads state + the Whisper sidecar cache, returns a fresh view. No mutations.
+
+- **`clipfarm/routes/take_grid.py`** — `GET /api/projects/{project_id}/take-grid`.
+  - 404 unknown project. No mutations, no snapshot, no save-lock acquisition.
+  - Read-only invariant tested explicitly: snapshot directory size unchanged across 3 calls; `app.state.dirty` not flipped.
+
+- **Frontend (`web/src/pages/Project.tsx`)** — first real implementation, replaces the placeholder.
+  - Project picker (dropdown if multiple, label if one). Summary chips: `X tagged`, `Y untagged` (amber if >0), `Z stale` (amber if >0). "Tag clips →" link back to the Brief page.
+  - **Line rows**: each script line is a row with a horizontally-scrolling strip of cards underneath. Card: 220px wide, color-coded category badge, confidence %, filename (mono, truncated), timestamp range, 3-line transcript snippet. Selected card gets a ring outline.
+  - **Stale cards** show an amber dot indicator in the top-right corner of the card with a tooltip explaining "brief changed after this tag was written; re-tag to refresh."
+  - **Four collapsible buckets** below the lines: related-but-different + standalone-idea open by default (high-signal), off-topic + fragment collapsed (low-signal noise).
+  - **Side panel on the right (sticky)**: clicking a card slides in the full transcript, source filename + timestamp range, category + confidence chip, and an "Open in Library" button that navigates to `/library?source=<id>&word=<first_word_index>`. Phase 9's live-preview pane will slot into this same panel.
+  - **Library route updated** to read `?source=&word=` query params on mount and trigger the existing `focusRequest` mechanism. Params are cleared after consumption so later in-page nav isn't undone by a stale URL.
+  - **Empty states**: no projects → link to Brief; project with no tags → prompt to Tag clips.
+
+- **Tests added (31 new — 310 total passing, up from 279):**
+  - `tests/test_take_grid.py` (14): empty project, unknown-project KeyError, on-script grouping, line-card sort (confidence DESC then start ASC), bucket-card sort (start ASC only, confidence ignored), all four buckets populate, `order_idx` row ordering, summary math (3-way disjoint not required), stale surfacing-not-filtering, multi-project isolation, filename resolution, `first_word_index=None` when source has no transcript, orphan tag-row defensive skip.
+  - `tests/test_routes_take_grid.py` (7): happy path with real sidecars, 404 unknown project, no-snapshot-side-effect (3 calls, snapshot delta = 0), no-dirty-flag-side-effect, filename + `first_word_index=0` on first clip, `first_word_index=2` on second clip (word-list offset math), summary numbers match the live state.
+  - `tests/test_routes_tagging.py` enhancements (6): bug #1 precondition + bug #1 race coverage, bug #2 thread-based responsiveness, `mutated=False` skips commit, `mutated=True` triggers commit.
+  - `tests/test_tagging.py` enhancements (5): mutated truth table (rows-appended, only-stale-dropped, no-changes, dry-run-never-sets) + `section_tag_id` not persisted on the written row.
+
+**Decisions locked with this phase (carried from PHASES.md plan + the reviewer's plan-review folds):**
+
+- **Related-but-different lives in a top-level bucket, not under each script line.** The LLM doesn't surface a line-association signal for these (`line_tag_id=null`), so there's no per-line data to attach. Open by default.
+- **Confidence DESC then start ASC inside line rows; start ASC only inside buckets.** Best match first when a line target exists; recording order when it doesn't.
+- **Side panel for card detail in v0** (not modal, not inline expand). Phase 9's preview pane reuses the same slot — no UI rebuild.
+- **Stale: surface, don't filter.** Amber dot indicator on the card, full disambiguation via the existing Brief-page "Tag clips" button.
+- **Filename resolution server-side per card.** Saves an N+1 frontend lookup.
+- **`first_word_index` computed server-side per card.** Per the reviewer's plan-review fold — frontend gets a ready-to-use `/library?source=&word=` link with zero transcript walking on the client.
+- **Untagged counted at the source-clip level**: a clip with NO rows for this project counts once. Stale-only counts toward `stale_clips`. Non-disjoint is intentional and documented in code.
+
+**Real-data smoke test (synthetic project on the live `clipfarm.json`, btc.0.4's 91 clips):**
+
+- 3-line script + simulated Phase-6-style tag distribution (4 + 5 + 4 on-script, 10 related, 7 standalone, 30 off-topic, 17 fragment).
+- `build_take_grid` returned: 3 line rows (4/5/4 cards), 4 buckets (10/7/30/17), summary `tagged=77, untagged=80, stale=0`.
+- First card sanity-check: `filename="btc.0.4.mov"`, `first_word_index=0`, `start_sec=4.37` (matches the btc.0.4 transcript opening "She makes me smile all the time…"). Transcript text loaded from the real Whisper sidecar via the cache, not synthesized.
+- Live `GET /api/projects/missing/take-grid` against the running server returned `{"detail":"unknown project_id: missing"}` with status 404, confirming the route is wired through `app.include_router`.
+
+**Reviewer assessment summary (2026-05-25, separate session):**
+
+> Top-line: ship it. Both Phase 6.1 bugs fixed correctly with the right tests, the take-grid orchestrator is clean and well-documented, sort orders + counter semantics match the plan, frontend surfaces match the visual spec. 310 tests passing (~32 new). The diff is exactly the size and shape Phase 7 should be. No required pre-commit changes.
+
+Three advisory items captured for later (none blocking):
+
+1. **`untagged_clips` UI semantics** — counter includes clips from sources unrelated to the project's current focus. For a single-source project (Lillian editing btc.0.4 only), `untagged=80` includes ~66 clips from other 05.19.26 sources. The number is correct per the multi-project spec ("re-mine the library when a new brief lands") but the chip could read confusingly. Phase 8+ polish: tooltip ("across your full library") or a "scope to source(s)" filter.
+2. **Stale dot visual confirmation** — smoke test had `stale=0`, so the amber dot UX hasn't been visually exercised. Worth a hand-edit during the next dogfood pass: flip `clip_project_tags[0].stale = true` in `clipfarm.json`, reload, confirm the dot renders on the right card.
+3. **COMPLETED_PHASES.md cross-reference** — added a one-line pointer in the Phase 6 entry to the Phase 7 carry fixes (applied this commit).
+
+**Files touched in Phase 7:**
+
+```
+NEW:
+  clipfarm/take_grid.py
+  clipfarm/routes/take_grid.py
+  tests/test_take_grid.py
+  tests/test_routes_take_grid.py
+
+MODIFIED:
+  clipfarm/routes/tagging.py   — Phase 6.1 bug #1 (dirty before run) + bug #2 (asyncio.to_thread) + mutated-gated commit + docstring
+  clipfarm/tagging.py          — mutated field on TaggingResult + section_tag_id drop + stale-tradeoff comment + result.mutated set at the two mutation points
+  clipfarm/app.py              — include take_grid router
+  web/src/pages/Project.tsx    — full Take Grid implementation (replaces placeholder)
+  web/src/pages/Library.tsx    — useSearchParams hook for ?source=&word= deep-link
+  web/dist/...                 — rebuilt
+  tests/test_routes_tagging.py — 6.1 bug regression tests
+  tests/test_tagging.py        — mutated truth table + section_tag_id-not-persisted
+  PHASES.md                    — Phase 6 marked verified with 6.1 carry note; Phase 7 plan landed (with three reviewer plan-review folds applied)
+  COMPLETED_PHASES.md          — Phase 6 6.1-carries cross-reference + this Phase 7 entry
+```
+
+---
+
 ## Phase 6 — Ollama tagging (batched)
 
-**Verified by Lillian:** ⏳ pending
+**Verified by Lillian:** ✅ 2026-05-25 (with two real bugs flagged for Phase 7 kickoff — see below)
+
+**Bugs flagged by the reviewer for Phase 7 kickoff (carries):**
+
+1. **Race between mutation and `dirty=True` flag.** The orchestrator drops stale rows at the start of `tag_project` (before any LLM call), but `app.state.dirty = True` is set AFTER `tag_project` returns. During the 5.5-min LLM run, the watcher's `has_unsaved_changes()` reads `dirty=False`; an external `clipfarm.json` edit routes to `on_external_change` (silent reload) instead of `on_conflict` (freeze). Reload reassigns `app.state.clipfarm`; the orchestrator's local `state` variable points at the abandoned old object and keeps mutating it. At commit time, `commit_state_with_snapshot_locked` writes the NEW (reloaded) state, not the mutated one. Result: response says "tagged 77 clips" but disk has zero new tags. Fix: set `app.state.dirty = True` BEFORE the orchestrator call (3-line change). Not reachable under v0 single-user single-tab usage but real risk if the user hand-edits during a run.
+2. **Synchronous `tag_project` blocks the event loop for 5.5 min.** `chat_with_json_schema` uses sync `httpx.post`; the route handler `await`s the orchestrator but the orchestrator never yields. Whole server becomes unresponsive — `GET /api/state` hangs from a second tab. Fix: `result = await asyncio.to_thread(tag_project, ...)`. The `asyncio.Lock` is still held by the route, so mutation-under-lock holds. Two-line change.
+3. **Commit-when-nothing-mutated (cosmetic).** `result.clips_tagged > 0 or result.batches > 0` triggers commit even when all batches fail validation and no stale rows existed to drop. State is unchanged but we still snapshot + write. Tighten the condition to a `mutated: bool` field on `TaggingResult`.
+4. **Dead `section_tag_id` extraction (cosmetic).** `_validate_row` extracts `section_tag_id` but the field isn't on `ClipProjectTag`. Remove from the return dict.
+5. **Pre-LLM stale-drop tradeoff undocumented (cosmetic).** If every batch fails after stale rows have been dropped, the previously-tagged-but-stale data is gone (user recovers via snapshot revert). Add a code comment.
+
+All five ride along on the Phase 7 kickoff cleanup pass.
+
+**Phase 6.1 carries — landed in Phase 7 kickoff (2026-05-25):** all five items above (bug #1 dirty-flag ordering, bug #2 `asyncio.to_thread` wrap, cosmetic mutated flag, cosmetic `section_tag_id` drop, cosmetic comment) were fixed alongside the Phase 7 read-side build. See the Phase 7 entry below for the specific commits + tests. Phase 6 standalone is now considered fully closed.
 
 **Built (2026-05-25):**
 

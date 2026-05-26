@@ -374,3 +374,87 @@ def test_batch_size_out_of_range_raises():
         tag_project(state, "p1", llm_client=_fake_client([]), batch_size=0)
     with pytest.raises(ValueError):
         tag_project(state, "p1", llm_client=_fake_client([]), batch_size=MAX_BATCH_SIZE + 1)
+
+
+# ---------- Phase 6.1: `mutated` flag on TaggingResult ----------------------
+
+
+def test_mutated_true_when_rows_appended():
+    state = _state_with_project(n_clips=2)
+    client = _fake_client([{"results": [_row("c0"), _row("c1")]}])
+    result = tag_project(state, "p1", llm_client=client)
+    assert result.clips_tagged == 2
+    assert result.mutated is True
+
+
+def test_mutated_true_when_only_stale_rows_dropped():
+    """Pre-LLM stale-row drop is a mutation. If every batch then fails,
+    the result still carries `mutated=True` — the route's commit gates
+    on this to write the (now-empty for those clip ids) state to disk."""
+    state = _state_with_project(n_clips=1)
+    state.clip_project_tags.append(
+        ClipProjectTag(
+            clip_id="c0", project_id="p1", project_tag_id="t1",
+            category="on-script", stale=True,
+        )
+    )
+    # LLM returns None → batch fails after retry → no new rows.
+    client = _fake_client([None, None])
+    result = tag_project(state, "p1", llm_client=client)
+    assert result.clips_tagged == 0
+    assert len(result.untagged_batches) == 1
+    # Stale row was dropped pre-LLM → mutated must be True so the route
+    # actually commits the drop to disk.
+    assert result.mutated is True
+    assert state.clip_project_tags == []
+
+
+def test_mutated_false_when_no_changes_at_all():
+    """Every batch failed validation AND there were no stale rows to
+    drop → no mutation → `mutated=False`. The route uses this signal to
+    skip the snapshot+commit for a doomed run."""
+    state = _state_with_project(n_clips=2)
+    client = _fake_client([None, None])  # malformed first, malformed retry
+    result = tag_project(state, "p1", llm_client=client)
+    assert result.clips_tagged == 0
+    assert len(result.untagged_batches) == 1
+    assert result.mutated is False
+
+
+def test_dry_run_never_sets_mutated():
+    """Dry-run skips both the LLM call AND the pre-LLM stale-row drop,
+    so `mutated` stays False even when stale rows exist."""
+    state = _state_with_project(n_clips=1)
+    state.clip_project_tags.append(
+        ClipProjectTag(
+            clip_id="c0", project_id="p1", project_tag_id="t1",
+            category="on-script", stale=True,
+        )
+    )
+    client = _fake_client([])
+    result = tag_project(state, "p1", llm_client=client, dry_run=True)
+    assert result.mutated is False
+    # Stale row preserved on disk.
+    assert len(state.clip_project_tags) == 1
+
+
+# ---------- Phase 6.1: section_tag_id no longer surfaced --------------------
+
+
+def test_section_tag_id_not_persisted_on_written_row():
+    """The LLM's `section_tag_id` field is extracted but no longer
+    surfaced through to the written `ClipProjectTag` (v0 flat-lines
+    simplification — sections aren't expressed via tag rows). Even if
+    the LLM emits a value, our row carries only the line tag id."""
+    state = _state_with_project(n_clips=1)
+    # Row claims section_tag_id="t3" (the section tag in the fixture)
+    row = _row("c0", line_tag_id="t1")
+    row["section_tag_id"] = "t3"
+    client = _fake_client([{"results": [row]}])
+    result = tag_project(state, "p1", llm_client=client)
+    assert result.clips_tagged == 1
+    [written] = state.clip_project_tags
+    # `ClipProjectTag` doesn't carry section_tag_id; the line tag is
+    # what landed on the row.
+    assert written.project_tag_id == "t1"
+    assert not hasattr(written, "section_tag_id")

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 // Phase 4 adds boundary correction: split / merge / adjust / create /
 // delete operations against the transcript view. Multi-clip selection via
@@ -967,6 +968,7 @@ export default function Library() {
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const refreshState = useCallback(async () => {
     const r = await fetch("/api/state");
@@ -976,6 +978,28 @@ export default function Library() {
   useEffect(() => {
     refreshState();
   }, [refreshState]);
+
+  // Honor `?source=<id>&word=<idx>` deep-link on mount / nav-from-other-page.
+  // Used by the Project → Take Grid "Open in Library" affordance: the take
+  // grid response carries `first_word_index` per card, so we don't have to
+  // walk the transcript here.
+  useEffect(() => {
+    const source = searchParams.get("source");
+    if (!source) return;
+    setSelectedSource(source);
+    const wordRaw = searchParams.get("word");
+    const word = wordRaw == null ? NaN : Number(wordRaw);
+    if (Number.isFinite(word) && word >= 0) {
+      setFocusRequest({ wordIndex: word, nonce: Date.now() });
+    } else {
+      setFocusRequest(null);
+    }
+    // Clear the params once consumed so a later same-page nav (e.g.
+    // clicking a different source in the sidebar) isn't undone by a
+    // stale ?source=.
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pushToast = useCallback((kind: "ok" | "err", text: string) => {
     const id = Date.now() + Math.random();

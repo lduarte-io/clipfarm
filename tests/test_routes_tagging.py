@@ -292,3 +292,189 @@ def test_tag_route_dry_run_writes_nothing(
     assert state["clip_project_tags"] == []
     # No snapshot.
     assert _count_snapshots(client) == before_snaps
+
+
+# ---------- Phase 6.1 bug carries -------------------------------------------
+
+
+def test_dirty_flag_is_true_when_orchestrator_runs(
+    client: TestClient, tmp_path: Path
+):
+    """Bug #1 precondition: `app.state.dirty` must be True *during* the
+    orchestrator call, not after. If it were set after, the watcher's
+    `has_unsaved_changes()` would read False during the LLM run, route
+    an external clipfarm.json edit to silent-reload, abandon the local
+    state pointer, and the end-of-run commit would overwrite the just-
+    reloaded state — losing every tag we just produced.
+
+    The precondition test here catches obvious regressions; the next
+    test (`test_watcher_during_tag_run_flips_writes_frozen`) exercises
+    the actual race the bug fix protects against.
+    """
+    pid, clip_ids = _seed(client, tmp_path)
+    observed: list[bool] = []
+
+    from clipfarm.tagging import TaggingResult
+
+    def fake_tag(state, project_id, *, llm_client, batch_size, dry_run):
+        observed.append(client.app.state.dirty)
+        # Pretend we did some work so the route hits its commit branch.
+        return TaggingResult(clips_tagged=0, batches=1, mutated=False)
+
+    with patch(
+        "clipfarm.routes.tagging.tag_project",
+        side_effect=fake_tag,
+    ), patch("clipfarm.routes.tagging.ping_ollama", return_value=True):
+        client.post(f"/api/projects/{pid}/tag")
+
+    assert observed == [True], (
+        "`app.state.dirty` was False when `tag_project` ran — the watcher "
+        "would have routed an external edit to silent-reload, dropping "
+        "every fresh tag at commit time. This is bug #1."
+    )
+
+
+def test_watcher_during_tag_run_flips_writes_frozen_and_returns_409(
+    client: TestClient, tmp_path: Path
+):
+    """Bug #1 race coverage. Simulate the actual scenario the fix
+    protects against:
+
+    1. Tag run starts → `app.state.dirty = True` (the fix).
+    2. Mid-batch, the watcher's `on_external_change` callback fires
+       (someone hand-edited `clipfarm.json`).
+    3. Because `dirty=True`, the watcher routes the event to
+       `on_conflict`, NOT silent-reload → `writes_frozen` flips True.
+    4. The orchestrator finishes; the locked commit raises
+       `WritesFrozenError` → HTTP 409.
+
+    Pre-fix, step 2 would have routed to silent-reload, the local state
+    pointer would have been abandoned, and the commit would have
+    overwritten the just-reloaded state — silently dropping every tag.
+    """
+    pid, clip_ids = _seed(client, tmp_path)
+
+    from clipfarm.tagging import TaggingResult
+
+    def fake_tag(state, project_id, *, llm_client, batch_size, dry_run):
+        # Mid-run: invoke the watcher's conflict path the way the real
+        # watcher would when it detects an external edit + dirty state.
+        # `_callbacks` is internal but it's the only handle to the wired
+        # `on_conflict` closure — the alternative (touching the file on
+        # disk and waiting for the 500ms poll) is brittle in CI.
+        client.app.state.watcher._callbacks.on_conflict(
+            client.app.state.state_path
+        )
+        # We still 'wrote' a row in-memory; the commit will reject it.
+        return TaggingResult(clips_tagged=1, batches=1, mutated=True)
+
+    with patch(
+        "clipfarm.routes.tagging.tag_project",
+        side_effect=fake_tag,
+    ), patch("clipfarm.routes.tagging.ping_ollama", return_value=True):
+        r = client.post(f"/api/projects/{pid}/tag")
+
+    try:
+        assert r.status_code == 409, r.text
+        assert client.app.state.writes_frozen is True
+    finally:
+        client.app.state.writes_frozen = False
+
+
+def test_event_loop_responsive_during_long_tag_run(
+    client: TestClient, tmp_path: Path
+):
+    """Bug #2: wrap the orchestrator in `asyncio.to_thread` so the
+    event loop stays free during the long LLM run.
+
+    NOTE — uses `concurrent.futures.ThreadPoolExecutor`, NOT
+    `httpx.AsyncClient`. Phase 2's review captured that
+    `ASGITransport` skips FastAPI lifespan, leaving
+    `app.state.writes_frozen` undefined and breaking these tests; the
+    implementer switched to `TestClient` after burning time on it.
+    Same trap here.
+
+    Strategy: fire `/tag` in a worker thread (orchestrator sleeps 2s
+    simulating a real batch); from the main thread immediately fire
+    `GET /api/state` and time it. Pre-fix the GET would block on the
+    save_lock + blocking httpx for the full 2s; post-fix it returns
+    promptly because the orchestrator runs off-loop.
+    """
+    import concurrent.futures
+    import time
+
+    pid, clip_ids = _seed(client, tmp_path)
+
+    from clipfarm.tagging import TaggingResult
+
+    def slow_tag(state, project_id, *, llm_client, batch_size, dry_run):
+        time.sleep(2.0)  # simulate a real LLM batch
+        return TaggingResult(clips_tagged=0, batches=1, mutated=False)
+
+    with patch(
+        "clipfarm.routes.tagging.tag_project",
+        side_effect=slow_tag,
+    ), patch("clipfarm.routes.tagging.ping_ollama", return_value=True):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            tag_future = pool.submit(
+                client.post, f"/api/projects/{pid}/tag"
+            )
+            # Give the tag worker a moment to enter the lock + the
+            # blocking `tag_project` call.
+            time.sleep(0.3)
+            t0 = time.perf_counter()
+            r = client.get("/api/state")
+            elapsed = time.perf_counter() - t0
+            # Drain the tag run so the fixture teardown doesn't dangle.
+            tag_future.result(timeout=10.0)
+
+    assert r.status_code == 200
+    assert elapsed < 1.0, (
+        f"/api/state took {elapsed:.2f}s while a tag run was in flight — "
+        f"the event loop is being blocked by the synchronous orchestrator. "
+        f"Bug #2 (asyncio.to_thread wrap) regressed."
+    )
+
+
+def test_no_commit_when_orchestrator_did_not_mutate(
+    client: TestClient, tmp_path: Path
+):
+    """Cosmetic carry #3: the commit-condition tightening. When the
+    orchestrator runs but reports `mutated=False` (e.g. every batch
+    failed validation AND there were no stale rows to drop), the route
+    must skip the snapshot+commit — there's nothing to write."""
+    pid, _ = _seed(client, tmp_path)
+    before_snaps = _count_snapshots(client)
+
+    from clipfarm.tagging import TaggingResult
+
+    def no_op(state, project_id, *, llm_client, batch_size, dry_run):
+        return TaggingResult(clips_tagged=0, batches=1, mutated=False)
+
+    with patch(
+        "clipfarm.routes.tagging.tag_project",
+        side_effect=no_op,
+    ), patch("clipfarm.routes.tagging.ping_ollama", return_value=True):
+        r = client.post(f"/api/projects/{pid}/tag")
+
+    assert r.status_code == 200
+    # mutated=False → no snapshot.
+    assert _count_snapshots(client) == before_snaps
+
+
+def test_commit_when_orchestrator_mutated(
+    client: TestClient, tmp_path: Path
+):
+    """The flip side: `mutated=True` must trigger the commit."""
+    pid, clip_ids = _seed(client, tmp_path)
+    before_snaps = _count_snapshots(client)
+
+    with patch(
+        "clipfarm.routes.tagging.chat_with_json_schema",
+        return_value=_llm_response(clip_ids),
+    ), patch("clipfarm.routes.tagging.ping_ollama", return_value=True):
+        r = client.post(f"/api/projects/{pid}/tag")
+
+    assert r.status_code == 200
+    assert r.json()["mutated"] is True
+    assert _count_snapshots(client) == before_snaps + 1
