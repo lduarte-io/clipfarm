@@ -29,7 +29,13 @@ Category = Literal[
     "fragment",
 ]
 
-TagKind = Literal["section", "line"]
+TagKind = Literal["section", "line", "tag"]
+# "section" = a chapter / beat label (parent_id=None)
+# "line"    = a script line (parent_id=section's id, or None when the
+#             brief doesn't group lines into sections — the v0 default)
+# "tag"     = an ad-hoc project-level label from the brief's `tags:` array
+#             (parent_id=None, distinct from "line" so update_project's
+#             name-keyed merge can tell them apart)
 
 TagSource = Literal["ai", "user", "voice-annotation"]
 
@@ -107,12 +113,26 @@ class ProjectTag(StrictModel):
     order_idx: int = 0
 
 
+class Script(StrictModel):
+    """The script as the user wrote it in the brief. Each entry in `lines`
+    becomes a `ProjectTag(kind="line")` in the Project's `tags` dict at
+    parse time; this `Script` model is the read-back view.
+
+    Sections live in `Project.tags` as `ProjectTag(kind="section")` entries
+    with `parent_id=None`; lines reference their parent section by ID via
+    `ProjectTag.parent_id`. The hierarchy is in the tag set, not here.
+    """
+
+    lines: list[str] = Field(default_factory=list)
+
+
 class Project(StrictModel):
-    name: str
+    name: str = Field(..., min_length=1)
     brief_md: str = ""
-    # Phase 5 replaces this loose dict with a typed `Script` model. Until then,
-    # tolerate the shape from the spec's example payload.
-    script_json: dict = Field(default_factory=dict)
+    # Phase 5 — typed Script model replaces the loose dict from the v1
+    # data-model example. Brief-less projects (rare; v0 has no UI path to
+    # create one) have `script=None`.
+    script: Optional[Script] = None
     tags: dict[str, ProjectTag] = Field(default_factory=dict)
     created_at: str
 

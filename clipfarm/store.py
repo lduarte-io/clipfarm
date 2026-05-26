@@ -102,9 +102,17 @@ def _known_fields(model_cls: type[BaseModel]) -> set[str]:
 
 def _log_unknown_keys(raw: dict, model_cls: type[BaseModel], path: str = "") -> None:
     """Walk `raw` against the model's declared fields. Log one warning per
-    key that's present in `raw` but unknown to the model. Recurses into nested
-    StrictModel fields so a hand-edited `"_lillian_note"` inside a nested
-    object also gets surfaced.
+    key that's present in `raw` but unknown to the model. Recurses into
+    nested StrictModel fields so a hand-edited `"_lillian_note"` inside a
+    nested object also gets surfaced.
+
+    Uses `typing.get_origin` + `typing.get_args` to inspect each field's
+    annotation deterministically rather than guessing — `dict[str, X]`,
+    `Optional[X]`, `list[X]`, and direct-`X` all get walked correctly
+    without any "do these keys look like a model?" heuristic. Phase 5
+    activated this refactor when `Project.tags: dict[str, ProjectTag]`
+    became the first real dict-of-model field; before Phase 5 the v1
+    heuristic guessed (and got lucky), now it's typing-driven.
     """
     if not isinstance(raw, dict):
         return
@@ -119,58 +127,65 @@ def _log_unknown_keys(raw: dict, model_cls: type[BaseModel], path: str = "") -> 
             )
             continue
         field = model_cls.model_fields[key]
-        annotation = field.annotation
-        nested_cls = _nested_model_cls(annotation)
-        if nested_cls is None:
-            continue
         value = raw[key]
         nested_path = f"{path}{key}."
+        _walk_annotation(value, field.annotation, nested_path)
+
+
+def _walk_annotation(value: object, annotation: object, path: str) -> None:
+    """Dispatch on the annotation's shape via `typing.get_origin`. Each
+    shape gets walked appropriately:
+
+    - Direct `BaseModel` subclass → recurse into `_log_unknown_keys` on
+      the dict.
+    - `Optional[X]` (== `Union[X, None]`) → unwrap None, recurse with X.
+    - `list[X]` → iterate `value`, recurse on each element with X.
+    - `dict[K, X]` → iterate `value.values()`, recurse on each with X.
+    - Anything else (`int`, `str`, `bool`, plain typed dict) → no model
+      to walk; stop.
+
+    Order matters: check `Optional` before `dict` because `Optional[X]`'s
+    origin is `Union`, not `X`'s origin.
+    """
+    import typing
+    from types import NoneType
+
+    # Direct model — no generic wrapper.
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         if isinstance(value, dict):
-            # Either a model directly or a dict-of-model. Heuristic: if the
-            # value's first level keys match the nested model's field names,
-            # treat it as a model instance; otherwise iterate.
-            if _looks_like_dict_of_model(value, nested_cls):
-                for sub_key, sub_val in value.items():
-                    _log_unknown_keys(sub_val, nested_cls, f"{nested_path}{sub_key}.")
-            else:
-                _log_unknown_keys(value, nested_cls, nested_path)
-        elif isinstance(value, list):
-            for i, item in enumerate(value):
-                _log_unknown_keys(item, nested_cls, f"{nested_path}[{i}].")
+            _log_unknown_keys(value, annotation, path)
+        return
 
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
 
-def _nested_model_cls(annotation) -> type[BaseModel] | None:
-    """Unwrap Optional / list / dict annotations to find a contained
-    StrictModel subclass, if any. Returns None if no model is involved."""
-    origin = getattr(annotation, "__origin__", None)
-    args = getattr(annotation, "__args__", ())
-    if origin is None:
-        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            return annotation
-        return None
-    for arg in args:
-        if arg is type(None):
-            continue
-        cls = _nested_model_cls(arg)
-        if cls is not None:
-            return cls
-    return None
+    # Optional[X] / Union[X, None]: unwrap the None and re-dispatch on X.
+    if origin is typing.Union or origin is __import__("types").UnionType:
+        non_none = [a for a in args if a is not NoneType]
+        if len(non_none) == 1:
+            _walk_annotation(value, non_none[0], path)
+        return
 
+    # list[X]: walk each element with X.
+    if origin in (list, tuple) and args:
+        if not isinstance(value, (list, tuple)):
+            return
+        inner = args[0]
+        for i, item in enumerate(value):
+            _walk_annotation(item, inner, f"{path}[{i}].")
+        return
 
-def _looks_like_dict_of_model(value: dict, nested_cls: type[BaseModel]) -> bool:
-    """A `dict[str, SomeModel]` field is hard to distinguish from a single
-    model instance by annotation walking alone (we already unwrapped). Use a
-    heuristic: if every top-level value in `value` is itself a dict whose keys
-    overlap the model's fields, treat it as a dict-of-models. Otherwise treat
-    it as a single model instance."""
-    if not value:
-        return False
-    known = _known_fields(nested_cls)
-    sample_values = list(value.values())
-    if not all(isinstance(v, dict) for v in sample_values):
-        return False
-    overlap_counts = [len(set(v.keys()) & known) for v in sample_values]
-    return any(c > 0 for c in overlap_counts)
+    # dict[K, X]: walk each value with X.
+    if origin is dict and len(args) == 2:
+        if not isinstance(value, dict):
+            return
+        inner = args[1]
+        for k, sub in value.items():
+            _walk_annotation(sub, inner, f"{path}{k}.")
+        return
+
+    # Anything else (plain scalar, untyped dict, etc.) — no model to walk.
+    return
 
 
 def load_state(state_path: Path) -> ClipFarmState:

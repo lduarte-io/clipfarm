@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "watchdog>=5.0",
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]

@@ -4,9 +4,111 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
-## Phase 4 — Boundary correction
+## Phase 5 — Brief editor + project creation
 
 **Verified by Lillian:** ⏳ pending
+
+**Built (2026-05-25):**
+
+The write side of the project layer. Markdown briefs become typed `Project` records with `Script`, `ProjectTag` (sections + lines + ad-hoc tags) structures ready for Phase 6 to write `clip_project_tags` against. Phase 5 doesn't tag anything itself — it builds the structure tagging will populate.
+
+- **Phase 5 kickoff cleanup:**
+  - **`_log_unknown_keys` refactor.** Replaced the `_looks_like_dict_of_model` heuristic with deterministic `typing.get_origin` + `typing.get_args` annotation inspection. The new `_walk_annotation` dispatches: direct `BaseModel` → recurse; `Optional[X]` → unwrap None + re-dispatch; `list[X]` / `tuple[X]` → walk elements; `dict[K, X]` → walk values; anything else → stop. No more guessing. Four new test cases (`dict[str, ProjectTag]`, `dict[str, Project]`, `Optional[Script]`, `list[ClipProjectTag]`) prove the dotted paths come out right.
+
+- **Model changes:**
+  - New `Script(StrictModel)` with `lines: list[str]`. The advance note from Phase 1.
+  - Replaced `Project.script_json: dict` with `Project.script: Optional[Script] = None`.
+  - Expanded `TagKind` to `Literal["section", "line", "tag"]`. The third kind distinguishes ad-hoc tags from script lines (both used to be `kind="line"` with `parent_id=None` and were indistinguishable, which broke the name-keyed merge).
+  - `Project.name` now `min_length=1` (empty strings rejected at the Pydantic boundary).
+
+- **`clipfarm/brief.py`** — pure YAML-frontmatter + markdown-body parser.
+  - `parse_brief(text) -> ParsedBrief` (the latter a Pydantic model with `name`, `script`, `sections`, `tags`, `body_md`).
+  - `BriefParseError` carries `line` / `column` when PyYAML exposes them. Routes pass these through to the user verbatim in the 400 detail.
+  - **Locked policies (matching the plan):** `name` required + non-empty + must be a string; body-only briefs rejected ("not yet a project"); duplicate script lines tolerated (`order_idx` differentiates them); YAML escaping documented in the editor's inline help.
+
+- **`clipfarm/projects.py`** — pure orchestration with the **name-keyed merge**:
+  - `create_project(state, parsed, brief_md_source=...) -> project_id` — allocates monotonic string-int IDs, builds Project + ProjectTag entries.
+  - `update_project(state, project_id, parsed, brief_md_source=...) -> stale_count` — uses the merge so reorders preserve ProjectTag IDs (clip refs survive), renames create new IDs (old ones become dangling tombstones with `stale: true` on every `clip_project_tags` row). Flips every `clip_project_tags` row for this project to `stale: true` regardless (spec's explicit-retag rule).
+  - `delete_project(state, project_id) -> (dropped_tag_rows, deleted_attempts)` — drops the project + its `ProjectTag` dict + every `clip_project_tags` row + hard-deletes its attempts. Forward-compatible response shape even when both counts are 0 today.
+  - `list_projects(state)` returns summaries (project_id, name, created_at, line_count, section_count, tag_count).
+  - **Identity rules:** sections = `name`; lines = `(parent_section_name, line_text, occurrence_index_in_section)`; ad-hoc tags = `name` (kind="tag"). Each rule has a dedicated test.
+
+- **`clipfarm/routes/projects.py`** — 5 mutating routes + 1 read-only parse-preview:
+  - `POST /api/projects/parse` body `{brief_md}` → `{name, lines_count, sections, tags}`. **Read-only, no lock, no snapshot.** Used by the frontend's debounced live preview.
+  - `POST /api/projects` body `{brief_md}` → `{project_id, snapshot}`. 400 on parse error (with line/column when available). Snapshot reason `"create-project"`.
+  - `GET /api/projects` → list of summaries.
+  - `GET /api/projects/{id}` → full detail (name, brief_md, script_lines, sections, tags). 404 unknown.
+  - `PATCH /api/projects/{id}` body `{brief_md}` → `{project_id, stale_tag_rows, snapshot}`. Snapshot reason `"edit-brief"`.
+  - `DELETE /api/projects/{id}` → `{project_id, dropped_tag_rows, deleted_attempts, snapshot}`. Snapshot reason `"delete-project"`.
+  - Every mutating route holds `app.state.save_lock` across the orchestrator (Phase 2.1 pattern), routes through `commit_state_with_snapshot` (Phase 4 invariant).
+
+- **Frontend (`web/src/pages/Brief.tsx`)** — first real impl:
+  - Left rail: project list + "New project" button.
+  - Main panel: textarea with the brief markdown, Save / Delete buttons, live parse preview (debounced 200ms, calls `/api/projects/parse`), inline `Brief format help` `<details>` block with the YAML escape tip + an example brief.
+  - Save button calls `POST` (new) or `PATCH` (existing); 400 errors surface inline with the parser's line/column.
+  - Delete button opens an always-confirm dialog ("you can restore from `.clipfarm/snapshots/`").
+  - Unsaved-changes indicator (`• unsaved`) when `draftBrief !== originalBrief`.
+
+- **Tests added (50 new — 232 total passing, up from 182):**
+  - `tests/test_brief.py` (16): full brief, minimal brief, body-only rejected, missing name raises, empty/whitespace/non-string name raises, malformed YAML raises with position, non-list script/sections/tags rejected, non-string entries rejected, duplicate lines preserved, name strips whitespace, body preserves markdown, quoted special chars (the YAML escape test).
+  - `tests/test_projects.py` (14): monotonic IDs, section/line/tag entries, brief_md source storage, duplicate lines get separate tags, **reorder preserves IDs** (the name-keyed merge test), **rename creates new tag ID** (with old becoming dangling tombstone), `update_project` flips every `clip_project_tags` row to stale, dangling-tombstone behavior on rename, unknown project_id raises, delete removes project + tag rows + attempts (synthetic data covers all three propagation paths), list_projects shape.
+  - `tests/test_routes_projects.py` (16): each route's happy path through `_count_snapshots_after_op` (where applicable — parse preview is asserted NOT to snapshot), 400s on malformed brief, 404s on unknown ID, 409 when frozen, lock-held assertion, snapshot-count-equals-op-count (after seed: 3 mutating ops → 3 snapshots).
+  - `tests/test_load_unknown_keys.py` (4 new): unknown key inside `dict[str, ProjectTag]` value → `projects.1.tags.1._secret` path; unknown key inside `dict[str, Project]` value → `projects.1._secret`; unknown key inside `Optional[Script]` → `projects.1.script._secret`; unknown key inside `list[ClipProjectTag]` → `clip_project_tags.[0]._secret`. The refactored walker handles each shape deterministically.
+
+**Manual verification run (all green):**
+
+- `POST /api/projects/parse` with the full brief → 200 with `{name: "btc explainer v0.4", lines_count: 2, sections: ["the hook"], tags: ["hook"]}`. Confirms the read-only preview works.
+- `POST /api/projects` (first call, fresh state) → 200 with `{project_id: "1", snapshot: null}`. **Null snapshot is correct** — the Phase 1 invariant is "can't snapshot what doesn't exist on disk yet"; the create itself writes the state file, which subsequent mutations then snapshot.
+- `GET /api/projects` → list shape correct: `line_count: 2, section_count: 1, tag_count: 4` (2 lines + 1 section + 1 ad-hoc tag).
+- `GET /api/projects/1` → full detail returns the original markdown verbatim in `brief_md`, with parsed `script_lines`, `sections`, `tags` arrays.
+- `PATCH /api/projects/1` with a brief that renamed `the hook` → `the opening` AND added a third line "close" → 200 with `snapshot: "...__edit-brief.json"`. After PATCH, `GET /api/projects/1` shows the renamed section and added line.
+- `POST /api/projects` with no frontmatter → 400.
+- `POST /api/projects` with frontmatter missing `name` → 400 with structured detail: `{"error": "'name' is required in the frontmatter — projects without names aren't valid"}`.
+- `DELETE /api/projects/1` → 200 with `snapshot: "...__delete-project.json"`. Final snapshot inventory: `1 edit-brief.json | 1 delete-project.json` — exactly 2 snapshots for 2 mutating ops on existing-file state (the first create wrote 0 because the state file didn't exist beforehand).
+
+**Assumptions made + deviations from the plan:**
+
+- **Third TagKind ("tag") added during execution.** The plan only had "section" and "line"; mid-execution I hit the merge ambiguity where ad-hoc tags and script lines both came out as `kind="line"` with `parent_id=None`, making them indistinguishable in the existing-tag-lookup step. Added a third kind "tag" specifically for ad-hoc project labels. Updated `TagKind = Literal["section", "line", "tag"]` and the merge. Backward-compat-safe (no existing state has Project entries yet — Phase 5 is the first writer).
+- **Script lines stay top-level (parent_id=None) for v0.** The brief doesn't currently let users group lines under sections — that's a brief-format extension for later. Sections are just labels in the current brief. Means line identity is `("", line_text, occurrence_index)` for v0. When the brief format grows a sections→lines structure, line identity becomes `(parent_section_name, line_text, occurrence_index)` and the merge code already handles it.
+- **Live parse preview hits the server.** The plan called this out as the right choice (one parser, no js-yaml drift); confirmed during execution that hitting `/api/projects/parse` every 200ms on the keystroke debounce is cheap (PyYAML parses 4KB of frontmatter in <1ms).
+- **`Project.brief_md` reconstruction fallback.** The orchestrator's `_full_brief_md` function reconstructs a canonical brief from `ParsedBrief` when `brief_md_source` is not passed. v0 route handlers always pass the source. The fallback exists for future programmatic Project creation (tests, migrations) where there's no original markdown to preserve.
+- **First-op-on-fresh-state snapshot=null is correct.** Documented in two test fixtures (create-happy and snapshot-count-equals-op-count both seed the state file with a throwaway create before measuring). The Phase 1 `snapshot_before_destructive` returns None when the file doesn't exist yet — that's the documented behavior, not a bug to fix.
+
+**Open follow-ups for the reviewer to evaluate:**
+
+1. **Brief-format extension: sections → lines.** v0 lines are flat (parent_id=None); the brief has separate `script:` and `sections:` arrays with no link between them. A future brief format could group lines under sections (e.g. `script: [{section: "the hook", lines: [...]}, ...]`). The merge code already handles `parent_id` in the identity rule; only the brief schema and parser need to grow. Defer until Phase 7's UI starts needing the hierarchy.
+2. **Markdown rendering in the preview.** v0 shows the brief as a textarea; no rendered preview. A side-by-side rendered view would be polish — easy to add with `react-markdown` if it ever matters.
+3. **Project name uniqueness.** No constraint today — two projects can share a name (different IDs). The UI surfaces both. Worth a "unique-name warning" in the brief editor if Phase 7+ surfaces the project picker prominently.
+
+**Files touched in Phase 5:**
+
+```
+NEW:
+  clipfarm/brief.py
+  clipfarm/projects.py
+  clipfarm/routes/projects.py
+  tests/test_brief.py
+  tests/test_projects.py
+  tests/test_routes_projects.py
+
+MODIFIED:
+  clipfarm/store.py         — _log_unknown_keys refactor with typing.get_origin/get_args
+  clipfarm/models.py        — new Script model, Project.script: Optional[Script], TagKind expanded to "tag"
+  clipfarm/app.py           — include projects router
+  pyproject.toml            — pyyaml dependency
+  uv.lock                   — pyyaml lockfile entry
+  tests/test_load_unknown_keys.py — 4 new dotted-path tests for the new shapes
+  web/src/pages/Brief.tsx   — first real implementation (was placeholder)
+  web/dist/...              — rebuilt
+  PHASES.md                 — Phase 4 marked verified, Phase 5 plan landed (with seven plan-review fixes folded in)
+  COMPLETED_PHASES.md       — Phase 4 verified stamp + this Phase 5 entry
+```
+
+---
+
+## Phase 4 — Boundary correction
+
+**Verified by Lillian:** ✅ 2026-05-25
 
 **Built (2026-05-25):**
 

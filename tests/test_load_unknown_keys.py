@@ -89,3 +89,107 @@ def test_nested_unknown_key_in_source_is_dropped(tmp_path: Path, caplog):
         "_my_custom_field" in record.getMessage()
         for record in caplog.records
     ), f"expected a warning naming '_my_custom_field', got: {[r.getMessage() for r in caplog.records]}"
+
+
+# ---------- Phase 5: stress-test the typing-driven walker --------------------
+
+
+def _state_with_project(extra_keys: dict) -> dict:
+    """Build a state with one Project + one ProjectTag, then merge
+    `extra_keys` at whichever level the test cares about."""
+    project = {
+        "name": "p",
+        "brief_md": "",
+        "script": {"lines": ["a", "b"]},
+        "tags": {
+            "1": {
+                "kind": "section",
+                "name": "the hook",
+                "parent_id": None,
+                "order_idx": 0,
+            },
+        },
+        "created_at": _now(),
+    }
+    base = {
+        "version": 1,
+        "sources": {},
+        "clips": {},
+        "projects": {"1": project},
+        "clip_project_tags": [],
+        "attempts": {},
+        "voice_annotations": [],
+    }
+    return base
+
+
+def test_unknown_key_inside_dict_str_projecttag(tmp_path: Path, caplog):
+    """`Project.tags: dict[str, ProjectTag]` — unknown key inside a tag
+    value gets logged with full dotted path."""
+    state = _state_with_project({})
+    state["projects"]["1"]["tags"]["1"]["_secret"] = "boom"
+    state_path = tmp_path / "clipfarm.json"
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="clipfarm.store"):
+        load_state(state_path)
+    messages = " | ".join(r.getMessage() for r in caplog.records)
+    assert "projects.1.tags.1._secret" in messages, (
+        f"expected projects.1.tags.1._secret path; got: {messages}"
+    )
+
+
+def test_unknown_key_inside_dict_str_project(tmp_path: Path, caplog):
+    """Top-level `projects: dict[str, Project]` — unknown key inside a
+    project value gets the projects.<id>.<key> path."""
+    state = _state_with_project({})
+    state["projects"]["1"]["_secret"] = "boom"
+    state_path = tmp_path / "clipfarm.json"
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="clipfarm.store"):
+        load_state(state_path)
+    messages = " | ".join(r.getMessage() for r in caplog.records)
+    assert "projects.1._secret" in messages, (
+        f"expected projects.1._secret path; got: {messages}"
+    )
+
+
+def test_unknown_key_inside_script_model(tmp_path: Path, caplog):
+    """`Project.script: Optional[Script]` — unknown key inside the Script
+    sub-model gets the projects.1.script.<key> path."""
+    state = _state_with_project({})
+    state["projects"]["1"]["script"]["_secret"] = "boom"
+    state_path = tmp_path / "clipfarm.json"
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="clipfarm.store"):
+        load_state(state_path)
+    messages = " | ".join(r.getMessage() for r in caplog.records)
+    assert "projects.1.script._secret" in messages, (
+        f"expected projects.1.script._secret path; got: {messages}"
+    )
+
+
+def test_unknown_key_inside_list_clip_project_tags(tmp_path: Path, caplog):
+    """`clip_project_tags: list[ClipProjectTag]` — unknown key inside
+    a list element gets clip_project_tags.[0].<key>."""
+    state = _state_with_project({})
+    state["clip_project_tags"].append(
+        {
+            "clip_id": "c1",
+            "project_id": "1",
+            "project_tag_id": "1",
+            "category": "on-script",
+            "_secret": "boom",
+        }
+    )
+    state_path = tmp_path / "clipfarm.json"
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="clipfarm.store"):
+        load_state(state_path)
+    messages = " | ".join(r.getMessage() for r in caplog.records)
+    assert "clip_project_tags.[0]._secret" in messages, (
+        f"expected clip_project_tags.[0]._secret path; got: {messages}"
+    )
