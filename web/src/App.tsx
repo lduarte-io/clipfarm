@@ -5,6 +5,8 @@ import ScriptTOC from "./pages/ScriptTOC";
 import Attempts from "./pages/Attempts";
 import Brief from "./pages/Brief";
 import Settings from "./pages/Settings";
+import { PlaybackProvider } from "./playback/context";
+import { PreviewPane } from "./playback/PreviewPane";
 
 const navItem =
   "px-3 py-1.5 rounded-md text-sm hover:bg-neutral-800 transition-colors";
@@ -13,6 +15,10 @@ const navInactive = "text-neutral-300";
 
 export default function App() {
   return (
+    // Phase 9 — PlaybackProvider wraps everything OUTSIDE <Routes> so
+    // the preview pane survives page navigation without remounting
+    // the <video> element (which would tank playback state).
+    <PlaybackProvider>
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-neutral-800 bg-neutral-950">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
@@ -80,6 +86,8 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
+      <PreviewPane />
     </div>
+    </PlaybackProvider>
   );
 }

@@ -4,6 +4,8 @@ import {
   PremadeProgressPanel,
   useRunProgress,
 } from "../components/RunProgress";
+import { SidePanel } from "../components/SidePanel";
+import { usePlayback } from "../playback/context";
 
 // Phase 8 — Attempts page. Lists generated + hand-built attempts for
 // the active project, grouped into two buckets:
@@ -185,7 +187,7 @@ function AttemptCard({
 // Side panel — full clip list for the selected attempt
 // ───────────────────────────────────────────────────────────────────────────
 
-function SidePanel({
+function AttemptSidePanel({
   attemptId,
   attempt,
   state,
@@ -196,77 +198,73 @@ function SidePanel({
   state: AppState;
   onClose: () => void;
 }) {
-  if (!attempt || !attemptId) {
-    return (
-      <aside className="rounded-md border border-neutral-800 bg-neutral-950/60 p-4 text-sm text-neutral-500">
-        Pick an attempt to see its full clip list.
-      </aside>
-    );
-  }
-  const runtime = attemptRuntime(state, attempt);
-  const tone = continuityTone(attempt.continuity_score);
+  const tone = attempt ? continuityTone(attempt.continuity_score) : null;
+  const runtime = attempt ? attemptRuntime(state, attempt) : 0;
   return (
-    <aside className="rounded-md border border-neutral-800 bg-neutral-950/80 p-4 space-y-3 sticky top-4 max-h-[calc(100vh-7rem)] overflow-y-auto">
-      <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-neutral-100">
-            {attempt.name}
+    <SidePanel
+      open={attempt != null && attemptId != null}
+      emptyMessage="Pick an attempt to see its full clip list."
+      onClose={onClose}
+      header={
+        attempt && attemptId && (
+          <>
+            <div className="text-sm font-semibold text-neutral-100">
+              {attempt.name}
+            </div>
+            <div className="text-[10px] font-mono text-neutral-500 mt-0.5">
+              #{attemptId} · {attempt.source}
+              {attempt.premade_bucket && ` · ${attempt.premade_bucket}`}
+            </div>
+          </>
+        )
+      }
+    >
+      {attempt && tone && (
+        <>
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className="text-neutral-500">
+              {attempt.clips.length} clips · {formatRuntime(runtime)}
+            </span>
+            <span className="text-neutral-600 font-mono">·</span>
+            <span className="text-neutral-400">continuity {tone.label}</span>
           </div>
-          <div className="text-[10px] font-mono text-neutral-500 mt-0.5">
-            #{attemptId} · {attempt.source}
-            {attempt.premade_bucket && ` · ${attempt.premade_bucket}`}
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          className="text-neutral-500 hover:text-white text-xs px-1.5 py-0.5 rounded hover:bg-neutral-800"
-          aria-label="Close"
-        >
-          ✕
-        </button>
-      </div>
-      <div className="flex items-center gap-2 text-[10px]">
-        <span className="text-neutral-500">
-          {attempt.clips.length} clips · {formatRuntime(runtime)}
-        </span>
-        <span className="text-neutral-600 font-mono">·</span>
-        <span className="text-neutral-400">continuity {tone.label}</span>
-      </div>
-      <ol className="space-y-1.5 text-xs">
-        {attempt.clips.map((ac, i) => {
-          const clip = state.clips[ac.clip_id];
-          const filename = clip
-            ? state.sources[clip.source_id]?.filename ?? "?"
-            : "(clip missing)";
-          return (
-            <li
-              key={`${ac.clip_id}-${i}`}
-              className="rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5"
-            >
-              <div className="flex items-baseline gap-2">
-                <span className="text-neutral-600 tabular-nums w-6 shrink-0">
-                  {String(i + 1).padStart(2, "0")}.
-                </span>
-                <span className="font-mono text-neutral-400 truncate flex-1 min-w-0">
-                  {filename}
-                </span>
-                {clip && (
-                  <span className="text-neutral-500 font-mono text-[10px] shrink-0">
-                    {formatTimestamp(clip.start_sec)}–
-                    {formatTimestamp(clip.end_sec)}
-                  </span>
-                )}
-              </div>
-              {clip?.transcript_text && (
-                <div className="text-neutral-300 leading-snug mt-1 line-clamp-2">
-                  {clip.transcript_text}
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-    </aside>
+          <ol className="space-y-1.5 text-xs">
+            {attempt.clips.map((ac, i) => {
+              const clip = state.clips[ac.clip_id];
+              const filename = clip
+                ? state.sources[clip.source_id]?.filename ?? "?"
+                : "(clip missing)";
+              return (
+                <li
+                  key={`${ac.clip_id}-${i}`}
+                  className="rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-neutral-600 tabular-nums w-6 shrink-0">
+                      {String(i + 1).padStart(2, "0")}.
+                    </span>
+                    <span className="font-mono text-neutral-400 truncate flex-1 min-w-0">
+                      {filename}
+                    </span>
+                    {clip && (
+                      <span className="text-neutral-500 font-mono text-[10px] shrink-0">
+                        {formatTimestamp(clip.start_sec)}–
+                        {formatTimestamp(clip.end_sec)}
+                      </span>
+                    )}
+                  </div>
+                  {clip?.transcript_text && (
+                    <div className="text-neutral-300 leading-snug mt-1 line-clamp-2">
+                      {clip.transcript_text}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
+    </SidePanel>
   );
 }
 
@@ -334,6 +332,17 @@ export default function Attempts() {
   const [projects, setProjects] = useState<ProjectListItem[] | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const { playAttempt } = usePlayback();
+
+  // Phase 9 — clicking an attempt opens the side panel AND starts
+  // playing through its resolved clip queue.
+  const onAttemptSelect = useCallback(
+    (aid: string, name: string) => {
+      setSelected(aid);
+      playAttempt(aid, `attempt #${aid} · ${name}`);
+    },
+    [playAttempt],
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRegenModal, setShowRegenModal] = useState(false);
@@ -556,7 +565,7 @@ export default function Attempts() {
                       attempt={att}
                       state={appState}
                       selected={selected === aid}
-                      onSelect={() => setSelected(aid)}
+                      onSelect={() => onAttemptSelect(aid, att.name)}
                     />
                   ))}
                 </div>
@@ -586,14 +595,14 @@ export default function Attempts() {
                       attempt={att}
                       state={appState}
                       selected={selected === aid}
-                      onSelect={() => setSelected(aid)}
+                      onSelect={() => onAttemptSelect(aid, att.name)}
                     />
                   ))}
                 </div>
               )}
             </section>
           </div>
-          <SidePanel
+          <AttemptSidePanel
             attemptId={selected}
             attempt={selectedAttempt}
             state={appState}

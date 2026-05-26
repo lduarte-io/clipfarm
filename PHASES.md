@@ -76,7 +76,7 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 8.1.
 
 ---
 
-## Phase 9 — Live preview (PLANNED — ready to execute)
+## Phase 9 — Built ⏳ 2026-05-26 (awaiting manual verify)
 
 **Goal.** First time the assembled work actually plays back. Click any clip anywhere → it plays from the source file at the clip's range. Click an attempt → it plays through every clip in sequence. A persistent floating preview pane follows you across pages so playback survives navigation. **This is the phase where "the candidate videos you can pick from" becomes "the candidate videos you can watch."**
 
