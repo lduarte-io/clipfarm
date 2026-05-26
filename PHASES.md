@@ -64,39 +64,47 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 7b.
 
 ---
 
-## Phase 8 — Premade attempts generation (DRAFT — awaiting Lillian's decisions)
+## Phase 8 — Premade attempts generation (PLANNED — awaiting greenlight)
 
-**Goal.** First write-side phase after Phase 6. Generates the named candidate attempts the spec calls out (best-per-line in script order, longest-contiguous, near-one-take, shortest-complete, energy-shift) by filtering `clip_project_tags` into ordered clip lists, persisting them in `state.attempts` with `premade_bucket="best"`, and surfacing them in a new Attempts page. **This is the moment a project goes from "a labeled library" to "candidate videos you can pick from."**
+**Goal.** First write-side phase after Phase 6. Generates the named candidate attempts the spec calls out — five ship-worthy strategies in the Best plausible bucket and three diagnostic groupings in the Diagnostic bucket — by filtering `clip_project_tags` into ordered clip lists, persisting them in `state.attempts` with the appropriate `premade_bucket`, and surfacing them in a new Attempts page (with a compact summary on the Project page). **This is the moment a project goes from "a labeled library" to "candidate videos you can pick from."**
 
-### Open decisions for Lillian (resolve before code work)
+### Decisions locked (resolved with Lillian 2026-05-25 before code work)
 
-1. **Diagnostic groupings — ship in Phase 8 or defer?** Spec lists three (started-with-X, skipped-line-N, ad-lib-heavy) flagged as "useful for browsing, not for shipping." The dogfood goal is btc.0.4 → MP4; that path only needs the **best plausible** 5. **Recommendation:** ship the 5 ship-worthy strategies + the schema field; defer diagnostic groupings to Phase 8.5 or until after dogfood. The data shape already supports them (`premade_bucket="diagnostic"`); UI surfaces an empty Diagnostic panel until we fill it.
-2. **LLM naming or canned names?** Spec says one LLM call per attempt to name it naturally ("the 3 times you said it in almost one take"). At ~30s per call, 5 calls is ~2.5 min. **Recommendation:** ship LLM naming — batch all 5 attempts into ONE call (JSON-schema constrained, like Phase 6's tagging batches) so the round-trip is ~30s, not 5×30. Canned fallback names if the LLM call fails entirely so the run doesn't fail end-to-end.
-3. **"Energy picked up" strategy — words-per-second heuristic, or skip until audio analysis exists?** The spec's example uses volume / pace; v0 has no audio pipeline so volume is out. Words-per-second is computable from Whisper timestamps and is a real signal. **Recommendation:** ship words-per-second as "energy" with a `# v0 heuristic — revisit when audio lands` comment. If the picks feel wrong on dogfood, that's the signal to defer the strategy entirely (4-strategy "best" bucket instead of 5).
-4. **Regenerate behavior on re-click.** If "Generate premade attempts" is clicked twice, what happens? **Recommendation:** **replace** — drop existing `source="ai-premade"` attempts, regenerate. Hand-built attempts (`source="hand-built"`) and forks (`source="fork"`) are never touched. Button label flips from "Generate" → "Regenerate" when premade attempts exist.
-5. **New Attempts page, or panel on Project page?** Spec lists Attempts as a separate page. **Recommendation:** new `/attempts` page + nav item between "Script" and "Brief". Project page (Take Grid) gets a "Generate premade attempts" CTA at the top when no attempts exist for the active project; clicking it kicks the orchestrator and lands you on `/attempts`.
-
-If any of these recommendations is wrong, redirect me before code work starts. The plan below assumes all five recommendations stand.
+1. **Ship all 8 strategies in Phase 8** — both Best plausible (5) and Diagnostic (3). The data model already supports `premade_bucket={"best","diagnostic"}`; ship both panels populated rather than placeholder-then-fill.
+2. **One batched LLM call for all 8 names, with canned fallback** — single Ollama call with all attempts in one prompt, JSON-schema constrained. Canned spec-example names ("best take of each line, in script order", etc.) used only if the LLM call fails entirely. ~30s round-trip instead of 8×30s.
+3. **"Energy picked up" = words-per-second from Whisper timestamps**. Marked `# v0 heuristic — revisit when audio analysis lands` in code. Drop-the-strategy fallback if dogfood feedback says picks feel wrong.
+4. **Regenerate replaces existing ai-premade attempts; never touches hand-built / forks.** Button label flips "Generate" → "Regenerate" when ai-premade attempts exist.
+5. **Both — `/attempts` page + compact summary on `/project`.** Spec lists Attempts as a separate page; full list at `/attempts` (nav item between Script and Brief), compact 8-attempt summary panel on Project page that links over.
 
 ### Verification (manual)
 
-- `uv run pytest` passes (target ~360 tests; 322 current + ~35 new for strategies, continuity score, route, and orchestrator).
-- `curl localhost:8765/api/projects/<id>/premade-attempts -X POST` against a real tagged project returns the new attempts in JSON with `premade_bucket="best"`, computed `continuity_score`, named clip lists. State file gains entries under `attempts`.
-- Re-running the POST replaces the ai-premade attempts (count stays at 5, names + clip lists may change).
-- **Real-data smoke on btc.0.4** (after Phase 6 tagging): all 5 strategies produce a non-empty attempt. Each has a distinct clip list. `continuity_score` for the "longest contiguous take" attempt is ≥ 0.8 (sanity check on the formula).
-- Frontend: new `/attempts` page lists attempts, grouped by `premade_bucket`. Each card shows name, continuity-score bar, clip count, total runtime. Clicking expands the clip list (filenames + timestamps). Project page (`/project`) shows a "Generate premade attempts" CTA when none exist; once present, the CTA flips to "Regenerate".
+- `uv run pytest` passes (target ~375 tests; 322 current + ~50 new for 8 strategies, continuity score, naming, orchestrator, route).
+- `curl localhost:8765/api/projects/<id>/premade-attempts -X POST` against a real tagged project returns the new attempts in JSON with their `premade_bucket`, computed `continuity_score`, named clip lists. State file gains entries under `attempts`.
+- Re-running the POST replaces the ai-premade attempts (count may stay the same or drop if a diagnostic grouping no longer applies; names + clip lists may change).
+- **Real-data smoke on btc.0.4** (after Phase 6 tagging): all 5 best-plausible strategies produce a non-empty attempt. Each has a distinct clip list. `continuity_score` for "longest contiguous take" is ≥ 0.8 (sanity check on the formula). At least one diagnostic grouping populates (likely "ad-lib-heavy" since btc.0.4 has off-script clips around on-script takes).
+- Frontend: new `/attempts` page lists attempts grouped by `premade_bucket` ("Best plausible" + "Diagnostic"). Each card shows name, source badge, continuity-score bar, clip count, total runtime. Clicking expands the clip list (filenames + timestamps). Project page (`/project`) shows a "Generate premade attempts" CTA when none exist; once present, the CTA flips to "Regenerate" and a compact 8-row summary panel appears with a "See all" link to `/attempts`.
 
 ### Scope
 
 **Pure-function strategy module: `clipfarm/strategies.py`**
 
-Each strategy is a pure function `Strategy(state, project_id) → list[AttemptClip] | None`. Returns `None` when the project's tagged-clip set isn't rich enough to satisfy the strategy (e.g., no on-script clips for any line). The orchestrator calls every strategy and skips ones that return `None`.
+Each strategy is a pure function returning `list[StrategyResult]` where each `StrategyResult` carries `(name_hint, ordered_attempt_clips, premade_bucket)`. Returns `[]` when the project's tagged-clip set isn't rich enough. The orchestrator collects all results, deduplicates trivially-equal clip lists across strategies, and passes them to the naming + persistence step.
 
-- `best_per_line_in_script_order(state, project_id)` — for each line tag in `order_idx` order, pick the highest-confidence on-script clip. Skip lines with no on-script match. Result is ordered by script-line order. Usually low continuity, high completeness.
-- `longest_contiguous_take(state, project_id)` — over every (source, contiguous-clip-run) window in the project's on-script clips, find the run that maximizes total runtime AND covers the most distinct line tags. Return that run as-is in source-order. By definition continuity ≈ 1.0.
-- `near_one_take(state, project_id)` — find the top 3 contiguous-in-source runs that hit ≥ 70% of script lines on-script with ≤ 2 restarts (fragment clips) inside; return one combined attempt that concatenates them (script-order across the 3 runs). Spec wording: "the 3 times I said it in almost one take."
-- `shortest_complete(state, project_id)` — like `best_per_line` but picks the SHORTEST on-script clip per line instead of highest-confidence. Result: every line covered, minimum total runtime. For length-constrained cuts and shorts.
-- `energy_shift(state, project_id)` — compute words-per-second for each on-script clip from the Whisper word timestamps (cached). For each line, pick the clip with the highest words-per-second. **Marked `# v0 heuristic — revisit when audio analysis lands` in code.** If this strategy feels wrong on dogfood, deferring is one line in the orchestrator's strategy list.
+**Best plausible (5 strategies, `premade_bucket="best"`):**
+
+- `best_per_line_in_script_order(state, project_id)` — for each line tag in `order_idx` order, pick the highest-confidence on-script clip. Skip lines with no on-script match. Result is ordered by script-line order. Usually low continuity, high completeness. **Always returns at most 1 result.**
+- `longest_contiguous_take(state, project_id)` — over every (source, contiguous-clip-run) window in the project's on-script clips, find the run that maximizes total runtime AND covers the most distinct line tags. Return that run as-is in source-order. By definition continuity ≈ 1.0. **Always at most 1 result.**
+- `near_one_take(state, project_id)` — find contiguous-in-source runs that hit ≥ 70% of script lines on-script with ≤ 2 fragment clips inside. Return ONE combined attempt that concatenates the top 3 such runs (script-order across the 3). Spec wording: "the 3 times I said it in almost one take." **Always at most 1 result.**
+- `shortest_complete(state, project_id)` — like `best_per_line` but picks the SHORTEST on-script clip per line. Every line covered, minimum total runtime. For length-constrained cuts and shorts. **Always at most 1 result.**
+- `energy_shift(state, project_id)` — compute words-per-second for each on-script clip from the Whisper word timestamps (cached). For each line, pick the clip with the highest words-per-second. **Marked `# v0 heuristic — revisit when audio analysis lands` in code.** **Always at most 1 result.**
+
+**Diagnostic groupings (3 strategies, `premade_bucket="diagnostic"`):**
+
+- `started_with_line(state, project_id)` — for each line tag, find every source where the FIRST on-script clip in source-time has that `project_tag_id`. Each non-empty cluster becomes ONE diagnostic attempt: concatenate those takes' full clip-runs in source-order. Cap at the top 3 lines by cluster size to avoid surfacing a "started with line 7 once" cluster of just one take. **Variable result count (0–3).**
+- `skipped_line(state, project_id)` — for each line tag N, find sources where the project has on-script clips for at least 60% of OTHER lines but NOT line N. Each non-empty grouping becomes ONE diagnostic attempt: the takes-that-skipped-line-N concatenated in source-order. Cap at top 3 most-skipped lines. **Variable result count (0–3).**
+- `ad_libbed(state, project_id)` — find sources where there's an on-script run + substantial off-line content (related-but-different / standalone-idea clips) intermixed. Build an attempt per source-take that has ≥ 2 such ad-lib clips around its on-script clips. Concatenate in source-order so the user sees the on-script delivery WITH its ad-libs preserved. Cap at top 3 by ad-lib clip count. **Variable result count (0–3).**
+
+Diagnostic strategies are bounded at 3 results each → max 9 diagnostic attempts plus 5 best-plausible = 14 attempts ceiling per project. Reality on a single-source project (btc.0.4) is likely 1–2 of each diagnostic = 5–9 total attempts.
 
 **Continuity score function: `clipfarm/continuity.py`**
 
@@ -105,8 +113,8 @@ Each strategy is a pure function `Strategy(state, project_id) → list[AttemptCl
 
 **LLM naming: `clipfarm/attempt_naming.py`**
 
-- `name_attempts(attempts_summary, llm_client) → dict[strategy_id → name]` — single LLM call with all 5 attempts in one prompt. The summary per attempt: strategy id, ordered list of `(line_name, clip_transcript_first_30_chars)` plus `continuity_score`. The prompt asks for 5 names in Lillian's voice (5–12 words each), JSON-schema constrained.
-- Fallback canned names (used when the LLM call fails entirely) — one per strategy, matching the spec's examples verbatim. Keeps the run end-to-end even when Ollama is down.
+- `name_attempts(attempts_summary, llm_client) → dict[attempt_index → name]` — single LLM call with ALL generated attempts (typically 5–14) in one prompt. The summary per attempt: strategy id, `premade_bucket`, ordered list of `(line_name, clip_transcript_first_30_chars)`, `continuity_score`. The prompt asks for one 5–12-word name per attempt in Lillian's voice, JSON-schema constrained.
+- Per-strategy canned fallback names — one canned name per strategy id, matching the spec's examples verbatim. Used when the LLM call fails entirely OR for any individual attempt whose LLM-generated name fails validation (empty string, > 200 chars, etc.). Keeps the run end-to-end even when Ollama is down.
 
 **Orchestrator: `clipfarm/premade.py`**
 
@@ -120,30 +128,34 @@ Each strategy is a pure function `Strategy(state, project_id) → list[AttemptCl
   - `async with save_lock: { mutate via asyncio.to_thread; commit_with_snapshot_locked }`. Snapshot reason `"premade-attempts"`.
   - `app.state.dirty = True` flips inside the lock-held block BEFORE the orchestrator runs (Phase 6.1 bug #1 rule carries forward as the project pattern).
 
-**Frontend: `web/src/pages/Attempts.tsx` (new) + `web/src/pages/Project.tsx` (touched)**
+**Frontend: `web/src/pages/Attempts.tsx` (new) + `web/src/pages/Project.tsx` (touched) + `web/src/App.tsx` (route + nav)**
 
-- New page at `/attempts`. Lists attempts for the active project. Two sections: **Best plausible** (`premade_bucket="best"` + hand-built/forks) and **Diagnostic** (empty in Phase 8; gets populated in Phase 8.5).
-- Per-attempt card: name, `source` badge (`ai-premade` / `hand-built` / `fork`), continuity-score horizontal bar (color: green ≥ 0.8, amber 0.4–0.8, red < 0.4), clip count, total runtime.
-- Click an attempt → expanded view: full ordered clip list (filename + timestamp per row, transcript snippet on hover). No editing UI yet (Phase 10).
-- "Regenerate premade attempts" button at the top with a confirmation prompt when ai-premade attempts already exist.
-- Project page (Take Grid) gets a top-bar "Generate premade attempts" CTA when no attempts exist for the active project — clicking POSTs to `/api/projects/{id}/premade-attempts` then navigates to `/attempts`.
+- **New page at `/attempts`.** Lists attempts for the active project. Two sections: **Best plausible** (`premade_bucket="best"` + hand-built/forks with `premade_bucket=null`) and **Diagnostic** (`premade_bucket="diagnostic"`).
+  - Per-attempt card: name, `source` badge (`ai-premade` / `hand-built` / `fork`), `premade_bucket` chip, continuity-score horizontal bar (color: green ≥ 0.8, amber 0.4–0.8, red < 0.4), clip count, total runtime.
+  - Click an attempt → expanded view: full ordered clip list (filename + timestamp per row, transcript snippet on hover). No editing UI yet (Phase 10).
+  - "Regenerate premade attempts" button at the top with a confirmation modal when ai-premade attempts already exist ("This will replace the 8 existing AI-generated attempts. Hand-built attempts and forks are not touched. Continue?").
+- **`web/src/App.tsx`** — `/attempts` route + new "Attempts" nav item between "Script" and "Brief".
+- **`web/src/pages/Project.tsx` (touched)** — when ai-premade attempts exist for the active project, render a **compact 8-row summary panel** above the Take Grid: one row per attempt with name + continuity-bar + clip count, clicking a row navigates to `/attempts` and scrolls to that attempt. "See all" link at the bottom. When NO attempts exist, render a single "Generate premade attempts" CTA instead — clicking POSTs to `/api/projects/{id}/premade-attempts` then navigates to `/attempts`.
 - Empty states: no projects → link to Brief; no tags → link to Brief's "Tag clips"; no attempts → CTA to generate.
 
-**Tests (~35 new):**
+**Tests (~50 new):**
 
-- `tests/test_strategies.py` (~15): each of the 5 strategies tested in isolation against synthetic state. Covers happy path, empty inputs, edge cases (e.g., one source has all the on-script clips contiguously → that's the longest-contiguous winner; partial line coverage; tied confidences).
-- `tests/test_continuity.py` (~6): pure formula tests — single-clip attempt = 1.0, two consecutive same-source clips = 1.0, two clips from different sources = `max / total`, three clips with one re-ordering = correctly identifies the largest forward run.
-- `tests/test_premade.py` (~6): orchestrator end-to-end with a fake `llm_client`. Covers replace-existing-on-rerun, hand-built/fork preservation (never deleted), name application (LLM vs canned fallback), KeyError on unknown project, ValueError on empty tags.
-- `tests/test_routes_premade.py` (~8): TestClient happy path + 404/400/409/502 mirrors + the Phase 6.1 invariants (`dirty=True` before run, no event-loop block via to_thread, mutated-gates-commit, snapshot-once-per-call, watcher-race coverage matching the Phase 6 pattern).
+- `tests/test_strategies.py` (~24): each of the 8 strategies tested in isolation against synthetic state. ~3 tests per strategy on average. Covers happy path, empty inputs, edge cases (one source has all the on-script clips contiguously → that's the longest-contiguous winner; partial line coverage; tied confidences; diagnostic caps at 3 results each).
+- `tests/test_continuity.py` (~6): pure formula tests — single-clip attempt = 1.0, two consecutive same-source clips = 1.0, two clips from different sources = `max / total`, three clips with one re-ordering = correctly identifies the largest forward run, zero-duration attempt handled.
+- `tests/test_attempt_naming.py` (~4): batched name extraction from canned LLM response, schema validation (empty name → fallback), partial-success (LLM returns 6 of 8 names, 2 missing → canned fallback fills the gaps), LLM-returns-None → all canned.
+- `tests/test_premade.py` (~7): orchestrator end-to-end with a fake `llm_client`. Replace-existing-on-rerun, hand-built/fork preservation (never deleted), name application (LLM vs canned fallback), KeyError on unknown project, ValueError on no on-script tags, deduplication when two strategies produce identical clip lists, both buckets populated correctly.
+- `tests/test_routes_premade.py` (~9): TestClient happy path + 404/400/409/502 mirrors + the Phase 6.1 invariants (`dirty=True` before run, no event-loop block via to_thread, mutated-gates-commit, snapshot-once-per-call, watcher-race coverage matching the Phase 6 pattern).
 
-### Decisions locked with this plan (subject to the open-decisions section above)
+### Decisions locked with this plan (all 5 open decisions resolved with Lillian)
 
-- **Best-plausible bucket has 5 strategies, Diagnostic bucket has 0 in Phase 8.** Diagnostic strategies (started-with-X, skipped-line-N, ad-lib-heavy) defer to Phase 8.5. Schema field exists; UI panel renders empty in Phase 8.
+- **Best-plausible bucket has 5 strategies, Diagnostic bucket has 3 strategies.** Schema field `premade_bucket` is the only thing distinguishing them in storage; UI separates them into two panels on `/attempts`.
 - **Continuity score is a derived cache.** Written by the orchestrator into `Attempt.continuity_score`. Recomputed on every attempt write. The data-model invariant ("readers should be willing to recompute") is honored.
-- **One batched LLM call for all 5 names, not 5 sequential calls.** Cuts wall-clock from ~2.5 min to ~30s. Failure falls back to canned names so the run completes.
+- **One batched LLM call for all attempt names, not N sequential calls.** Cuts wall-clock from ~4–7 min to ~30s. Failure falls back to canned names per-strategy so the run completes.
 - **`source="ai-premade"` attempts are replaced on re-generation.** Hand-built (`source="hand-built"`) and forks (`source="fork"`) are never touched — those are user work, not ours to overwrite.
 - **Words-per-second is the v0 "energy" heuristic.** Computed from Whisper word timestamps in the transcript cache (cheap). Marked in code as v0; revisit when audio analysis lands. If dogfood says it's wrong, drop the strategy.
-- **All five strategies run independently and tolerate skipping.** A strategy that can't produce a meaningful result (e.g., zero on-script clips for any line) returns `None`; the orchestrator filters those out so the final attempt list is 1–5 entries, never an error.
+- **Diagnostic strategies cap at 3 results each.** Prevents a "started with line 7 once" cluster of just one take from polluting the Diagnostic panel. Total attempts per project bounded at 14 (5 best + 9 diagnostic).
+- **All eight strategies run independently and tolerate skipping.** A strategy that can't produce a meaningful result returns `[]`; the orchestrator filters those out.
+- **Dedup across strategies.** If two strategies produce identical clip lists (e.g., `best_per_line` and `shortest_complete` agree on a small project), keep the first by strategy order, drop the second. Documented; tested.
 - **`AttemptClip.trim_start_offset` / `trim_end_offset` left at 0.0** for all premade attempts. Per-attempt trim is Phase 10 territory; the resolver uses the clip's base `start_sec`/`end_sec` directly until then.
 - **`internal_pause_max_sec` left at `null` for all premade attempts.** The "tighten internal pauses" toggle ships in Phase 10.
 
@@ -155,9 +167,9 @@ Each strategy is a pure function `Strategy(state, project_id) → list[AttemptCl
 
 - Editing an attempt (reorder, fork, replace clip, trim) — Phase 10.
 - Live preview of an attempt — Phase 9.
-- Diagnostic groupings (started-with-X, skipped-line-N, ad-lib-heavy) — Phase 8.5 or after dogfood.
 - Continuity-score recomputation on attempt edits — Phase 10 (no edit path exists yet).
 - Premade-attempt naming with audio/energy analysis beyond words-per-second — when audio pipeline lands.
+- Per-attempt-clip `trim_*_offset` populating from any strategy — all premade attempts use base clip boundaries verbatim.
 
 ---
 
