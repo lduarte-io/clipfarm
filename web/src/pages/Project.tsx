@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import {
+  PremadeProgressPanel,
+  useRunProgress,
+} from "../components/RunProgress";
 
 // Phase 7 — Take Grid view. After Phase 6 tags clips into
 // `clip_project_tags`, this page reads `GET /api/projects/{id}/take-grid`
@@ -436,6 +440,11 @@ export default function Project() {
   const [appAttempts, setAppAttempts] = useState<AppState["attempts"]>({});
   const [generatingAttempts, setGeneratingAttempts] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  // Phase 8.1 — surface progress while the CTA is firing.
+  const premadeProgress = useRunProgress(
+    "/api/premade/progress",
+    generatingAttempts,
+  );
 
   const loadAppState = useCallback(async () => {
     const r = await fetch("/api/state");
@@ -660,6 +669,9 @@ export default function Project() {
                   : "Generate premade attempts"}
               </button>
             </div>
+          )}
+          {generatingAttempts && (
+            <PremadeProgressPanel info={premadeProgress} />
           )}
           {generateError && (
             <div className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-300">

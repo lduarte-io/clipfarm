@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { TagProgressPanel, useRunProgress } from "../components/RunProgress";
 
 // Phase 5 brief editor: project list on the left, markdown textarea on
 // the right with live parse preview + save / delete buttons.
@@ -145,6 +146,8 @@ export default function Brief() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [tagging, setTagging] = useState(false);
   const [tagResult, setTagResult] = useState<TaggingResult | null>(null);
+  // Phase 8.1 — poll /api/tag/progress while a tagging run is in flight.
+  const tagProgress = useRunProgress("/api/tag/progress", tagging);
   const [tagError, setTagError] = useState<string | null>(null);
   const [appState, setAppState] = useState<AppState | null>(null);
 
@@ -458,6 +461,11 @@ export default function Brief() {
                   )}
                 </div>
               </div>
+              {tagging && (
+                <div className="mb-3">
+                  <TagProgressPanel info={tagProgress} />
+                </div>
+              )}
               {tagResult && (
                 <div className="mb-3 p-3 rounded-md border border-emerald-800 bg-emerald-900/20 text-xs">
                   <div className="text-emerald-200">

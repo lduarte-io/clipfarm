@@ -125,6 +125,18 @@ async def tag_route(
     def llm_client(messages, schema):
         return chat_with_json_schema(messages, schema, model=DEFAULT_MODEL)
 
+    # Phase 8.1 — progress slot lives on app.state. The callback merges
+    # partial updates into the existing dict so polling clients see
+    # phase + batch + elapsed_sec together.
+    import time as _time
+    started_at = _time.perf_counter()
+
+    def write_progress(info: dict) -> None:
+        cur = app.state.tag_progress
+        if cur is None:
+            return  # idle state already established; suppress (defensive)
+        cur.update(info)
+
     async with app.state.save_lock:
         # Flip dirty BEFORE the orchestrator runs, not after — see the
         # module docstring for the race this closes. Pre-LLM mutations
@@ -133,13 +145,23 @@ async def tag_route(
         # orchestrator gets work to do.
         if not dry_run:
             app.state.dirty = True
+        # Phase 8.1 — initialize the progress slot. The orchestrator
+        # updates it via the callback; the GET /api/tag/progress
+        # endpoint reads it. The try/finally below resets to None
+        # AFTER the commit so a polling client doesn't see an "idle"
+        # gap between orchestrator-done and commit-done.
+        app.state.tag_progress = {
+            "project_id": project_id,
+            "phase": "starting",
+            "elapsed_sec": 0.0,
+        }
         try:
             # `tag_project` is synchronous and the inner `httpx.post`
             # calls block for up to ~20s per batch. Running it on a
             # worker thread keeps the event loop free to serve
-            # concurrent reads (`GET /api/state`, etc.) — important for
-            # the future progress-UI Phase 8 will want. The save_lock
-            # is still held across the await; mutation-under-lock holds.
+            # concurrent reads (`GET /api/state`, `GET /api/tag/
+            # progress`, etc.). The save_lock is still held across the
+            # await; mutation-under-lock holds.
             result = await asyncio.to_thread(
                 tag_project,
                 state,
@@ -147,24 +169,37 @@ async def tag_route(
                 llm_client=llm_client,
                 batch_size=batch_size,
                 dry_run=dry_run,
+                progress=write_progress,
             )
+            if dry_run:
+                return result
+            if result.mutated:
+                try:
+                    commit_state_with_snapshot_locked(app, "tag-clips")
+                except WritesFrozenError as e:
+                    # Watcher fired mid-run + state was dirty by the
+                    # time the run finished → freeze flipped, can't
+                    # commit. All in-memory tags are lost. 409 → user
+                    # retries after resolving the conflict.
+                    raise HTTPException(status_code=409, detail=str(e))
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-
-        if dry_run:
-            # No mutation → no commit, no snapshot.
-            return result
-
-        if result.mutated:
-            try:
-                commit_state_with_snapshot_locked(app, "tag-clips")
-            except WritesFrozenError as e:
-                # Watcher fired mid-run + state was dirty by the time
-                # the run finished → freeze flipped, can't commit. All
-                # in-memory tags are lost. 409 → user retries after
-                # resolving the conflict.
-                raise HTTPException(status_code=409, detail=str(e))
+        finally:
+            app.state.tag_progress = None
 
     return result
+
+
+@router.get("/tag/progress")
+def get_tag_progress(request: Request) -> dict:
+    """Returns the current tagging-run progress, or {running: false} when idle.
+
+    Cheap, no lock acquisition. Polled by the Brief page every ~2s
+    during long runs (Phase 8.1).
+    """
+    info = request.app.state.tag_progress
+    if info is None:
+        return {"running": False}
+    return {"running": True, **info}

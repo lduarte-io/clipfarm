@@ -196,7 +196,7 @@ def test_dirty_flag_is_true_when_orchestrator_runs(
 
     from clipfarm.premade import PremadeResult
 
-    def fake_gen(state, project_id, *, llm_client, replace_existing):
+    def fake_gen(state, project_id, *, llm_client, replace_existing, progress=None):
         observed.append(client.app.state.dirty)
         return PremadeResult(generated_count=0, mutated=False)
 
@@ -218,7 +218,7 @@ def test_no_commit_when_orchestrator_did_not_mutate(
 
     from clipfarm.premade import PremadeResult
 
-    def no_op(state, project_id, *, llm_client, replace_existing):
+    def no_op(state, project_id, *, llm_client, replace_existing, progress=None):
         return PremadeResult(
             generated_count=0, mutated=False,
             reason="every strategy returned empty",
@@ -262,7 +262,7 @@ def test_event_loop_responsive_during_long_premade_run(
 
     from clipfarm.premade import PremadeResult
 
-    def slow_gen(state, project_id, *, llm_client, replace_existing):
+    def slow_gen(state, project_id, *, llm_client, replace_existing, progress=None):
         time.sleep(1.5)
         return PremadeResult(generated_count=0, mutated=False)
 

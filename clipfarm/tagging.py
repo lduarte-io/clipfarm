@@ -76,6 +76,21 @@ class TaggingResult(StrictModel):
 
 LLMClient = Callable[[list[dict[str, str]], dict[str, Any]], Optional[dict[str, Any]]]
 
+# Phase 8.1 — optional progress callback. Called with a partial-update
+# dict at known phase transitions and per batch start. The orchestrator
+# never raises into the callback; if the callback raises, the exception
+# is logged and swallowed — progress is observability, never correctness.
+ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def _safe_progress(progress: Optional[ProgressCallback], info: dict[str, Any]) -> None:
+    if progress is None:
+        return
+    try:
+        progress(info)
+    except Exception:
+        log.exception("tagging: progress callback raised; ignoring")
+
 
 def _output_schema() -> dict[str, Any]:
     """JSON schema the LLM is constrained to emit. Required for Ollama's
@@ -271,6 +286,7 @@ def tag_project(
     llm_client: LLMClient,
     batch_size: int = DEFAULT_BATCH_SIZE,
     dry_run: bool = False,
+    progress: Optional[ProgressCallback] = None,
 ) -> TaggingResult:
     """Walk every clip not yet tagged for `project_id` (or tagged with
     `stale=True`), batch them, call `llm_client` for each batch,
@@ -331,6 +347,14 @@ def tag_project(
         result.duration_sec = time.perf_counter() - started
         return result
 
+    total_batches = (len(candidates) + batch_size - 1) // batch_size
+    _safe_progress(progress, {
+        "phase": "preflight",
+        "total_batches": total_batches,
+        "candidates": len(candidates),
+        "elapsed_sec": time.perf_counter() - started,
+    })
+
     schema = _output_schema()
     system_msg = {"role": "system", "content": _system_prompt(
         project.name, project.brief_md, project.tags
@@ -362,6 +386,12 @@ def tag_project(
         batch = candidates[i : i + batch_size]
         result.batches += 1
         batch_clip_ids = {cid for cid, _ in batch}
+        _safe_progress(progress, {
+            "phase": "batching",
+            "current_batch": result.batches,
+            "total_batches": total_batches,
+            "elapsed_sec": time.perf_counter() - started,
+        })
 
         if dry_run:
             continue
@@ -445,6 +475,12 @@ def tag_project(
             result.clips_tagged += 1
             result.mutated = True
 
+    _safe_progress(progress, {
+        "phase": "committing",
+        "current_batch": result.batches,
+        "total_batches": total_batches,
+        "elapsed_sec": time.perf_counter() - started,
+    })
     result.duration_sec = time.perf_counter() - started
     return result
 

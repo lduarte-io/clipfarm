@@ -88,6 +88,12 @@ async def lifespan(app: FastAPI):
     app.state.writes_frozen = False
     app.state.dirty = False
     app.state.conflict_events: queue.Queue = queue.Queue()
+    # Phase 8.1 — single global progress slot per long-running op. None
+    # = idle; dict = run-in-progress. Reads are unsynchronized (the GIL
+    # is enough for atomic dict swaps) — these are observability,
+    # never load-bearing for correctness.
+    app.state.tag_progress = None
+    app.state.premade_progress = None
 
     log.info("clipfarm: loading state from %s", state_path)
     cf_state: ClipFarmState = load_state(state_path)

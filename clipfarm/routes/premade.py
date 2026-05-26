@@ -111,10 +111,26 @@ async def premade_attempts_route(
     def llm_client(messages, schema):
         return chat_with_json_schema(messages, schema, model=DEFAULT_MODEL)
 
+    # Phase 8.1 — progress callback merges partial updates into the
+    # global slot on app.state. Tolerant of mid-run resets (returns
+    # without writing if the slot has already been wiped).
+    def write_progress(info: dict) -> None:
+        cur = app.state.premade_progress
+        if cur is None:
+            return
+        cur.update(info)
+
     async with app.state.save_lock:
         # Phase 6.1 bug #1: flip dirty BEFORE the orchestrator runs so
         # a mid-run external edit routes to the freeze path.
         app.state.dirty = True
+        # Phase 8.1: initialize progress slot. try/finally below wipes
+        # it AFTER the commit so the UI doesn't see an idle gap.
+        app.state.premade_progress = {
+            "project_id": project_id,
+            "phase": "starting",
+            "elapsed_sec": 0.0,
+        }
         try:
             # Phase 6.1 bug #2: orchestrator on a worker thread keeps
             # the event loop free.
@@ -124,18 +140,20 @@ async def premade_attempts_route(
                 project_id,
                 llm_client=llm_client,
                 replace_existing=replace_existing,
+                progress=write_progress,
             )
+            # Phase 6.1 cosmetic #3: only commit when there's something to write.
+            if result.mutated:
+                try:
+                    commit_state_with_snapshot_locked(app, "premade-attempts")
+                except WritesFrozenError as e:
+                    raise HTTPException(status_code=409, detail=str(e))
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-
-        # Phase 6.1 cosmetic #3: only commit when there's something to write.
-        if result.mutated:
-            try:
-                commit_state_with_snapshot_locked(app, "premade-attempts")
-            except WritesFrozenError as e:
-                raise HTTPException(status_code=409, detail=str(e))
+        finally:
+            app.state.premade_progress = None
 
     # Build the attempts subset for the response (so the frontend can
     # render immediately without a follow-up state fetch).
@@ -153,3 +171,16 @@ async def premade_attempts_route(
         reason=result.reason,
         attempts=attempts_subset,
     )
+
+
+@router.get("/premade/progress")
+def get_premade_progress(request: Request) -> dict:
+    """Returns the current premade-run progress, or {running: false} when idle.
+
+    Polled by the Attempts page (and Project page CTA) every ~2s while
+    a generate / regenerate is in flight (Phase 8.1).
+    """
+    info = request.app.state.premade_progress
+    if info is None:
+        return {"running": False}
+    return {"running": True, **info}

@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import {
+  PremadeProgressPanel,
+  useRunProgress,
+} from "../components/RunProgress";
 
 // Phase 8 — Attempts page. Lists generated + hand-built attempts for
 // the active project, grouped into two buckets:
@@ -334,6 +338,8 @@ export default function Attempts() {
   const [error, setError] = useState<string | null>(null);
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [lastRunInfo, setLastRunInfo] = useState<PremadeResponse | null>(null);
+  // Phase 8.1 — poll /api/premade/progress while generating.
+  const premadeProgress = useRunProgress("/api/premade/progress", busy);
 
   const refresh = useCallback(async () => {
     const r = await fetch("/api/state");
@@ -487,6 +493,8 @@ export default function Attempts() {
           )}
         </div>
       </div>
+
+      {busy && <PremadeProgressPanel info={premadeProgress} />}
 
       {error && (
         <div className="rounded-md border border-red-900 bg-red-950/40 p-3 text-xs text-red-300 whitespace-pre-wrap">

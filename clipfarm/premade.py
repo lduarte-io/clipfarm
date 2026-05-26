@@ -27,7 +27,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from clipfarm.attempt_naming import (
     AttemptNameSummary,
@@ -40,6 +40,19 @@ from clipfarm.models import Attempt, ClipFarmState
 from clipfarm.strategies import ALL_STRATEGIES, StrategyResult
 
 log = logging.getLogger("clipfarm.premade")
+
+# Phase 8.1 — same shape as tagging's ProgressCallback. Called at known
+# phase transitions; exceptions are swallowed.
+ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def _safe_progress(progress: Optional[ProgressCallback], info: dict[str, Any]) -> None:
+    if progress is None:
+        return
+    try:
+        progress(info)
+    except Exception:
+        log.exception("premade: progress callback raised; ignoring")
 
 
 @dataclass
@@ -128,6 +141,7 @@ def generate_premade_attempts(
     *,
     llm_client: Optional[LLMClient] = None,
     replace_existing: bool = True,
+    progress: Optional[ProgressCallback] = None,
 ) -> PremadeResult:
     """Run every strategy, dedup, name, persist.
 
@@ -156,10 +170,22 @@ def generate_premade_attempts(
 
     result = PremadeResult()
     started = time.perf_counter()
+    _safe_progress(progress, {
+        "phase": "preflight",
+        "total_strategies": len(ALL_STRATEGIES),
+        "elapsed_sec": 0.0,
+    })
 
     # 1. Run strategies.
     all_results: list[StrategyResult] = []
-    for strat in ALL_STRATEGIES:
+    for i, strat in enumerate(ALL_STRATEGIES, start=1):
+        _safe_progress(progress, {
+            "phase": "running_strategies",
+            "current_strategy": i,
+            "total_strategies": len(ALL_STRATEGIES),
+            "strategy_name": strat.__name__,
+            "elapsed_sec": time.perf_counter() - started,
+        })
         try:
             strat_out = strat(state, project_id)
         except Exception:
@@ -201,6 +227,11 @@ def generate_premade_attempts(
         return result
 
     # 4. Batched naming.
+    _safe_progress(progress, {
+        "phase": "naming",
+        "attempt_count": len(valid_results),
+        "elapsed_sec": time.perf_counter() - started,
+    })
     summaries = _build_name_summaries(state, valid_results, continuity_scores)
     named: list[NamedAttempt] = name_attempts(summaries, llm_client)
     sources = {n.name_source for n in named}
@@ -224,6 +255,11 @@ def generate_premade_attempts(
             result.mutated = True
 
     # 6. Allocate IDs + persist.
+    _safe_progress(progress, {
+        "phase": "persisting",
+        "attempt_count": len(valid_results),
+        "elapsed_sec": time.perf_counter() - started,
+    })
     now = _now_iso()
     for r, score, naming in zip(valid_results, continuity_scores, named):
         aid = _next_attempt_id(state)

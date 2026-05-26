@@ -205,7 +205,7 @@ def test_tag_route_holds_lock_during_orchestrator(
 
     from clipfarm.tagging import TaggingResult
 
-    def fake_tag(state, project_id, *, llm_client, batch_size, dry_run):
+    def fake_tag(state, project_id, *, llm_client, batch_size, dry_run, progress=None):
         observed.append(client.app.state.save_lock.locked())
         return TaggingResult()
 
@@ -316,7 +316,7 @@ def test_dirty_flag_is_true_when_orchestrator_runs(
 
     from clipfarm.tagging import TaggingResult
 
-    def fake_tag(state, project_id, *, llm_client, batch_size, dry_run):
+    def fake_tag(state, project_id, *, llm_client, batch_size, dry_run, progress=None):
         observed.append(client.app.state.dirty)
         # Pretend we did some work so the route hits its commit branch.
         return TaggingResult(clips_tagged=0, batches=1, mutated=False)
@@ -356,7 +356,7 @@ def test_watcher_during_tag_run_flips_writes_frozen_and_returns_409(
 
     from clipfarm.tagging import TaggingResult
 
-    def fake_tag(state, project_id, *, llm_client, batch_size, dry_run):
+    def fake_tag(state, project_id, *, llm_client, batch_size, dry_run, progress=None):
         # Mid-run: invoke the watcher's conflict path the way the real
         # watcher would when it detects an external edit + dirty state.
         # `_callbacks` is internal but it's the only handle to the wired
@@ -407,7 +407,7 @@ def test_event_loop_responsive_during_long_tag_run(
 
     from clipfarm.tagging import TaggingResult
 
-    def slow_tag(state, project_id, *, llm_client, batch_size, dry_run):
+    def slow_tag(state, project_id, *, llm_client, batch_size, dry_run, progress=None):
         time.sleep(2.0)  # simulate a real LLM batch
         return TaggingResult(clips_tagged=0, batches=1, mutated=False)
 
@@ -448,7 +448,7 @@ def test_no_commit_when_orchestrator_did_not_mutate(
 
     from clipfarm.tagging import TaggingResult
 
-    def no_op(state, project_id, *, llm_client, batch_size, dry_run):
+    def no_op(state, project_id, *, llm_client, batch_size, dry_run, progress=None):
         return TaggingResult(clips_tagged=0, batches=1, mutated=False)
 
     with patch(

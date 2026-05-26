@@ -70,7 +70,7 @@ See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase 8.
 
 ---
 
-## Phase 8.1 — Long-run progress UI (DRAFT — addresses Phase 6 open follow-up)
+## Phase 8.1 — Built ⏳ 2026-05-26 (awaiting manual verify)
 
 **Goal.** Make the tagging and premade-attempt runs visible while they're running. Both ops can take ~30s–5min on Llama 3.1 8B; the current UI is opaque "spinner that might be alive."
 
