@@ -227,3 +227,15 @@ These came back from the Phase 10a plan review (2026-05-26). Not blocking but wo
 ## Phase 11 — Export
 
 *To be planned before execution.*
+
+---
+
+## Backlog — captured during dogfood, scheduled later
+
+Items surfaced during dogfood that aren't blocking but shouldn't get lost. Pulled into a phase when (a) related work is happening or (b) the friction becomes the trigger.
+
+- **Extend clip end_sec to the next word's start, not the last word's end.** Whisper's `word.end` cuts the audio where it thinks the word's articulation terminates — which lops off the natural tail of speech (breath, mouth-close, pre-silence ambient) and makes clips feel clipped-short on playback. Spec'd behavior is "≥ 2s silence between clips"; that silence is currently part of NEITHER clip. **Better**: each clip's `end_sec` extends to the start of the next word in the same source, so the full silence tail belongs to the preceding clip. Last clip in a source extends to `source.duration_sec` (if known) or stays at last-word-end. **Code location**: `clipfarm/segmentation.py:62` (`cur_end = w.end` → needs the next-word's start). The segmentation function would also need to take the "next word" as lookahead context, so the API changes from "list of (start, end)" to a slightly different shape. **Migration**: existing clips would stay short until re-ingested OR a one-shot widening pass walks `state.clips`, for each clip finds the next word in the source's Whisper sidecar, and updates `end_sec`. Caught by Lillian during Phase 10a dogfood (2026-05-26: "clips are routinely cutting off a little bit short").
+- **Phase 9 cross-source preload swap fix** — landed in `bf23703` (hotfix during Phase 10a). Visual verification still pending on a multi-source attempt.
+- **Word-filter at boundaries for `internal_pause_max_sec`** — `w.start >= effective_start AND w.end <= effective_end` excludes words straddling the trim boundary from gap detection (Phase 9 review observation). Polish layer; edge case.
+- **`untagged_clips` UI tooltip / scope-filter** — counter on Project page chips includes clips from sources unrelated to the project's focus. Carried from Phase 7 review.
+- **Cache-Control on `/api/sources/{id}/video` is `no-store`** — correct for dogfood (files can be replaced) but disables browser-side seek optimization. Revisit for v1.
