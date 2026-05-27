@@ -155,7 +155,9 @@ export function PreviewPane() {
       const onCanPlay = () => {
         v.currentTime = currentRange.effective_start_sec;
         setCrossSourceLoading(false);
-        if (playing) v.play().catch(() => {});
+        if (playing) v.play().catch((e) => {
+          console.warn(`PreviewPane: play() rejected after canplay (${e?.name}): ${e?.message}`);
+        });
       };
       v.addEventListener("canplay", onCanPlay, { once: true });
       v.load();
@@ -164,7 +166,9 @@ export function PreviewPane() {
     // Same-source seek (e.g. after a same-source swap where the
     // formerly-hidden element was already preloaded at the new start).
     v.currentTime = currentRange.effective_start_sec;
-    if (playing) v.play().catch(() => {});
+    if (playing) v.play().catch((e) => {
+      console.warn(`PreviewPane: play() rejected (same-source seek) (${e?.name}): ${e?.message}`);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRange?.source_id, currentRange?.effective_start_sec, currentIndex]);
 
@@ -175,7 +179,25 @@ export function PreviewPane() {
     const v = activeRef.current;
     if (!v) return;
     if (playing && currentRange) {
-      v.play().catch(() => {});
+      // If currentTime is at/past the range end (e.g. user clicked
+      // play after the clip finished, or seeked past the end), seek
+      // back to effective_start so the clip restarts. Otherwise
+      // play() resumes from current position immediately + the
+      // range-end timeupdate fires + we'd jump to the next clip
+      // with no actual playback — looks like "play button does
+      // nothing."
+      if (
+        v.currentTime + END_TOLERANCE_SEC >= currentRange.effective_end_sec
+        || v.currentTime < currentRange.effective_start_sec
+      ) {
+        v.currentTime = currentRange.effective_start_sec;
+        setCurrentTime(currentRange.effective_start_sec);
+      }
+      v.play().catch((e) => {
+        console.warn(
+          `PreviewPane: play() rejected on play/pause toggle (${e?.name}): ${e?.message}`,
+        );
+      });
     } else {
       v.pause();
     }

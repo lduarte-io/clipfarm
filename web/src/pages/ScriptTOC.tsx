@@ -436,7 +436,10 @@ export default function ScriptTOC() {
   const [grid, setGrid] = useState<TakeGridView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<TakeCard | null>(null);
-  const [appAttempts, setAppAttempts] = useState<AppState["attempts"]>({});
+  // Null = not loaded yet (initial state); {} = loaded with zero attempts.
+  // Distinguishing the two prevents useActiveAttemptValidation from
+  // clearing the active attempt during the fetch-in-flight window.
+  const [appAttempts, setAppAttempts] = useState<AppState["attempts"] | null>(null);
   const { playClip } = usePlayback();
   const { activeAttemptId, setActiveAttemptId } = useActiveAttempt();
   useActiveAttemptValidation(appAttempts, projectId);
@@ -492,7 +495,7 @@ export default function ScriptTOC() {
   const onAddClipToActive = useCallback(
     async (card: TakeCard) => {
       if (!projectId) return;
-      if (activeAttemptId && appAttempts[activeAttemptId]) {
+      if (activeAttemptId && appAttempts && appAttempts[activeAttemptId]) {
         await addClipToActiveAttempt(activeAttemptId, card, appAttempts);
       } else {
         const newId = await createAttemptWithClip(projectId, card);

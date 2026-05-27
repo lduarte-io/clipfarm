@@ -545,7 +545,10 @@ export default function Project() {
     },
     [playClip],
   );
-  const [appAttempts, setAppAttempts] = useState<AppState["attempts"]>({});
+  // Null = not loaded yet (initial state); {} = loaded with zero attempts.
+  // Distinguishing the two prevents useActiveAttemptValidation from
+  // clearing the active attempt during the fetch-in-flight window.
+  const [appAttempts, setAppAttempts] = useState<AppState["attempts"] | null>(null);
   const [generatingAttempts, setGeneratingAttempts] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   // Phase 10a — clear active-attempt context if it's been deleted or
@@ -579,7 +582,7 @@ export default function Project() {
   const onAddClipToActive = useCallback(
     async (card: TakeCard) => {
       if (!projectId) return;
-      if (activeAttemptId && appAttempts[activeAttemptId]) {
+      if (activeAttemptId && appAttempts && appAttempts[activeAttemptId]) {
         await addClipToActiveAttempt(activeAttemptId, card, appAttempts);
       } else {
         const newId = await createAttemptWithClip(projectId, card);
@@ -636,7 +639,7 @@ export default function Project() {
   // /attempts — see the plan's "diagnostic is exploration, not
   // assembly" decision.
   const { bestAttemptsForProject, totalAttemptsForProject } = useMemo(() => {
-    if (!projectId) {
+    if (!projectId || !appAttempts) {
       return { bestAttemptsForProject: [], totalAttemptsForProject: 0 };
     }
     const best: AttemptSummary[] = [];
