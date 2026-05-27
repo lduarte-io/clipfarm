@@ -16,8 +16,11 @@ without going through these orchestrators.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
+
+log = logging.getLogger("clipfarm.boundary")
 
 from clipfarm.models import Clip, ClipFarmState, WhisperTranscript
 from clipfarm.propagation import (
@@ -320,7 +323,19 @@ def create_clip_from_range(
     transcript over `[start_sec, end_sec)`, or "" for footage-only
     sources (`transcript=None`).
 
-    Hard 400 on overlap with any existing clip on the same source.
+    **Overlap policy (revised Phase 10a dogfood 2026-05-26)**: overlap
+    with existing clips on the same source is ALLOWED. The user case
+    is real — same recording clipped twice for different purposes
+    (full take + highlight inside it). Take-detection strategies treat
+    overlapping clips as independent; minor visual weirdness in the
+    by-source view is the v0 tradeoff. Spec updated to match. Merge
+    still rejects overlap (the merge operation is undefined on
+    overlapping ranges).
+
+    Hard collision case: if `[start, end)` produces a clip-ID that
+    already exists (same source + same exact start + same exact end),
+    that's a duplicate-identical clip — still rejected. The encoded
+    ID format keeps these unique by construction.
     """
     if source_id not in state.sources:
         raise KeyError(f"unknown source_id: {source_id}")
@@ -335,13 +350,15 @@ def create_clip_from_range(
             f"end_sec={end_sec} exceeds source duration {source.duration_sec}"
         )
 
+    # Log overlap for observability but don't reject.
     overlap_id = _range_overlaps_any(
         state, source_id, start_sec, end_sec, exclude=set()
     )
     if overlap_id is not None:
-        raise ValueError(
-            f"range [{start_sec}, {end_sec}) overlaps existing clip "
-            f"{overlap_id} on the same source"
+        log.info(
+            "create_clip_from_range: new range [%.3f, %.3f) overlaps existing "
+            "clip %s on source %s — allowed (Phase 10a dogfood revision)",
+            start_sec, end_sec, overlap_id, source_id,
         )
 
     stem = _source_stem(state, source_id)

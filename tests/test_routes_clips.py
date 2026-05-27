@@ -302,16 +302,23 @@ def test_create_happy_path_writes_one_snapshot(client: TestClient, tmp_path: Pat
     _count_snapshots_after_op(client, op, expected_reason="create-clip")
 
 
-def test_create_overlap_400(client: TestClient, tmp_path: Path):
+def test_create_overlap_now_allowed(client: TestClient, tmp_path: Path):
+    """Phase 10a dogfood revision (2026-05-26): overlap with an
+    existing clip on the same source is ALLOWED — the user case is
+    real (same recording, two different clip views of overlapping
+    ranges). Spec updated to match. Merge still rejects overlap.
+    """
     sid = _ingest(client, tmp_path)
-    state = client.get("/api/state").json()
     # Try to create a clip spanning [0, 6) — that overlaps the ingested
     # clip at ~[1.0, 1.5).
     r = client.post(
         f"/api/sources/{sid}/clips",
         json={"start_sec": 0.0, "end_sec": 6.0},
     )
-    assert r.status_code == 400
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Returns a new_clip_id for the overlapping clip.
+    assert "new_clip_id" in body
 
 
 def test_create_unknown_source_404(client: TestClient, tmp_path: Path):

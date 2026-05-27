@@ -374,10 +374,36 @@ def test_create_clip_from_range_footage_only_has_empty_text():
     assert state.clips[new_id].transcript_text == ""
 
 
-def test_create_clip_from_range_overlap_raises():
+def test_create_clip_from_range_overlap_allowed(caplog):
+    """Phase 10a dogfood revision (2026-05-26): overlap with an
+    existing clip on the same source is ALLOWED. Spec updated to
+    match — merge still rejects overlap, create_clip does not.
+    Logs an INFO note about the overlap for observability."""
     state = _make_state()
     _add_clip(state, "c1", 2.0, 8.0)
-    with pytest.raises(ValueError, match="overlaps existing clip"):
+    with caplog.at_level("INFO", logger="clipfarm.boundary"):
+        new_id = create_clip_from_range(state, "1", 5.0, 10.0, None)
+    # The new clip exists with a distinct ID from the overlapping one.
+    assert new_id in state.clips
+    assert new_id != "c1"
+    assert state.clips[new_id].start_sec == 5.0
+    assert state.clips[new_id].end_sec == 10.0
+    # Original clip untouched.
+    assert "c1" in state.clips
+    # Overlap logged.
+    assert any("overlaps existing clip" in m for m in caplog.messages)
+
+
+def test_create_clip_from_range_exact_duplicate_still_rejected():
+    """Same source + same exact start + same exact end → clip-ID
+    collision (encoded ID is identical) → still rejected. Spec note:
+    'duplicate-identical clip — still rejected. The encoded ID
+    format keeps these unique by construction.' Creates via the
+    public function twice so the second call hits the ID-collision
+    check rather than the seed-helper bypass."""
+    state = _make_state()
+    create_clip_from_range(state, "1", 5.0, 10.0, None)
+    with pytest.raises(ValueError, match="would collide"):
         create_clip_from_range(state, "1", 5.0, 10.0, None)
 
 

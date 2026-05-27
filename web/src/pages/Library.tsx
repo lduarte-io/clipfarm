@@ -321,6 +321,66 @@ function ConfirmDialog({
 // Create-clip dialog (numeric range entry — works on footage-only sources too)
 // ───────────────────────────────────────────────────────────────────────────
 
+type TimeMode = "mmss" | "seconds";
+
+/** Parse a string in the given mode → seconds (number) or null on
+ *  malformed input.
+ *  - "mmss": accepts "M:SS", "MM:SS.sss", "H:MM:SS", "12" (treated
+ *    as 12 seconds when no colon present — graceful fallback so the
+ *    user can paste raw seconds even in mm:ss mode).
+ *  - "seconds": parseFloat. */
+function parseTimeInput(s: string, mode: TimeMode): number | null {
+  const trimmed = s.trim();
+  if (!trimmed) return null;
+  if (mode === "seconds") {
+    const n = parseFloat(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  // mmss mode. Split on `:`. Walk right-to-left: last = seconds,
+  // next = minutes, next = hours. Each component is a non-negative
+  // number; only the last can have decimals.
+  const parts = trimmed.split(":");
+  if (parts.length === 1) {
+    // No colon — accept as raw seconds (be forgiving).
+    const n = parseFloat(parts[0]);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (parts.length > 3) return null;
+  let total = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const isLast = i === parts.length - 1;
+    const part = parts[i].trim();
+    if (!part) return null;
+    const n = isLast ? parseFloat(part) : parseInt(part, 10);
+    if (!Number.isFinite(n) || n < 0) return null;
+    if (!isLast && /\./.test(part)) return null; // only last segment may have decimals
+    const placeMultiplier = Math.pow(60, parts.length - 1 - i);
+    total += n * placeMultiplier;
+  }
+  return total;
+}
+
+/** Format a number-of-seconds for display in the given mode. */
+function formatTimeForMode(n: number, mode: TimeMode): string {
+  if (mode === "seconds") {
+    // Three decimals matches the input step.
+    return n.toFixed(3).replace(/\.?0+$/, "");
+  }
+  if (n < 0) return "0:00";
+  const totalMs = Math.round(n * 1000);
+  const ms = totalMs % 1000;
+  const totalSec = Math.floor(totalMs / 1000);
+  const s = totalSec % 60;
+  const m = Math.floor(totalSec / 60) % 60;
+  const h = Math.floor(totalSec / 3600);
+  const ssms = ms > 0
+    ? `${String(s).padStart(2, "0")}.${String(ms).padStart(3, "0").replace(/0+$/, "")}`
+    : String(s).padStart(2, "0");
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${ssms}`
+    : `${m}:${ssms}`;
+}
+
 function CreateClipDialog({
   sourceId,
   duration,
@@ -332,16 +392,33 @@ function CreateClipDialog({
   onClose: () => void;
   onCreated: (newId: string) => void;
 }) {
-  const [startSec, setStartSec] = useState("");
-  const [endSec, setEndSec] = useState("");
+  const [mode, setMode] = useState<TimeMode>("mmss");
+  const [startInput, setStartInput] = useState("");
+  const [endInput, setEndInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Switching modes: convert the current parsed value to the new
+  // mode's string representation so the user doesn't lose entered
+  // numbers. Empty fields stay empty.
+  const switchMode = (next: TimeMode) => {
+    if (next === mode) return;
+    const s = parseTimeInput(startInput, mode);
+    const e = parseTimeInput(endInput, mode);
+    setStartInput(s != null ? formatTimeForMode(s, next) : startInput);
+    setEndInput(e != null ? formatTimeForMode(e, next) : endInput);
+    setMode(next);
+  };
+
   async function submit() {
-    const s = parseFloat(startSec);
-    const e = parseFloat(endSec);
-    if (Number.isNaN(s) || Number.isNaN(e)) {
-      setError("Both fields must be numbers (seconds).");
+    const s = parseTimeInput(startInput, mode);
+    const e = parseTimeInput(endInput, mode);
+    if (s == null || e == null) {
+      setError(
+        mode === "mmss"
+          ? "Both fields must parse as M:SS, M:SS.sss, H:MM:SS, or raw seconds."
+          : "Both fields must be numbers (seconds).",
+      );
       return;
     }
     setBusy(true);
@@ -356,37 +433,75 @@ function CreateClipDialog({
     }
   }
 
+  const labelStart = mode === "mmss" ? "Start (M:SS)" : "Start (seconds)";
+  const labelEnd = mode === "mmss" ? "End (M:SS)" : "End (seconds)";
+  const placeholderStart = mode === "mmss" ? "e.g. 0:45 or 1:23.500" : "e.g. 45.0";
+  const placeholderEnd = mode === "mmss" ? "e.g. 0:59" : "e.g. 59.0";
+
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
       <div className="bg-neutral-900 border border-neutral-700 rounded-md p-5 max-w-md w-full mx-4 space-y-3">
         <h3 className="font-semibold">Create clip</h3>
         <p className="text-sm text-neutral-400">
-          Enter the start and end timestamps in seconds. Range must not
-          overlap an existing clip on this source.
+          Enter the start and end timestamps. Overlapping an existing clip on
+          the same source is allowed (you may have already grabbed the same
+          range for a different purpose).
           {duration != null && ` Source duration: ${formatTimestamp(duration)}.`}
         </p>
+        {/* Phase 10a dogfood addition: input-format toggle. */}
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-neutral-500">Input format:</span>
+          <div className="inline-flex rounded-md border border-neutral-700 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => switchMode("mmss")}
+              className={`px-2 py-1 text-xs ${
+                mode === "mmss"
+                  ? "bg-neutral-200 text-neutral-950 font-medium"
+                  : "bg-neutral-900 text-neutral-300 hover:bg-neutral-800"
+              }`}
+              disabled={busy}
+            >
+              M:SS
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode("seconds")}
+              className={`px-2 py-1 text-xs ${
+                mode === "seconds"
+                  ? "bg-neutral-200 text-neutral-950 font-medium"
+                  : "bg-neutral-900 text-neutral-300 hover:bg-neutral-800"
+              }`}
+              disabled={busy}
+            >
+              seconds
+            </button>
+          </div>
+        </div>
         <div className="space-y-2">
           <label className="block text-xs">
-            Start (seconds)
+            {labelStart}
             <input
               autoFocus
-              type="number"
-              step="0.001"
-              value={startSec}
-              onChange={(e) => setStartSec(e.target.value)}
+              type="text"
+              value={startInput}
+              onChange={(e) => setStartInput(e.target.value)}
+              placeholder={placeholderStart}
               className="block w-full mt-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm font-mono"
               disabled={busy}
+              autoComplete="off"
             />
           </label>
           <label className="block text-xs">
-            End (seconds)
+            {labelEnd}
             <input
-              type="number"
-              step="0.001"
-              value={endSec}
-              onChange={(e) => setEndSec(e.target.value)}
+              type="text"
+              value={endInput}
+              onChange={(e) => setEndInput(e.target.value)}
+              placeholder={placeholderEnd}
               className="block w-full mt-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm font-mono"
               disabled={busy}
+              autoComplete="off"
             />
           </label>
         </div>
