@@ -35,17 +35,20 @@ If code conflicts with spec/plan/decisions, call it out explicitly and align the
 - **Time policy**: `Double` seconds at rest; convert once at the CFMedia boundary; all media arithmetic in `CMTime`; frame math from `minFrameDuration`, never `nominalFrameRate`.
 - **Load-bearing comparisons** (tested by name): silence segmentation splits when gap `>=` threshold; internal-pause expansion splits when gap `>` max (strict); overlap checks are half-open `[s, e)`.
 - **`continuity_score` is a derived cache**, recomputed on every clip-list write; readers may recompute defensively.
+- **The FTS5 search index follows every clip mutation** (external-content table + sync triggers) — search must never surface deleted clips or stale transcript text.
+- **Overlap policy (D33)**: create AND adjust allow overlapping clips on a source; only merge rejects overlapping ranges.
 - **`tracks` stays `NULL` until phase N18.**
 - **Schema is versioned via `DatabaseMigrator` from day one**; schema changes get their own commit before dependent feature work.
 - **No global singletons.** The store is created in the `App` struct and injected via `Environment`; services are injected, not reached for.
 
 ## Architecture rules (locked — see decisions D1/D10/D19/D20/D21)
 
-- **SwiftUI shell + AppKit at exactly three hot spots**: the TextKit 2 transcript view (STTextView **contained behind the `TranscriptViewAdapter` seam** — nothing outside the wrapper file references it), the NSEvent local monitor for modal trim-mode keys, and the player surface.
+- **SwiftUI shell + AppKit at exactly three hot spots**: the raw NSTextView/TextKit 2 transcript view (**contained behind the `TranscriptViewAdapter` seam** — nothing outside the wrapper file touches the text view directly; D20 was flipped away from STTextView for license reasons), the NSEvent local monitor for modal trim-mode keys, and the player surface.
 - **One `@MainActor @Observable` AppStore.** Mutation path: view → store method → pure CFDomain function → CFStore transaction → UndoManager registration. GRDB `ValueObservation` feeds derived read models. No TCA.
 - **CFDomain is pure**: value types + pure functions, zero dependencies, no I/O. Domain rules (segmentation, propagation, trim resolution, continuity, strategies) live here and are tested independently of UI and DB.
 - **Views render state and call store methods only.** No business logic, no persistence, no AVFoundation in views.
 - **Background work lives in named services** (Thumbnail / Waveform / LLM / Export / Transcription), `@concurrent` or actors; subprocesses via swift-subprocess behind locator seams.
+- **Concurrency isolation policy (SE-0466)**: MainActor default isolation on the app target only; all five ClipFarmKit targets set `nonisolated` default isolation explicitly in `Package.swift` — packages do NOT inherit the Xcode default, and never "fix" a concurrency error by flipping a Kit target to MainActor-default. Keep SE-0461 settings symmetric across the app/package boundary.
 - **All keyboard bindings live in the KeyMap registry** (serializable — user remapping at N19 is a settings UI, not a refactor). Never hardcode a shortcut in a view. Three layers: menu Commands / focused `onKeyPress` / modal NSEvent monitor.
 - **Inject time and identity** (clock, ID allocation) so domain logic is deterministic and testable. ID allocators are monotonic max+1 over all existing keys; freed slots are never reused.
 
@@ -66,6 +69,7 @@ If code conflicts with spec/plan/decisions, call it out explicitly and align the
 ## Testing expectations
 
 - **Domain invariants and business rules must land with tests** — pure-function tests in ClipFarmKit (Swift Testing), runnable via bare `swift test`. This is the primary loop; prefer it over xcodebuild whenever views aren't involved.
+- **Every store mutation lands with a register→undo→redo test** — drive `UndoManager` directly against store methods; assert domain state and the DB round-trip in both directions.
 - **The ported Python suite (~470 tests) is the parity baseline.** Adjudication rule: *the Python implementation is the reference, not the oracle.* When a ported test fails, investigate which side is wrong **against the spec** before changing the Swift code; record divergences in the phase entry.
 - Golden-master tests may load the legacy `clipfarm.json` via the test-only fixture loader; that loader never ships in the app.
 - **Tests run at the END of a step/phase — never run the full suite at the start of a session.** The previous phase's recorded closeout result is the baseline.

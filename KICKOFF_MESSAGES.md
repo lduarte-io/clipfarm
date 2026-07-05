@@ -6,7 +6,7 @@
 
 ## Queue
 
-### 1 — Pre-build decision review (paste into a fresh Fable session NOW, before construction)
+### [USED 2026-07-05] Pre-build decision review — findings landed in `PREBUILD_REVIEW_FINDINGS.md` and were dispositioned the same day
 
 > You are the **pre-build reviewer** for ClipFarm's native macOS rewrite — a docs-only adversarial review session. Do not write code and do not edit any files; your deliverable is a findings report that Lillian will carry back to the planning session.
 >
@@ -25,7 +25,7 @@
 >
 > Output: a severity-ranked findings list — for each: `[severity] · doc + section · what's wrong or risky · evidence (link if external) · proposed fix`. End with a short "clean bill" list of load-bearing claims you verified and found solid. Do not edit any files.
 
-### 2 — Phase N0: toolchain & skeleton (paste after the review round closes and any resulting doc changes land)
+### NEXT — Phase N0: toolchain & skeleton (dispositions are committed; ready to paste)
 
 > You are the **implementer** starting phase **N0 (toolchain & skeleton)** of ClipFarm's native macOS rewrite.
 >
@@ -33,7 +33,7 @@
 >
 > Execute N0 per the plan:
 > - `mac/` layout: `ClipFarm.xcodeproj` (thin app shell) + `ClipFarmKit` local SPM package with targets CFDomain / CFStore / CFMedia / CFLLM / CFExport and a Swift Testing test target each (smoke tests only — no features).
-> - Project settings: bundle id `org.duartes.clipfarm`, minimum macOS 26, automatic signing, **non-sandboxed**, Swift 6.2 with Approachable Concurrency + MainActor default isolation. Use Xcode buildable folders (synchronized groups) so new source files never require pbxproj edits.
+> - Project settings: bundle id `org.duartes.clipfarm`, minimum macOS 26, automatic signing **with a real Apple Development certificate** (ad-hoc "Sign to Run Locally" re-signs each build and re-triggers TCC prompts), **non-sandboxed**, Swift 6.2 Approachable Concurrency. **Isolation policy (SE-0466):** MainActor default isolation on the app target only; all five ClipFarmKit targets set `nonisolated` default isolation explicitly in `Package.swift` — packages do not inherit the Xcode default. Use Xcode buildable folders (synchronized groups) so new source files never require pbxproj edits.
 > - GRDB 7 as a pinned ClipFarmKit dependency.
 > - App target: empty main window with the nav skeleton (Library / Project / Script / Attempts / Brief / Settings) and the inspector-pane slot.
 > - Verify the CLI loop documented in `mac/CLAUDE.md` (`swift test` from ClipFarmKit; `xcodebuild build` piped through `xcbeautify -q`) and correct those commands if scheme names differ.
@@ -45,4 +45,4 @@
 
 ## Used
 
-*(none yet)*
+- **Pre-build decision review** — used 2026-07-05 (kept inline above, marked USED). Output: `PREBUILD_REVIEW_FINDINGS.md`; all 19 findings dispositioned the same day (D20 flipped, D32/D33 added, N2 gates expanded).

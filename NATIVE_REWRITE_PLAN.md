@@ -6,6 +6,8 @@
 
 *Round 2 (2026-07-05): D14 refined for the existing iPhone (long-GOP) back-catalog — keyframe ticks + snap-to-keyframe in trim mode, per-cut alignment analysis + an export mode picker in N12, and **smart-cut promoted to its own phase N16** (Track 2 renumbered **N14–N19**). D20 gained the `TranscriptViewAdapter` containment rule. Spec amendments landed in `clipfarm-spec.md`; per-project build rules live in `mac/CLAUDE.md`.*
 
+*Round 3 (2026-07-05): the pre-build adversarial review (`PREBUILD_REVIEW_FINDINGS.md`) was dispositioned — 18 findings accepted and applied; finding 9 resolved by Lillian (**overlap allowed on adjust**, D33); finding 1 resolved by Lillian **flipping D20 to raw NSTextView** (STTextView is GPLv3/commercial, not MIT). Consequences here: N2 gates expanded (incl. a half-day export mini-spike), new D32 geometry policy, N16 rescoped to ffmpeg-mux-primary, per-target concurrency isolation policy, schema/test amendments throughout.*
+
 **Companion document:** [`NATIVE_REWRITE_DECISIONS.md`](./NATIVE_REWRITE_DECISIONS.md) — every decision branch with options, tradeoffs, pick, and current status after review round 1. Every `D#` below points into it.
 
 **How to use this plan:** it is written to be executable by a fresh session with no additional context — each phase names its goal, scope, port sources, tests, and manual-verify criteria. If construction is ever handed off mid-stream, the handoff artifact is this file + `NATIVE_REWRITE_DECISIONS.md` + the standard `PHASES.md`/`COMPLETED_PHASES.md` audit trail.
@@ -120,8 +122,12 @@ attempt_clips(attempt_id REFERENCES attempts, position INT, clip_id TEXT,  -- NO
               internal_pause_max_sec REAL NULL, notes TEXT,                -- dangling by design
               PRIMARY KEY (attempt_id, position))
 voice_annotations(...)                            -- schema parity now, populated at N17
-clips_fts                                         -- FTS5 virtual table over clips.transcript_text
-settings                                          -- via UserDefaults, not DB; API key in Keychain (D23)
+clips_fts                                         -- FTS5 EXTERNAL-CONTENT table over clips.transcript_text,
+                                                  -- kept in sync by triggers (split/merge/delete/undo-safe)
+settings(key TEXT PRIMARY KEY, value TEXT)        -- PER-LIBRARY settings (segmentation threshold, tail
+                                                  -- policy, …) live IN the DB so they travel with the
+                                                  -- library (finding 12); app-level prefs → UserDefaults;
+                                                  -- API key → Keychain (D23)
 ```
 
 Notes:
@@ -129,8 +135,10 @@ Notes:
 - `attempt_clips.clip_id` is deliberately **not** a foreign key — the tombstone pattern (dangling refs on delete, `needs_review` banner) is spec behavior.
 - Migrations via GRDB `DatabaseMigrator`, one registered closure per version — the direct analog of `clipfarm/migrations/`, versioned from day one.
 - **Inspectability, not live hand-editing** (D7): the watcher/conflict machinery is dissolved. `File → Back Up Library…` exports the full state as JSON in the familiar clipfarm.json v1 shape (git-diffable, restorable); `sqlite3`/DB Browser/Datasette work for live *inspection*. No production JSON importer (D9) — a small **test-only fixture loader** reads the legacy `clipfarm.json` in the test target for golden-master comparisons.
-- **Snapshots** (D8): before every destructive op, `VACUUM INTO '.snapshots/<ISO>-<hash>.db'` inside the library folder, pruned to last 50 — same ritual, atomic and WAL-safe. Belt to UndoManager's suspenders (§2.7); snapshots also survive crashes, which the in-memory undo stack doesn't.
+- **Snapshots** (D8): before every destructive op, `VACUUM INTO '.snapshots/<ISO>-<hash>.db'` inside the library folder, pruned to last 50 — same ritual, atomic and WAL-safe. Belt to UndoManager's suspenders (§2.7); snapshots also survive crashes, which the in-memory undo stack doesn't. SQLite mechanics (finding 11): `VACUUM INTO` cannot run inside an open transaction — the snapshot executes in its own barrier access *immediately before* the mutating transaction begins, and partial snapshot files are cleaned up on failure. An *undo* of a destructive op is not itself snapshot-worthy — the pre-op snapshot already covers that state.
 - **No data migration** (D9): the native library starts empty; sources are re-ingested from their folders and re-tagged (~30s on the Anthropic path). The lone in-flight web attempt is not worth an importer.
+- **Uniqueness enforcement** (finding 10): SQLite unique indexes treat NULLs as distinct, and `project_tag_id` is NULL for every bucket-category row — so **domain validation is the enforcer** (named port test) and the index is made NULL-proof (unique over `COALESCE(project_tag_id, '')` or a generated column).
+- The backup exporter emits the documented `script: {lines: []}` shape regardless of the `script_lines` column name.
 
 ### 2.4 Time policy (D12)
 
@@ -146,11 +154,11 @@ Composition rules (each is load-bearing; from research):
 1. **One `AVMutableCompositionTrack` for video, one for audio.** All ranges inserted back-to-back into the same two tracks (per-clip tracks cause decoder churn and inter-track flicker).
 2. **Insert both tracks from the same asset over the same clamped range** (min of audio/video track durations) — mismatched insertions are the classic source of composition drift and tail pops.
 3. **Cache `AVURLAsset` per source** with properties pre-loaded. Rebuilding a 50-clip composition is then single-digit milliseconds of edit-list manipulation.
-4. **Compositions are immutable snapshots**: every edit builds a fresh composition and swaps via `player.replaceCurrentItem(with:)` — swap while paused where possible, pre-seek the new item to the mapped time with zero tolerance before attaching (kills the black-frame blink).
-5. Apply `preferredTransform` (rotated phone footage); `automaticallyWaitsToMinimizeStalling = false` for local files.
+4. **Compositions are immutable snapshots**: every edit builds a fresh composition and swaps via `player.replaceCurrentItem(with:)` — swap while paused where possible, pre-seek the new item to the mapped time with zero tolerance and **await seek completion** before attaching. The black-frame blink on swap is a known, Apple-unanswered report in exactly this configuration, so N2 gates on a *measured* blink count, and **mutating the live composition in place is the designed fallback** (deliberately relaxing this rule) if rebuild-and-swap can't reach zero.
+5. **Geometry policy (D32)**: `preferredTransform` is track-level — it cannot render mixed orientations in one track (QA1744). `CompositionBuilder` detects geometry uniformity: uniform → bare composition (Lossless-tier eligible); mixed (portrait iPhone + landscape camera) → attach an `AVMutableVideoComposition` with per-segment `setTransform(_:at:)` instructions (renderSize = project canvas; portrait clips pillarboxed by default) — which also disqualifies passthrough export, since passthrough ignores videoComposition transforms. `automaticallyWaitsToMinimizeStalling = false` for local files.
 6. **~10ms `AVAudioMix` volume ramps at cut boundaries** when the "smooth cut audio" setting is on (default on). WYSIWYG rule (D31): the same setting governs export — preview and file always match.
 7. Tombstones: skipped by the composition builder, surfaced as an overlay chip in the UI ("▢ removed clip at position N") rather than a playback placeholder.
-8. HDR sources play natively; AVFoundation tone-maps per display (D29). Color policy is an *export* concern, not a playback one.
+8. **Color policy (D29, tightened post-review)**: a bare composition has **no documented per-segment tone-mapping guarantee** for mixed HDR/SDR — when dynamic ranges mix, the builder sets explicit videoComposition color properties on BOTH preview and export paths (they ride the same object as the geometry instructions). Left alone, export converts SDR segments *up* to HDR — the opposite of the default-SDR target — so the SDR default is enforced, never assumed. HDR↔SDR seam behavior is an N2 gate.
 
 Engine API surface: `load(ranges:[ResolvedRange])`, `play/pause`, `seek(to:)` (zero-tolerance), `step(frames:)`, `loop(window:)` (trim mode: `addBoundaryTimeObserver` at window end → re-seek to window start; nudges re-arm the observer — **not** `AVPlayerLooper`, which requires teardown per range change, D13), `currentTime` published via periodic observer for the scrubber only.
 
@@ -172,7 +180,7 @@ Layer 3 exists because `.onKeyPress` is focus-dependent — a single stray click
 
 - **AppStore**: `@MainActor @Observable final class`, owning value-type domain state and mediating all mutations. GRDB `ValueObservation` (main-actor-friendly in GRDB 7) feeds derived read models. No TCA (D10).
 - **Undo** (D8): every store mutation captures the touched value-subtree *before* mutating and registers inverse application with the window's `UndoManager` — Cmd+Z / Edit-menu / redo for free. UndoManager *is* the platform's command pattern; the commercial-grade investment is coverage and naming ("Undo Split Clip", "Undo Nudge In-Point"), with sensible grouping/coalescing for nudge bursts. Destructive ops additionally take a DB snapshot (§2.3).
-- **Concurrency**: Swift 6.2 Approachable Concurrency, MainActor default isolation (Xcode 26 new-target default). Background work is explicit: `ThumbnailService`, `WaveformService`, `LLMClient`, `ExportService`, later `TranscriptionService` as `@concurrent`/actor services. Subprocesses (ffmpeg remux) via **swift-subprocess** behind an `FFmpegLocator` seam (D16 — PATH/Homebrew now, bundled+signed at N19).
+- **Concurrency**: Swift 6.2 Approachable Concurrency. **Per-target isolation policy (SE-0466 — SPM packages do NOT inherit the Xcode default):** the app target uses MainActor default isolation; all five ClipFarmKit targets explicitly set `nonisolated` default isolation in `Package.swift` (Approachable Concurrency upcoming-feature flags opted in per-target) so domain functions and services can never silently serialize onto the main thread — and never "fix" a concurrency error by flipping a Kit target to MainActor-default. Keep SE-0461 (`NonisolatedNonsendingByDefault`) symmetric across the app/package boundary. Background work is explicit: `ThumbnailService`, `WaveformService`, `LLMClient`, `ExportService`, later `TranscriptionService` as `@concurrent`/actor services. Subprocesses (ffmpeg remux) via **swift-subprocess** behind an `FFmpegLocator` seam (D16 — PATH/Homebrew now, bundled+signed at N19; **pin the exact pre-1.0 version** — 1.0.0-beta landed 2026-07 with breaking churn — and use the streaming API for ffmpeg's chatty stderr, since collected-output modes throw past the byte limit).
 - **Progress**: orchestrators expose `AsyncStream<Progress>` consumed directly by the UI (replaces the web's polling endpoints). Same phase-key granularity (preflight → batching N/M → committing) so the UX ports.
 
 ### 2.8 LLM provider layer (D22, D23)
@@ -208,7 +216,7 @@ The 470-test Python suite is the parity baseline. Route tests lose their HTTP la
 **Load-bearing semantics that must port bit-exactly** (each gets a named test; subject to the adjudication rule above):
 - Silence segmentation: new clip when gap `>=` threshold (2.0s default, now a setting); tail policy per D18.
 - Internal-pause expansion: split when gap `>` max (strictly greater); gap dropped entirely; word filter `w.start >= start && w.end <= end` (straddle exclusion — port as-is, fix scheduled N15).
-- Overlap tests are **half-open `[s,e)`** — touching endpoints don't collide; create-from-range allows overlap, merge rejects it, adjust-boundaries rejects it.
+- Overlap tests are **half-open `[s,e)`** — touching endpoints don't collide. **Overlap policy (finding 9, resolved by Lillian 2026-07-05, D33): create-from-range AND adjust-boundaries allow overlap; only merge rejects it** (undefined for overlapping ranges). Deliberate divergence from the Python reference, which rejected all overlap on adjust and thereby froze deliberately-overlapping clips — port the *new* rule, with a named test for the previously-frozen case.
 - Tag dedup on merge: key `(project_id, project_tag_id, category)`, first-encountered wins.
 - Trim clamping: the four propagation cases including the pathological zero-both-offsets-and-warn case; negative offsets never clamped against base.
 - Tagging validation: hallucinated-ID drop, confidence clamp to [0,1], **on-script-with-null-line demoted to related-but-different** (not dropped), one retry per batch, partial-batch wins.
@@ -216,6 +224,8 @@ The 470-test Python suite is the parity baseline. Route tests lose their HTTP la
 - ID allocation: monotonic max+1 over all existing keys, never reuse freed slots.
 
 **Golden-master checks** (N3, N9): a test-only fixture loader reads the legacy `clipfarm.json` (and/or a freshly Python-ingested state) so Swift strategies/resolver/segmentation can be diffed against Python output on identical inputs while both implementations coexist. Cheap insurance against subtle port drift.
+
+**Undo coverage** (finding 15): every store mutation lands with a register→undo→redo test — drive `UndoManager` directly against store methods, asserting both domain state and the DB round-trip after each direction.
 
 ---
 
@@ -229,7 +239,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Goal:** the stack works end-to-end before any feature work (native analog of web Phase 1).
 
-**Scope:** `mac/` layout per §2.1; `ClipFarm.xcodeproj` (buildable folders, automatic signing, bundle id `org.duartes.clipfarm`, **non-sandboxed**, min target macOS 26 — D2, D24); `ClipFarmKit` package with the five targets + Swift Testing smoke tests; GRDB 7 dependency; `mac/CLAUDE.md` documenting the CLI build/test/run loop; empty main window with the nav skeleton (Library / Project / Script / Attempts / Brief / Settings) and the inspector pane slot.
+**Scope:** `mac/` layout per §2.1; `ClipFarm.xcodeproj` (buildable folders, automatic signing **with a real Apple Development certificate** — ad-hoc "Sign to Run Locally" re-signs each build and re-triggers TCC folder prompts — bundle id `org.duartes.clipfarm`, **non-sandboxed**, min target macOS 26 — D2, D24); `ClipFarmKit` package with the five targets + Swift Testing smoke tests; GRDB 7 dependency; `mac/CLAUDE.md` documenting the CLI build/test/run loop; empty main window with the nav skeleton (Library / Project / Script / Attempts / Brief / Settings) and the inspector pane slot.
 
 **Verify:** app launches; `swift test` green from CLI; `xcodebuild build` clean; adding a new Swift file requires no pbxproj edit.
 
@@ -239,7 +249,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Goal:** the data layer exists, tested, before anything sits on it.
 
-**Port map:** `models.py` → CFDomain structs (field-for-field, including `Source.unavailable`, `Attempt.needs_review`, `TagKind.tag`, plus new `Clip.boundary_edited`; adopt `script` naming, amend spec §9). `store.py` → CFStore (schema §2.3, DatabaseMigrator, snapshot service via `VACUUM INTO` + prune-to-50, uniqueness via unique index + validation, source-integrity check on open). `resolver.py`, `continuity.py` → CFDomain (pure; needed by N2). Settings scaffolding (UserDefaults + Keychain).
+**Port map:** `models.py` → CFDomain structs (field-for-field, including `Source.unavailable`, `Attempt.needs_review`, `TagKind.tag`, plus new `Clip.boundary_edited`; adopt `script` naming, amend spec §9). `store.py` → CFStore (schema §2.3, DatabaseMigrator, snapshot service via `VACUUM INTO` + prune-to-50, uniqueness via unique index + validation, source-integrity check on open). `resolver.py`, `continuity.py` → CFDomain (pure; needed by N2). Settings scaffolding (per-library settings table in the DB; app-level prefs in UserDefaults; Keychain for the key). Snapshot sequencing per SQLite mechanics (§2.3): snapshot in its own barrier access *before* the mutating transaction, partial-file cleanup on failure. Also build the library **close→swap→reopen** path here (clears the UndoManager stack, restarts ValueObservations) — snapshot-restore, backup-restore, and library switching all reuse it later.
 
 **Tests (~90):** models round-trip, uniqueness, store/snapshot/migrations, source integrity, resolver (14), continuity (14), fixture builders for everything downstream.
 
@@ -253,14 +263,18 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Scope:** CFMedia — `AssetCache`, `MetadataProbe` (async `load(.duration/.nominalFrameRate/.formatDescriptions/.naturalSize/.preferredTransform)` + HDR detection), `CompositionBuilder` (rules §2.5 incl. audio micro-fades), `PlayerEngine` (full API §2.5 incl. loop mode). Debug-only harness: hand-specified `(file, start, end)` ranges over real files from the dogfood folder — no ingest needed yet.
 
-**Exit criteria (hard gates — measured, not eyeballed):**
-- Ranges spanning **two different source files** (including one camera .mov + one iPhone HDR clip) play through the boundary with no visible/audible gap — the thing the web app could never do.
-- Composition rebuild for a 50-clip range list < 10ms (asset cache warm); item swap while paused shows no black-frame blink.
-- Cut boundaries land frame-accurately (spot-check against source timecodes); `step(byCount:)` works across a composition.
-- Trim-loop mode: nudge → re-loop restart feels instant (< ~50ms perceived).
-- Micro-fades audibly kill cut pops without softening speech onsets.
+**Exit criteria (hard gates — measured, not eyeballed; expanded per the pre-build review):**
+- **Seam-drop instrumentation**: 20+ deliberately non-keyframe-aligned cuts across ≥3 files (ProRes + H.264 + HEVC, incl. 4K and one iPhone HDR clip); capture frame-delivery timestamps; gate p95 inter-frame gap at seams ≤ 1 frame duration. If seams drop, A/B Apple's documented mitigation — two alternating video tracks in one composition — before anything custom.
+- **Swap-blink count**: 100 edit→rebuild→pre-seek→swap cycles under screen capture, A/B'd against mutate-in-place; gate = zero visible blinks on whichever strategy wins (the winner becomes the PlayerEngine contract).
+- **Mixed-rotation render** (D32): portrait iPhone + landscape camera in one composition renders correctly via videoComposition; record what passthrough does with it.
+- **HDR↔SDR seam probe** (D29): alternating HLG/SDR segments, with and without videoComposition color properties, pixel-probed in preview *and* a Standard-tier export; gate = no visible shift and preview == export.
+- **Rebuild + end-to-end edit latency**: composition rebuild < 10ms for 50 clips (warm asset cache), and the number that actually matters — edit → new item `readyToPlay` → first frame — measured on the same 50-clip composition.
+- **Frame accuracy**: cut boundaries land frame-accurately (spot-check against source timecodes); `step(byCount:)` works across a composition.
+- **Worst-case trim-loop restart**: boundary-fire → first rendered frame at window start on long-GOP 4K HEVC with a non-keyframe-aligned window; meet 50ms or formally revise the budget. The PlayerEngine contract states the re-arm discipline (boundary observers die on every `replaceCurrentItem` — re-register after every edit) plus a periodic-observer end-of-window verification as belt-and-suspenders against missed fires.
+- **Micro-fades**: audibly kill cut pops without softening speech onsets.
+- **Export mini-spike (half a day, finding 4)**: (a) passthrough export of a two-file H.264 composition with non-keyframe cuts — does it succeed at all (rdar://10421720), and does it author edit lists or snap to sync samples? (b) hybrid-writer sequential sessions — are lead-in frames edited out for segments 2..N, or only the first? (fallback if not: per-segment writes stitched with `AVMutableMovie`); (c) quick elst A/B of one output in QuickTime / VLC / Chrome / a Resolve import. Answers to (a) and (b) choose N12's architecture before any UI depends on it.
 
-**If any gate fails:** pivot to the sample-buffer pipeline **now** (D11 commitment) — re-plan N2 as a 4–8-week engine phase and shift everything right, rather than discovering it at N10.
+**If gates fail:** playback gates → pivot to the sample-buffer pipeline **now** (D11 commitment) — re-plan N2 as a 4–8-week engine phase and shift everything right, rather than discovering it at N10. Export-spike surprises → re-architect N12 (writer-per-segment + `AVMutableMovie`) while it's still on paper.
 
 **Verify:** Lillian watches a multi-source (camera + iPhone) assembly play gapless.
 
@@ -272,7 +286,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Port map:** `ingest.py` (pairing, rejection semantics: `__`-in-stem hard-reject with rename offer; sidecar soft-fail → footage-only; re-ingest upgrade path), `segmentation.py`, duration policy (sidecar wins → probe → null).
 
-**Scope:** `NSOpenPanel` folder picker + drag-a-folder-onto-window; `MetadataProbe` replaces ffprobe (D17), HDR flagged per source (D29); **`.mkv` remuxed to `.mp4` at ingest** via `ffmpeg -c copy` through swift-subprocess + `FFmpegLocator` (D15, D16 — AVFoundation cannot open Matroska); **segmentation settings** (D18): silence threshold (default 2.0s) + tail policy (extend-to-next-word-start default / fixed padding / word-end), both per-library, plus a **"Re-apply segmentation settings" action per source** — recomputes boundaries for auto-detected clips, *skips any clip with `boundary_edited` set*, snapshot-protected, undoable; per-source **waveform generation** (AVAssetReader + Accelerate, ~50–100 buckets/sec, binary cache file — every clip's waveform is then a free slice); FTS5 rows written at ingest.
+**Scope:** `NSOpenPanel` folder picker + drag-a-folder-onto-window; `MetadataProbe` replaces ffprobe (D17), HDR flagged per source (D29); **`.mkv` remuxed to `.mp4` at ingest** via `ffmpeg -c copy` through swift-subprocess + `FFmpegLocator` (D15, D16 — AVFoundation cannot open Matroska; the remuxed `.mp4` lands as a sibling of the original with the same stem, skip-if-exists; `sources.path` records the `.mp4` and the original `.mkv` path is kept as provenance — default reviewable in this phase's plan); **segmentation settings** (D18): silence threshold (default 2.0s) + tail policy (extend-to-next-word-start default / fixed padding / word-end), both per-library, plus a **"Re-apply segmentation settings" action per source** — recomputes boundaries for auto-detected clips, *skips any clip with `boundary_edited` set*, snapshot-protected, undoable; per-source **waveform generation** (AVAssetReader + Accelerate, ~50–100 buckets/sec, binary cache file — every clip's waveform is then a free slice), run **asynchronously post-ingest** by WaveformService so a full-folder ingest never blocks on audio decode (N11 degrades gracefully when a strip isn't ready yet); FTS5 rows written at ingest.
 
 **Tests:** ingest (11), segmentation (11 + tail-policy modes + re-apply skip rules), probe tests, golden-master segmentation diff vs Python on the same folder (tail policy = word-end for comparability).
 
@@ -286,7 +300,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Port map:** `transcripts.py` (mtime-keyed cache), whisper sidecar validation; `search.py` semantics superseded by FTS5.
 
-**Scope:** source sidebar (unavailable greyed out; footage-only badge); transcript view as **TextKit 2 / STTextView wrapper** (D20) — word-level ranges, inline clip-boundary highlighting, click-word, drag-select — with STTextView contained behind a single **`TranscriptViewAdapter` seam** (set content / word hit-test / highlight ranges / selection events / scroll-to-word; nothing outside the wrapper file references STTextView, so a later swap to raw NSTextView is an adapter reimplementation, not an app change); FTS5 search UI with phrase + prefix support (upgrade over web, new tests); click clip → inspector pane plays it via PlayerEngine; deep-link plumbing (select source + scroll to word) for later grid → library navigation.
+**Scope:** source sidebar (unavailable greyed out; footage-only badge); transcript view as a **raw NSTextView / TextKit 2 wrapper** (D20 — flipped at the pre-build disposition: STTextView is GPLv3/commercial and Lillian chose zero license entanglement) — word-level ranges, inline clip-boundary highlighting, click-word, drag-select — still contained behind the **`TranscriptViewAdapter` seam** (set content / word hit-test / highlight ranges / selection events / scroll-to-word) as module hygiene; budget the few extra days of selection/highlight plumbing STTextView would have provided; FTS5 search UI with phrase + prefix support (upgrade over web, new tests); click clip → inspector pane plays it via PlayerEngine; deep-link plumbing (select source + scroll to word) for later grid → library navigation.
 
 **Verify:** browse btc.0.4 smoothly (30-min transcript, no typing/scroll lag); phrase-search `"self custody"` returns hits (web returned zero); click-to-play is instant.
 
@@ -298,7 +312,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Port map:** `boundary.py` (33 tests), `propagation.py` (18), clip-ID encoding, `clamp_attempt_trims_for_clip` four-case clamp, mm:ss↔seconds input parsing from `Library.tsx`.
 
-**Scope:** all five ops as store methods wired to UndoManager (every op undoable, named — "Undo Split Clip"; DB snapshot before each, reasons named as today); every op sets `boundary_edited` on affected clips (D18); UI in the Library transcript view — click-between-words split, multi-select merge (same-source, non-overlap), boundary drag/nudge (`[ ] , .` at 100ms, Shift 10ms — base-level), create-from-selection (+ numeric range entry for footage-only sources, overlap allowed per the Phase 10a revision), delete with confirm. Propagation exactly per spec: clone-tags-stale-true on split, union-merge on merge, `needs_review` flags, tombstones.
+**Scope:** all five ops as store methods wired to UndoManager (every op undoable, named — "Undo Split Clip"; DB snapshot before each, reasons named as today); every op sets `boundary_edited` on affected clips (D18); UI in the Library transcript view — click-between-words split, multi-select merge (same-source, non-overlap), boundary drag/nudge (`[ ] , .` at 100ms, Shift 10ms — base-level), create-from-selection (+ numeric range entry for footage-only sources, overlap allowed per the Phase 10a revision), delete with confirm. Propagation exactly per spec: clone-tags-stale-true on split, union-merge on merge, `needs_review` flags, tombstones. **Overlap policy (D33, Lillian 2026-07-05): adjust allows overlap** — matching create; only merge rejects overlapping ranges. FTS5 stays in sync through every op (external-content triggers) — test: search reflects a split/merge/delete.
 
 **Verify:** split a clip mid-take on real data, Cmd+Z restores it perfectly; merge two takes; verify a snapshot file appeared; re-apply-segmentation skips the hand-corrected clip.
 
@@ -378,8 +392,8 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Scope:** CFExport —
 - Resolve attempt (same resolver as preview) → analyze source codecs/color → pick tier:
-  - **Tier 1 — passthrough** (lossless + frame-accurate): all sources ProRes/all-intra, or every cut keyframe-aligned; available only when "smooth cut audio" is off *or* via the hybrid path below. H.264 passthrough carries the edit-list caveat (frame-accurate in Apple players; some third-party demuxers show lead-in frames) — surfaced in the dialog, re-encode offered as the safe default for H.264.
-  - **Tier 1.5 — hybrid writer (the WYSIWYG path, D31)**: `AVAssetReader`/`AVAssetWriter` copying video samples untouched while decoding→micro-fading→re-encoding audio (high-bitrate AAC, effectively transparent). Video losslessness preserved, preview == file.
+  - **Tier 1 — passthrough** (lossless + frame-accurate): eligibility = all sources ProRes/all-intra or every cut keyframe-aligned, **AND codec/parameter-uniform** (mixed iPhone HEVC + camera H.264 can never share one passthrough output track), **AND geometry-uniform (D32) AND color-uniform (D29)**; available only when "smooth cut audio" is off *or* via the hybrid path below. H.264 passthrough carries the edit-list caveat (frame-accurate in Apple players; ignoring demuxers don't just show lead-in frames — they desync A/V and misreport duration) — surfaced in the dialog, re-encode offered as the safe default for H.264. MP4-container passthrough requires a non-nil `sourceFormatHint` (`.mov` is the permissive container).
+  - **Tier 1.5 — hybrid writer (the WYSIWYG path, D31)**: `AVAssetReader`/`AVAssetWriter` copying video samples untouched while decoding→micro-fading→re-encoding audio (high-bitrate AAC, effectively transparent; hand-encoded AAC carries `TrimDurationAtStart` priming attachments or A/V drifts ~one frame). Video losslessness preserved. Frame accuracy here is edit-list-based, so it inherits Tier 1's demuxer caveat: **"preview == file" is universal on Standard, Apple-player-verified on Lossless/hybrid** — the "?" explainer says so. If the N2 spike shows sequential writer sessions don't edit out lead-ins for segments 2..N, the fallback architecture is per-segment writes stitched with `AVMutableMovie`.
   - **Tier 2 — re-encode**: `AVAssetWriter` + VideoToolbox at high bitrate. Always used for mixed-codec or mixed-color-space source sets. **Color policy (D29)**: export dialog offers output target — default **SDR** for mixed material (sane for web/social talking-head content), HDR available when sources allow.
 - Modern async API (`export(to:as:)` / writer equivalents, `states(updateInterval:)`-style progress); post-export verification pass (duration sum matches resolved ranges; boundary spot-check); provenance metadata stamped into the output.
 - **Export mode picker + per-cut analysis (D14)**: the dialog reports keyframe alignment per cut ("11 of 14 cuts are keyframe-aligned", from `KeyframeMapService`) and offers **Standard** (re-encode — WYSIWYG, universal; default for long-GOP sources) vs **Lossless** (passthrough — offered clean when all cuts are keyframe-aligned or sources are all-intra; otherwise carries the edit-list warning). **Smart** mode slots in with N16. Every mode and the per-cut report carries a hover-"?" plain-language explainer (spec UX requirement — outcomes, not codec jargon; "keyframe" terminology stays in trim mode's power-user ticks; Standard always cuts exactly on the chosen frame).
@@ -391,7 +405,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 ### N13 — v1 close-out
 
-**Scope:** full parity audit (one row per §1 pain point + one per spec "What the app must let me do" bullet); golden-master reruns; **`File → Back Up Library…`** (JSON export in the clipfarm.json v1 shape) + restore path with log-and-skip tolerance for unknown keys; land the spec amendments (§9) in `clipfarm-spec.md` + rewrite CLAUDE.md's invariants/stack/structure sections for the native app; archive or delete the web implementation at Lillian's discretion (its reference job ends when golden-masters pass).
+**Scope:** full parity audit (one row per §1 pain point + one per spec "What the app must let me do" bullet); golden-master reruns; **`File → Back Up Library…`** (JSON export in the clipfarm.json v1 shape) + restore path with log-and-skip tolerance for unknown keys — **restore = replace the whole library** (confirm dialog + automatic pre-restore snapshot; never a merge); **Settings → Restore snapshot** (the spec's promise — reuses the N1 close→swap→reopen path, clears the undo stack, restarts observations); land the spec amendments (§9) in `clipfarm-spec.md` + rewrite CLAUDE.md's invariants/stack/structure sections for the native app; archive or delete the web implementation at Lillian's discretion (its reference job ends when golden-masters pass).
 
 **Verify:** one full real editing session — ingest a new recording, brief, tag, assemble, trim, export — native only, keyboard-heavy, and it feels *good*.
 
@@ -403,7 +417,7 @@ Locked as real phases per review round 1: the goal is a **paid, directly-distrib
 
 ### N14 — In-app transcription (WhisperKit)
 
-**Scope:** `TranscriptionService` on WhisperKit (SPM, macOS 14+): word-level timestamps (`WordTiming {word, start, end, probability}` maps ~1:1 onto the existing sidecar schema — WhisperKit output is *written as* `.whisper.json` sidecars, keeping one interchange format and full transcribe.py compatibility); model management UI (download large-v3-turbo on first use, storage location, progress); ingest integration — untranscribed video → "Transcribe now" per source or auto-transcribe-on-ingest setting; background queue with progress; re-transcribe affordance. Quality note: large-v3-turbo is an *upgrade* over the current faster-whisper `small`. Apple `SpeechTranscriber` (macOS 26) evaluated as a "fast draft" option only if its word-timing quality proves out on real recordings — benchmark, don't assume.
+**Scope:** `TranscriptionService` on WhisperKit (SPM, macOS 14+): word-level timestamps (`WordTiming {word, start, end, probability}` maps ~1:1 onto the existing sidecar schema — WhisperKit output is *written as* `.whisper.json` sidecars, keeping one interchange format and full transcribe.py compatibility); model management UI (download large-v3-turbo on first use, storage location, progress); ingest integration — untranscribed video → "Transcribe now" per source or auto-transcribe-on-ingest setting; background queue with progress; re-transcribe affordance. Quality note: large-v3-turbo is an *upgrade* over the current faster-whisper `small`. Apple `SpeechTranscriber` (macOS 26) evaluated as a "fast draft" option only if its word-timing quality proves out on real recordings — benchmark, don't assume. **Acceptance gate (finding 16):** golden-master WhisperKit word timings against existing `transcribe.py` sidecars on the dogfood folder — timing *quality*, not just WER (turbo's pruned decoder has fewer alignment heads); verify the leading-space word convention matches faster-whisper's (or normalize in the sidecar writer); if SpeechTranscriber is ever wired, its run-level AttributedString timings need a per-word flattening adapter.
 
 **Verify:** drop a bare .mov with no sidecar → transcribed in-app → segmented → browsable, no terminal involved.
 
@@ -421,7 +435,7 @@ Locked as real phases per review round 1: the goal is a **paid, directly-distrib
 
 **Goal:** Lillian's "move the keyframe to where the cut is" — frame-accurate, ~lossless, universally-compatible export for long-GOP H.264/HEVC. The answer for the existing iPhone back-catalog (D14).
 
-**Scope:** for every cut that isn't keyframe-aligned, decode and re-encode **only** the span from the cut point to the next keyframe (creating a new keyframe exactly at the cut); stream-copy every other sample; splice via `AVAssetWriter`. The hard problem is bitstream-parameter alignment at splice points (SPS/PPS compatibility between copied and re-encoded runs — matched VideoToolbox encode parameters or multi-sample-description tracks). Reference implementations to study: `skeskinen/smartcut` (Python/PyAV — the cleanest), LosslessCut's experimental smart-cut, `avcut`. Ships as the **Smart** option in the N12 export mode picker. Acceptance gate: a player-compatibility matrix (QuickTime, VLC, Chrome, YouTube ingest) — if splice robustness can't be proven beyond the Apple ecosystem, the mode ships labeled "Apple-verified" and Standard remains the universal default.
+**Scope:** for every cut that isn't keyframe-aligned, decode and re-encode **only** the span from the cut point to the next keyframe (creating a new keyframe exactly at the cut); stream-copy every other sample. **Primary mux path: ffmpeg, behind the existing `FFmpegLocator`** (finding 5) — every credible reference implementation muxes through ffmpeg/libav; there is no documented AVAssetWriter support for appending heterogeneous format descriptions to one input, and multi-stsd MP4s demux poorly in the wild. Encode boundary GOPs with VideoToolbox to matched parameters; hand ffmpeg the splice. A pure-AVAssetWriter matched-parameter splice is the **stretch goal**, not the plan. (Consequence for D16/N19: the ffmpeg dependency is effectively permanent — bundle the signed LGPL build.) Reference implementations to study: `skeskinen/smartcut` (Python/PyAV — the cleanest; unmaintained since 2026-02), LosslessCut's experimental smart-cut, `avcut`. Ships as the **Smart** option in the N12 export mode picker. Acceptance gate: a player-compatibility matrix (QuickTime, VLC, Chrome, YouTube ingest) — if splice robustness can't be proven beyond the Apple ecosystem, the mode ships labeled "Apple-verified" and Standard remains the universal default.
 
 **Verify:** export an iPhone H.264 attempt in Smart mode — cuts frame-exact; total re-encoded span ≤ a few seconds per cut with the stream bit-identical elsewhere; plays clean in QuickTime, VLC, and Chrome.
 
@@ -445,7 +459,7 @@ Deliberately basic per spec: assembly aids, not creative effects — Resolve kee
 
 **Scope** (the "ship it to strangers" phase; several items are packaging, not architecture, *because* the seams were built earlier):
 - **Signing/distribution (D24)**: Developer ID certificate, hardened runtime, notarization; **direct distribution** (not Mac App Store — sandboxing is hostile to this app's file model); Sparkle for updates.
-- **Bundled dependencies (D16)**: signed LGPL ffmpeg build inside the bundle (or eliminate the dependency by dropping/gating .mkv), swapped in behind `FFmpegLocator`; WhisperKit model download UX hardened (checksums, resume, offline messaging).
+- **Bundled dependencies (D16)**: signed LGPL ffmpeg build inside the bundle, swapped in behind `FFmpegLocator` — the dependency is effectively permanent now that N16 smart-cut muxes through it (the old "eliminate by gating .mkv" branch is dead); WhisperKit model download UX hardened (checksums, resume, offline messaging).
 - **Payments/licensing**: evaluate Paddle vs Lemon Squeezy (both handle tax/VAT as merchant of record — the right shape for a solo dev); license-key validation kept simple and offline-tolerant. Pricing/API-token economics (bundled Anthropic proxy vs bring-your-own-key) is a business decision — **bring-your-own-key + Ollama default keeps v-commercial-1 simple and is the pick until real users say otherwise**.
 - **First-run experience**: onboarding (pick library folder, TCC folder-access prompt with explanation, optional model download, sample project); empty states audited.
 - **User-remappable keys (D19 payoff)**: settings UI over the serializable KeyMap registry; conflict detection; reset-to-defaults.
@@ -473,7 +487,7 @@ Measured at N2/N4/N8 gates, re-checked at N13:
 
 ## 7. Risks & mitigations
 
-1. **Composition playback assumption fails** → N2 is a gated spike right after the data layer; escape hatch (sample-buffer pipeline) triggers *at N2* by commitment, not later (D11).
+1. **Composition playback assumption fails** → N2 is a gated spike right after the data layer; escape hatch (sample-buffer pipeline) triggers *at N2* by commitment, not later (D11). Gate list expanded per `PREBUILD_REVIEW_FINDINGS.md` (geometry, HDR seams, swap-blink, export mini-spike) so media surprises surface at N2, not N10–N12.
 2. **SwiftUI perf at library scale** (6k cards, 30-min transcripts) → transcript view is TextKit 2 from day one (not retrofitted); grid budgeted at N8 with NSCollectionView wrap as fallback.
 3. **Port drift in subtle domain rules** → bit-exact semantics list (§3) + golden-master diffs + the adjudication rule (Python is reference, not oracle — spec decides).
 4. **H.264 passthrough compatibility** (edit-list handling outside Apple players) → tier logic defaults H.264 to re-encode; passthrough is opt-in with the caveat surfaced; keyframe ticks + snap-to-keyframe make true-lossless available case-by-case, and N16 smart-cut is the systemic fix.
@@ -499,5 +513,5 @@ Per the CLAUDE.md rule — divergence is proposed explicitly, never silent:
 8. **Field naming**: `script_json` in the data-model example → `script` (matches implementation since Phase 5).
 9. **Stack section**: Python/FastAPI/React → Swift/SwiftUI/GRDB/AVFoundation; localhost-only network footprint **unchanged** (Ollama + opt-in Anthropic remain the only network calls in Track 1).
 10. **Trim Mode**: promoted from Future Ideas to v1 (N11).
-11. **Trajectory**: "built for you, not for everyone" is amended to "**built for Lillian first**" — the product principles (library-not-timeline, provenance forever, AI-suggests-you-pick, multi-project tagging) remain non-negotiable, and a commercial Track 2 (N14–N18) hardens the same app for paid direct distribution rather than forking it.
+11. **Trajectory**: "built for you, not for everyone" is amended to "**built for Lillian first**" — the product principles (library-not-timeline, provenance forever, AI-suggests-you-pick, multi-project tagging) remain non-negotiable, and a commercial Track 2 (N14–N19) hardens the same app for paid direct distribution rather than forking it.
 12. **Future Ideas pruning**: Trim Mode (→N11), three-tier aggressiveness (→N15), smart-cut export (→N16), voice annotations (→N17), per-clip media composition (→N18), cross-project surfacing UI / FCPXML / audio-energy analysis (→N19), database migration (→executed), auto-transcription (→N14) all move from Future Ideas into numbered phases. Future Ideas retains only the genuinely speculative (B-roll suggestion bucket, per-section auto-aggressiveness profiles, voice-annotation training, multi-machine sync).
