@@ -4,6 +4,26 @@
 
 ---
 
+## ⚠️ 2026-07-05 — Native macOS rewrite: amendment set
+
+ClipFarm is being rewritten as a **native Swift/SwiftUI macOS app**. The product vision, principles, data-model semantics, and views below remain canonical. The *implementation mechanics* are amended as follows — where older text below conflicts, this list wins. Full detail: `NATIVE_REWRITE_PLAN.md` (build plan + architecture), `NATIVE_REWRITE_DECISIONS.md` (decision log), `mac/CLAUDE.md` (per-project rules).
+
+1. **Stack**: Python/FastAPI/React → Swift 6.2 / SwiftUI (+ AppKit hot spots) / GRDB (SQLite) / AVFoundation, macOS 26+. The web implementation is a frozen reference.
+2. **Storage**: `clipfarm.json` → a SQLite library database (default `~/ClipFarm/`). *Reading rule for this document: references to `clipfarm.json` as the live store mean "the library database"; the JSON shape survives as the backup/interchange format (`File → Back Up Library…`).*
+3. **Hand-editability → inspectability + backup.** Live hand-editing of state is retired (~never used in practice; wrong for a distributed app). The watcher/conflict machinery — the "Conflict policy on external edit" and "File watcher implementation" entries under Decisions locked — is superseded. "Unknown-key tolerance" now applies to the backup *restore* path.
+4. **Undo**: first-class in-memory undo (UndoManager — Cmd+Z everywhere, named operations) **plus** the pre-destructive-op snapshot ritual (now `VACUUM INTO`, keep 50).
+5. **Preview**: the two-alternating-`<video>` design and the "Cross-source preview latency" accepted-tradeoff are superseded — `AVMutableComposition` + a single `AVPlayer` plays multi-source assemblies gapless.
+6. **Export**: FFmpeg concat → native tiered export behind a mode picker (**Standard** re-encode / **Lossless** passthrough / **Smart** smart-cut), with a WYSIWYG audio rule (preview == file, always), an explicit output color target (default SDR for mixed HDR/SDR), per-cut keyframe visibility + an optional snap-to-keyframe trim mode, and a smart-cut engine (re-encode only the cut GOPs) for lossless-grade long-GOP export. FFmpeg's remaining role: `.mkv` remux at ingest (AVFoundation cannot open Matroska).
+7. **Segmentation**: the silence threshold (default 2s) and tail policy (default: each clip's end extends to the next word's start; last clip to source duration) are per-library **settings**, with a per-source "Re-apply segmentation settings" action that skips hand-corrected clips (`boundary_edited` flag).
+8. **Search**: word-substring v0 → SQLite FTS5 phrase/prefix search.
+9. **Probing**: ffprobe → AVFoundation ("Source fps detection" superseded; the duration policy — sidecar wins → probe → null — is unchanged).
+10. **Naming**: the data-model example's `script_json` is `script` (as implemented since Phase 5).
+11. **Trajectory**: built for Lillian first; a commercial track (Track 2, phases N14–N19) hardens the same app for **paid direct distribution**. The product principles are unchanged and non-negotiable.
+12. **Promotions out of Future Ideas / Polish layer**: Trim Mode → N11; three-tier aggressiveness → N15; smart-cut → N16; voice annotations → N17; per-clip media composition → N18; cross-project surfacing UI, FCPXML, audio-energy analysis → N19; in-app transcription (WhisperKit) → N14; database migration → executed.
+13. **Build order**: steps 0–11 at the bottom record the completed web v0 (executed through 10a). The operative build order is `NATIVE_REWRITE_PLAN.md` N0–N19, tracked in `PHASES.md` as ever.
+
+---
+
 ## The vision
 
 A personal video studio organized around your raw footage as a queryable, AI-indexed library. You feed it everything you record — every take, every session, every offhand idea — and it gives you back organized views of your own material so you can pull finished videos out of it instead of editing them from scratch.
@@ -14,7 +34,7 @@ You should be able to talk to it both *before* recording (here's the table of co
 
 The wedge use case is the current `btc.0.4` problem: you recorded the same script many ways and need to assemble the good version. But the same engine extracts "ideas worth a short," "lines that connect to argument X," and "moments that drifted off-script into something better." It's a tool for harvesting structure out of long unstructured recordings — across recordings, not just within one.
 
-**Philosophy:** built for you, not for everyone. Custom, powerful, extensible. AI assists, doesn't decide — it surfaces, groups, suggests; you pick. Provenance is never lost. When you notice you want a feature, you can add it in an evening.
+**Philosophy:** built for Lillian first — custom, powerful, extensible — with an eventual paid, directly-distributed release that hardens the same app for others (Track 2 in `NATIVE_REWRITE_PLAN.md`). AI assists, doesn't decide — it surfaces, groups, suggests; you pick. Provenance is never lost. When you notice you want a feature, you can add it in an evening.
 
 ---
 
@@ -58,7 +78,7 @@ Boundary correction mutations propagate by design — if a clip was mis-segmente
 - **Create from scratch**: a new clip ID, no inbound references. Starts untagged.
 - **Delete**: clip removed; `clip_project_tags` entries pointing at it are dropped; affected attempts get `needs_review: true` and the missing clip is rendered as a "removed — pick a replacement" placeholder in the attempt's clip list rather than silently disappearing.
 
-**Undo:** every operation above writes `clipfarm.json` to `.clipfarm/snapshots/<timestamp>.json` *before* the change. Last 50 retained. Revert via Settings → "Restore snapshot" or by copying the file back by hand.
+**Undo:** every operation above is undoable in-app (UndoManager — Cmd+Z, named operations), and a database snapshot (`VACUUM INTO .snapshots/<timestamp>.db`, last 50 retained) is taken *before* the change as crash-surviving insurance. Restore via Settings → "Restore snapshot".
 
 ### Give the AI instructions *before* it processes
 - A project brief screen / file where I write:
@@ -127,6 +147,9 @@ Not one timeline. Multiple views over the same underlying clips:
 - Click any clip anywhere in the UI → preview seeks and plays that range from the source video.
 
 ### Voice annotations during recording (long-term)
+
+*Scheduled — phase N17 (native plan); the trigger-phrase design below stands.*
+
 - While recording I can say things like *"good line, save that for section C"* or *"that one was fire."*
 - The transcript pipeline detects these annotation cues and surfaces them later as first-class tags attached to the immediately-preceding clip.
 - This means I can mark material *while delivering it* and never have to remember it during the edit.
@@ -134,7 +157,7 @@ Not one timeline. Multiple views over the same underlying clips:
 **Caveat — this is harder than it looks.** Distinguishing "good line, save for section C" from actual script content is a real classification problem (the script may legitimately contain phrases like "good line" or "section C"). The pragmatic answer is **a trigger phrase**: every annotation has to start with a configured wake word (e.g. `"clipfarm: ..."`) and ends at the next sentence boundary. Without that, false positives wreck the feature. If trigger-phrase ergonomics feel awkward during a real shoot, this gets pushed to v2+. Don't ship voice annotations casually as a v1 add-on.
 
 ### Export
-- **Full-quality MP4 with cuts done inside the app** — original codec preserved where possible, no quality loss. There's nothing special about DaVinci's cuts that ClipFarm can't match (the AI-blur and other ML-driven creative effects are real but live elsewhere in the workflow), so the cuts happen here, in the program.
+- **Full-quality MP4 with cuts done inside the app.** Long-GOP reality (H.264/HEVC — the iPhone back-catalog): frame-accurate + lossless + universally-compatible is only automatic for all-intra sources (ProRes), so ClipFarm handles it honestly with an export mode picker: **Standard** (high-bitrate re-encode — the industry path, visually transparent for this content, universal), **Lossless** (passthrough — offered clean when sources are all-intra or every cut lands on a keyframe; keyframe positions are visible while trimming, with an optional snap-to-keyframe mode), and **Smart** (smart-cut: re-encode only the GOP at each cut so a new keyframe lands exactly on the cut, stream-copy everything else). **WYSIWYG rule**: the exported file always matches the preview — including the "smooth cut audio" micro-fade setting and the chosen output color target (default SDR when mixing HDR iPhone + SDR camera footage). **UX requirement:** the mode picker and any cut-alignment indicator ship with a plain-language explainer reachable from a small hover "?" — phrased as outcomes ("exports with zero quality loss" / "re-encodes so cuts land exactly where you put them"), no codec jargon in the primary UI; "keyframe" terminology appears only in trim mode's power-user ticks. **Standard mode always cuts exactly where the user chose, on any footage.** The creative effects (AI-blur etc.) still live elsewhere in the workflow; the cuts happen here, in the program.
 - **FCPXML export to DaVinci Resolve** is the optional handoff path, not the default. Use it when you want Resolve's creative polish layer — color, audio mixing, effects.
 - Export any attempt at any time. The export step is independent from the editing step.
 
@@ -170,6 +193,8 @@ I'll sketch each of these in ASCII next if you want, but here's the list:
 These live on top of an already-organized library — don't let them contaminate the core vision. But the headline feature here is genuinely distinctive in its own right and worth pitching properly:
 
 ### Three-tier aggressiveness editing (the headline)
+
+*Scheduled — phase N15 (native plan), built on the N11 trim-mode engine.*
 
 Most editors make you decide every cut individually. Most automatic cleanup tools give you one global setting and that's it. This is the in-between that nobody builds:
 
@@ -279,17 +304,17 @@ This is what makes the polish layer worth building as part of ClipFarm rather th
 
 ### Stack (locked)
 
-- **Backend**: Python 3.12 + FastAPI + uvicorn. Serves the API and hosts the frontend on `localhost:8765`.
-- **Storage**: a single `clipfarm.json` at the project root. **The JSON is the source of truth** — human-readable, hand-editable, git-diffable. The app loads it, builds in-memory indexes on startup, writes atomically (`tmp` → `fsync` → `rename`) on save, and watches for external edits via `watchdog` (prompts on conflict if there are unsaved in-memory changes). **Scale caveat**: a 30-min recording produces ~350 clips; the `05.19.26/mp4/` folder alone (~18 recordings) hits ~6k clips. The atomic-write-on-every-debounced-save story holds into the low thousands; beyond that, full-file rewrite cost grows fast. Budget the SQLite migration sooner than "eventually" — see Future Ideas.
-- **Snapshots / undo**: every destructive operation (split, merge, delete, retag-clobber) writes a copy of `clipfarm.json` to `.clipfarm/snapshots/<ISO-timestamp>.json` *before* the operation runs. Last 50 retained, older auto-pruned. No formal undo system — just file-level revert from the snapshots directory (via a "Restore snapshot" affordance in Settings, or by hand-copying the file). Cheap insurance against bad splits.
-- **Schema versioning**: every `clipfarm.json` carries `"version": N`. A `clipfarm/migrations/` directory holds one function per bump (`v1_to_v2.py`, etc.) that mutates an in-memory dict. On load, if the file's version is older than current, migrations run sequentially and the file is saved back at the new version. Scaffold the directory and an empty `v1_to_v2.py` placeholder at v0 — cheap now, expensive to retrofit.
+- **App**: native Swift 6.2 macOS app (SwiftUI + AppKit hot spots), macOS 26+. No server, no HTTP — the former API surface becomes store methods. *(Superseded: Python 3.12 + FastAPI + uvicorn on `localhost:8765`.)*
+- **Storage**: a SQLite library database (GRDB 7, WAL mode) — the source of truth, default `~/ClipFarm/`. Inspectable with `sqlite3` / DB Browser; `File → Back Up Library…` exports the full state as JSON in the documented shape (git-diffable), with a tolerant restore path. This *is* the "budget the SQLite migration sooner than eventually" plan, executed at the rewrite.
+- **Snapshots / undo**: first-class in-memory undo via UndoManager (Cmd+Z / Edit menu, every mutation, named). Additionally, every destructive operation (split, merge, delete, retag-clobber) snapshots the database (`VACUUM INTO .snapshots/<ISO-timestamp>.db`) *before* running; last 50 retained, older auto-pruned. Belt (crash-surviving snapshots) and suspenders (the undo stack).
+- **Schema versioning**: GRDB `DatabaseMigrator` — one registered migration per version bump, run on open, from day one (the direct analog of the old `clipfarm/migrations/` design). Backup JSON carries the schema version so restores migrate too.
 - **Source file integrity**: on app start (and on every Library refresh), each `sources[i].path` is verified to still resolve to a file. If not, the source is marked `"unavailable": true` and shown greyed-out in the UI rather than crashing the load. Clips, tags, and attempt references stay in the JSON — they become viewable but unplayable until the file is restored or repointed.
-- **LLM**: **Pluggable provider** — Ollama (default, free, local) or Anthropic API (opt-in, paid, fast). Selected from the Settings page per-user; orchestrators are provider-agnostic (single `chat_with_json_schema(messages, schema)` interface). Out of the box ClipFarm runs against [Ollama](https://ollama.com/) on `localhost:11434` with **Llama 3.1 8B** (4-bit quant) — zero external dependency. The Anthropic API path (Sonnet 4.6 default, Opus 4.7 and Haiku 4.5 also selectable) is the "I need fast iteration" upgrade: ~30s for a 10-batch tagging run vs ~5+ min on local Llama, with prompt caching on the brief context making subsequent batches in the same 5-minute window dramatically cheaper. Ollama JSON-schema-constrained outputs use `format`; Anthropic uses tool-use with the schema as `input_schema` on a single forced tool. Provider choice never leaks past the dispatcher in `clipfarm/llm.py` + `clipfarm/llm_anthropic.py`. Locked v0 — revisit if tagging quality on local Llama is inadequate (Qwen 2.5 14B is the local-side "go bigger" option if RAM allows).
-- **Embeddings**: `sentence-transformers/all-MiniLM-L6-v2` (~80MB). For script-less semantic clustering.
-- **String matching**: `rapidfuzz` for script-anchored take matching.
-- **Transcripts**: Whisper, via the existing `transcribe.py` pipeline. ClipFarm consumes word-level JSON, doesn't run Whisper itself.
-- **Video processing**: FFmpeg subprocess for concat exports.
-- **Frontend**: React + Vite + Tailwind, single SPA served by FastAPI. Drag/drop, multiple synchronized views, and live preview are interactive enough that React's component model pays off quickly. (Vanilla considered and rejected — the UI gets complex fast.)
+- **LLM**: **Pluggable provider** — Ollama (default, free, local) or Anthropic API (opt-in, paid, fast). Selected from the Settings page per-user; orchestrators are provider-agnostic (single `chat_with_json_schema(messages, schema)` interface). Out of the box ClipFarm runs against [Ollama](https://ollama.com/) on `localhost:11434` with **Llama 3.1 8B** (4-bit quant) — zero external dependency. The Anthropic API path (Sonnet 4.6 default, Opus 4.7 and Haiku 4.5 also selectable) is the "I need fast iteration" upgrade: ~30s for a 10-batch tagging run vs ~5+ min on local Llama, with prompt caching on the brief context making subsequent batches in the same 5-minute window dramatically cheaper. Ollama JSON-schema-constrained outputs use `format`; Anthropic uses structured outputs (JSON schema; forced tool-use is the proven fallback). Provider choice never leaks past the `CFLLM` dispatcher. The API key lives in the macOS Keychain. Locked v0 — revisit if tagging quality on local Llama is inadequate (Qwen 2.5 14B is the local-side "go bigger" option if RAM allows).
+- **Embeddings** (future — for script-less semantic clustering): decide natively when that path lands — Apple NaturalLanguage embeddings or a Core ML MiniLM port. *(Was: `sentence-transformers/all-MiniLM-L6-v2`.)*
+- **String matching**: Swift port of the ratio-based matching for script-anchored takes; thresholds and tests port with it. *(Was: `rapidfuzz`.)*
+- **Transcripts**: Whisper word-level JSON sidecars remain the interchange format. v1 consumes sidecars from the existing `transcribe.py`; phase N14 adds in-app transcription (WhisperKit, large-v3-turbo — a quality upgrade over faster-whisper `small`) writing the same sidecars. In-app transcription is a hard requirement for distribution.
+- **Video processing**: AVFoundation end-to-end (composition preview, tiered export, thumbnails, waveforms, keyframe maps). FFmpeg subprocess remains only for `.mkv` remux at ingest.
+- **UI**: SwiftUI shell with AppKit at three hot spots — TextKit 2 transcript view (behind a swap-cheap adapter seam), NSEvent monitor for modal trim-mode keys, and the player surface. Three-layer keyboard system over a serializable KeyMap registry (user-remappable at N19). *(Superseded: React + Vite + Tailwind SPA.)*
 
 ### Naming hierarchy
 
@@ -307,6 +332,8 @@ Three levels. Each clip can carry tags at any subset of these levels, for any nu
 When you write a brief for a new project, the LLM scans the *existing library* and tags relevant clips for the new project too. You don't re-record; you re-mine.
 
 ### Data model
+
+*Native note (2026-07-05): the JSON below is now the **backup/interchange format** (`File → Back Up Library…`) and the documentation of record for entity shapes; at rest, the same entities live 1:1 in SQLite tables (see `NATIVE_REWRITE_PLAN.md` §2.3). Additions in the native schema: clips carry `boundary_edited` (set by any hand boundary-correction; re-apply-segmentation skips those), sources carry `unavailable` / `is_hdr`, attempts carry `needs_review` — all three already existed in the web implementation or plan and are now spec-official.*
 
 ```json
 {
@@ -339,7 +366,7 @@ When you write a brief for a new project, the LLM scans the *existing library* a
     "1": {
       "name": "btc explainer v0.4",
       "brief_md": "...",
-      "script_json": { "lines": [ "..." ] },
+      "script": { "lines": [ "..." ] },
       "tags": {
         "1": { "kind": "section", "name": "intro", "parent_id": null, "order_idx": 0 },
         "2": { "kind": "line",    "name": "the hook", "parent_id": null, "order_idx": 0 },
@@ -418,7 +445,7 @@ Notes on the shape:
   }
   ```
   The hook is in the schema now so adding any of the three Per-clip-media-composition operations later is additive — no migration of existing clip records. v0 readers can ignore the field; v0 writers leave it `null`.
-- **Editing by hand is supported.** Open `clipfarm.json` in any editor, change a value, save. The app's file watcher picks it up and reloads. If you've made unsaved in-memory edits, you'll be prompted before either side overwrites the other.
+- **Editing by hand: superseded** (amendment #3). Inspect live via `sqlite3` / DB Browser; for surgical edits, `File → Back Up Library…` → edit the JSON → restore (tolerant, log-and-skip on unknown keys).
 
 ### Whisper transcript schema (consumed, not produced)
 
@@ -457,10 +484,10 @@ On load, ClipFarm checks `schema_version == 1` and refuses (with a clear error p
 **1. Ingest sources.** Point at a folder of video files in `{.mov, .mp4, .m4v, .mkv}`, each ideally accompanied by a Whisper word-level JSON transcript (`<stem>.whisper.json` sibling, generated upstream by the existing `transcribe.py` — ClipFarm does **not** run Whisper itself in v0). For each pair, ClipFarm:
 
 - Adds an entry to `sources` with `transcript_path` pointing at the sidecar on disk (transcripts are **not** embedded in `clipfarm.json` — they stay as separate files and are read on demand). Source IDs are monotonic stringified integers (`"1"`, `"2"`, ...) — opaque after creation per the data-model invariant.
-- Probes `fps` via `ffprobe` (we already ship FFmpeg). If probing fails for any reason, fps is recorded as `null` and frame-precise operations later fall back to 30 fps with a one-time UI warning.
+- Probes `fps` natively via AVFoundation (frame math uses real sample timing — `minFrameDuration` — never the average rate, which is wrong on VFR iPhone footage). If probing fails for any reason, fps is recorded as `null` and frame-precise operations later fall back to 30 fps with a one-time UI warning.
 - Resolves `duration_sec` via the **sidecar wins → ffprobe → null** policy. See "Source duration policy" in Decisions locked.
 - Validates the source filename — stems containing `__` (the clip-ID separator) are rejected with a clear error and an offer to rename. See the source-filename constraint in "Decisions locked."
-- Segments the transcript into candidate `clips` by silence boundary (gap ≥ 2 sec between words).
+- Segments the transcript into candidate `clips` by silence boundary (gap ≥ the library's silence threshold, default 2 sec) with the configurable tail policy (default: each clip's `end_sec` extends to the next word's start; the last clip extends to the source duration). Both are per-library settings; a per-source "Re-apply segmentation settings" action recomputes auto-detected clips and skips hand-corrected ones (`boundary_edited`).
 - **Sidecar problems are non-fatal to the source.** If the sidecar is malformed or reports an unsupported `schema_version`, the source is still added (as footage-only with `transcript_path: null`) and the rejection is reported in the ingest result. Re-running `transcribe.py` and re-ingesting upgrades the source in-place. See "Sidecar errors don't kill the source" in Decisions locked.
 
 On every subsequent startup, source paths are re-verified; missing files mark the source `unavailable: true` and grey-out in the UI rather than crashing the load. No LLM yet, no project yet.
@@ -480,9 +507,9 @@ On every subsequent startup, source paths are re-verified; missing files mark th
 
 **5. User edits attempts.** All edits update the active `attempts[id]` object in memory (reorder, trim offsets, add/remove clips). Saves are debounced (~500ms) and written atomically to `clipfarm.json`. Fork = duplicate the attempt object with a new `parent_attempt_id`. Replace clip = swap `clip_id` in the relevant `clips[i]` entry. Trim = update offsets. Never touches base `clips` (boundary correction does that — see above).
 
-**6. Live preview.** Frontend resolves the attempt to a list of `(source_path, effective_start, effective_end)` ranges. Plays them with **two alternating HTML5 `<video>` elements** — one plays the current clip, the other preloads the next at `effective_start`. On `ended`, the elements swap and the just-finished one preloads what comes after. This avoids the visible flash/gap you'd otherwise get from seeking a single `<video>` element on `ended` (browsers take a moment to seek, even on local files). Not as gapless as MediaSource Extensions, but smooth enough for rough-assembly review. **Cross-source caveat**: when consecutive clips come from different `.mov` files, the alternating elements have to load a new file path between clips, which adds a perceptible ~100–300ms gap at the boundary. Accepted v0 tradeoff — single-source transitions stay smooth, and cross-source attempts are still fully usable, just with a beat of latency at each source switch. MSE is the Stage 2 upgrade if it ever matters.
+**6. Live preview.** The resolver turns the attempt into a list of `(source, effective_start, effective_end)` ranges; the playback engine inserts them back-to-back into an `AVMutableComposition` (one video track, one audio track, assets cached per source) played by a single persistent `AVPlayer`. Multi-source assemblies play **gapless** — the cross-source-latency caveat from the web implementation no longer exists. Edits rebuild the composition (milliseconds) and swap the player item seamlessly; range boundaries use exact boundary-time observers, not polling. Optional ~10ms audio micro-fades at cut points ("smooth cut audio" setting, default on) — honored identically at export per the WYSIWYG rule.
 
-**7. Export.** Resolve attempt to a list of ranges with trim applied. FFmpeg `concat` demuxer with a generated input list — stream copy where codec/fps match, re-encode only where they don't. Output MP4 at original quality. FCPXML is the same range list rendered as `<clip>` elements.
+**7. Export.** Resolve attempt to ranges with trim applied (same resolver as preview), then the tiered native exporter behind the mode picker: Standard re-encode / Lossless passthrough / Smart (smart-cut), with per-cut keyframe analysis shown in the dialog, the WYSIWYG audio rule, and an explicit output color target. See amendment #6. FCPXML is the same range list rendered as `<clip>` elements (Track 2).
 
 ### First-run / startup behavior
 
@@ -544,6 +571,8 @@ A persistent **live-preview pane** (resizable, dismissable) follows whatever cli
 
 ### Trim Mode — keyboard-only precision clip editing
 
+*Promoted to v1 — phase N11 (native plan). The browser constraint that deferred it no longer exists.*
+
 A dedicated mode optimized for keyboard-only operation. The thesis: scrub wheels and hand-positioned dials are slower than the right keyboard intuition. With practice, a key combo for "cut" becomes muscle memory; you develop a feel for how much needs to be trimmed and can eventually type microsecond values directly. No mouse, no dial — the speed editor sold for hundreds of dollars is replaced by a few key combos.
 
 Mechanics:
@@ -573,6 +602,8 @@ A complementary mode where the AI auto-suggests clip boundaries from silence + t
 
 ### Per-clip media composition
 
+*Scheduled — phase N18 (native plan).*
+
 Basic NLE-style operations that aren't core to take selection but feel like table stakes for any clip-based tool. **Deliberately basic** — ClipFarm doesn't become a full NLE; these serve assembly and preview, not creative polish (DaVinci still owns that):
 
 - **Audio replacement from external file.** Sync an external audio recording (e.g. a separate-mic capture of the same delivery) to a clip, then replace the clip's native audio permanently. Use case: video was recorded with the camera mic, audio was recorded with a real mic on a separate device — once synced, the external track becomes the canonical audio. Data model sketch: clip gets an optional `audio_override: { file_path, start_offset_sec }` field; the resolver swaps the audio track during preview and export.
@@ -582,6 +613,8 @@ Basic NLE-style operations that aren't core to take selection but feel like tabl
 All three share a theme: clips have **independently-mutable audio and video tracks**. The schema hook for this is **already in place** — every clip has a `tracks: null` field reserved at v0 (see Data model notes for the populated shape). Implementing any of the three operations later is purely additive: writers start filling the field, readers start respecting it, no migration needed for existing clip records.
 
 ### End-state: move to a real database (sooner than "eventually")
+
+*Executed — the native rewrite runs on GRDB/SQLite from day one (2026-07-05). Preserved below as the original rationale.*
 
 `clipfarm.json` is the right choice **for v0** — prioritizing inspectability, hand-editability, and fast iteration. But budget the SQLite migration **sooner than "eventually"** based on real scale math: a single 30-min recording produces ~350 clips; the `05.19.26/mp4/` folder alone (~18 recordings) hits ~6k clips. Atomic-write-on-every-debounced-save holds into the low thousands; beyond that, full-file rewrite cost grows fast and starts feeling slow during normal editing.
 
@@ -605,7 +638,7 @@ The migration is mechanical, not a rewrite: every top-level object in the JSON m
 
 A linear path through the spec. Each step delivers something verifiable. Designed so a fresh Claude session (or future-you) can read the spec, pick the next unchecked step, and know what to build without rebuilding context.
 
-**This list is canonical.** `PHASES.md` references these steps by number and adds the per-phase plan + verification artifact — it does **not** duplicate the step descriptions. If a step here changes, `PHASES.md` reflects the change; if `PHASES.md` plan work surfaces a missing decision, the resolution lands here, not in the plan. One source of truth for *what*, one place for *how*.
+**This list is now the historical record of the web build (v0, executed through step 10a).** The operative build order is `NATIVE_REWRITE_PLAN.md` (phases N0–N19), which plays the same role this list played: one source of truth for *what*, with `PHASES.md` holding the per-phase *how*.
 
 **0. Environment setup.**
 Install Ollama (`brew install ollama`), start the service, pull Llama 3.1 8B (`ollama pull llama3.1:8b`), confirm `localhost:11434` responds and can return JSON-mode output to a test prompt. Confirm at least one finished Whisper word-level JSON exists in `~/Desktop/AdAstra/2ndMind/.../05.19.26/mp4/` to use as test data. Not "build" work but unblocks everything downstream.

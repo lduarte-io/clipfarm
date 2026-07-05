@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code when working in this repository.
 
+> **⚠️ Native rewrite in progress (2026-07-05).** Active development is the Swift macOS app in `mac/` — rules in `mac/CLAUDE.md`, build plan in `NATIVE_REWRITE_PLAN.md`, decisions in `NATIVE_REWRITE_DECISIONS.md`. The Python/React implementation described below is a **frozen reference** (used for porting + golden-master tests): do not build new web features, and read this file's stack/invariant sections as describing the reference implementation, not current rules. `clipfarm-spec.md` remains canonical and carries the 2026-07-05 native amendment set at its top. The native rules are imported below so root sessions always load them:
+
+@mac/CLAUDE.md
+
 ## Source of truth (authoritative)
 
 - **Spec**: @clipfarm-spec.md — full vision, original ideation, technical design, data model, build order, future ideas.
