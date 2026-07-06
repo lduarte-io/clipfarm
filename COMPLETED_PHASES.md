@@ -138,7 +138,7 @@ Reviewer ran `REVIEW_PROMPT.md` with zero implementation context; independently 
 
 ## Phase N1 — Domain models + persistence core (native rewrite)
 
-**Manual verify: DEFERRED** (N1 tier = auto-continue; queue for the next hard stop — N2's by tier table, N4's combined verify covers N1 formally). Checklist for Lillian:
+**Manual verify: VERIFIED ✅ (Lillian, 2026-07-06 at the N2 hard stop)** — item 1 via the then-current 157-test suite (`swift test` green from `mac/ClipFarmKit`); item 2 via Xcode Run at the post-move path (`~/dev/clipfarm/mac/`): app launches, six-item sidebar + Library + inspector/preview pane confirmed; item 3 stands on the in-session scratch-library evidence below. Original deferred checklist retained for the record:
 
 1. `cd mac/ClipFarmKit && swift test` → 118 tests green (~30s cold build, <1s test run).
 2. `cd mac && xcodebuild -scheme ClipFarm -configuration Debug build | xcbeautify -q` → clean (the app no longer carries the N0 linkage probe).
@@ -276,7 +276,7 @@ ADJUDICATION FOLLOW-UP (2026-07-06, same-day commit):
 
 ## Phase N0 — Toolchain & skeleton (native rewrite)
 
-**Manual verify: DEFERRED** (N0 tier = auto-continue; queue for the next hard stop). Checklist for Lillian:
+**Manual verify: VERIFIED ✅ (Lillian, 2026-07-06 at the N2 hard stop)** — item 1's Run half completed: app Run from Xcode at the post-move path (`~/dev/clipfarm/mac/`) launches with the six-item sidebar + inspector/preview pane; items 2–3 via the current suite/build (157 tests green, clean builds through the N2 commits); item 4 stands on the N0 programmatic pre-verification. Original checklist retained for the record:
 
 *Partial verify 2026-07-06 (Lillian, live during the N1 run): opened `ClipFarm.xcodeproj` in Xcode successfully — the hand-authored pbxproj parses and loads in the GUI, settling the pbxproj-validity risk. Item 1's Run-the-app half and items 2–4 remain deferred.*
 
