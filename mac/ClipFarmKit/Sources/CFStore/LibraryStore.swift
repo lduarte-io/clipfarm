@@ -151,4 +151,6 @@ public enum LibraryStoreError: Error, Equatable {
     /// A clip insert referenced an ID that already exists (clip IDs are
     /// allocated once, at creation).
     case duplicateClipID(String)
+    /// An update targeted a source ID that doesn't exist.
+    case unknownSourceID(String)
 }

@@ -75,6 +75,33 @@ extension LibraryStore {
         return id
     }
 
+    /// Replaces a source's row wholesale (the ingest transcript-upgrade
+    /// path; Library repointing later). Undoable ("Update Source") with the
+    /// full before-value captured.
+    @MainActor
+    public func updateSource(id: String, _ source: Source) throws {
+        let before = try dbPool.write { db -> Source in
+            guard let existing = try SourceRecord.fetchOne(db, key: id) else {
+                throw LibraryStoreError.unknownSourceID(id)
+            }
+            try SourceRecord(id: id, source: source).update(db)
+            return existing.source
+        }
+        registerUndo(
+            actionName: "Update Source",
+            inverse: { store in
+                try store.dbPool.write { db in
+                    try SourceRecord(id: id, source: before).update(db)
+                }
+            },
+            reapply: { store in
+                try store.dbPool.write { db in
+                    try SourceRecord(id: id, source: source).update(db)
+                }
+            }
+        )
+    }
+
     /// Inserts clips in bulk (the ingest shape: one segmentation pass, many
     /// clips, one undoable action "Add Clips"). Clip IDs are caller-encoded
     /// via `ClipID.make` at creation and opaque afterward.
