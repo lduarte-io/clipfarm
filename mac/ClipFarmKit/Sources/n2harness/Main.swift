@@ -8,7 +8,7 @@ import Foundation
 /// produces is regenerable.
 ///
 ///   swift run n2harness fixtures                 # render the synthetic set
-///   swift run n2harness seams uniform|real|mixed # seam-drop instrumentation
+///   swift run n2harness seams uniform|real|mixed|solo # seam instrumentation (each = single-track vs alternating-tracks A/B)
 ///   swift run n2harness blink [--cycles N]       # swap-blink A/B
 ///   swift run n2harness rotation                 # D32 mixed-rotation probe
 ///   swift run n2harness hdrseam                  # D29 HDR↔SDR probe + export
@@ -65,7 +65,9 @@ struct N2Harness {
         case "seams":
             try await runSeams(env: env, variant: arguments.first ?? "uniform")
         case "blink":
-            try await runBlink(env: env, cycles: intOption("--cycles", default: 100))
+            try await runBlink(
+                env: env, cycles: intOption("--cycles", default: 100),
+                forceFixture: arguments.contains("--fixture"))
         case "rotation":
             try await runRotation(env: env)
         case "hdrseam":
@@ -75,7 +77,9 @@ struct N2Harness {
         case "frameacc":
             try await runFrameAccuracy(env: env)
         case "looptest":
-            try await runLoop(env: env, loops: intOption("--loops", default: 50))
+            try await runLoop(
+                env: env, loops: intOption("--loops", default: 50),
+                escalationOnly: arguments.contains("--escalation-only"))
         case "fades":
             try await runFades(env: env)
         case "exportspike":
@@ -86,6 +90,7 @@ struct N2Harness {
             try await runSeams(env: env, variant: "uniform")
             try await runSeams(env: env, variant: "real")
             try await runSeams(env: env, variant: "mixed")
+            try await runSeams(env: env, variant: "solo")
             try await runBlink(env: env, cycles: 100)
             try await runRotation(env: env)
             try await runHDRSeam(env: env)

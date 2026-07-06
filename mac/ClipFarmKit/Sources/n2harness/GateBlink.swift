@@ -10,19 +10,22 @@ import QuartzCore
 /// stall > 250 ms while rate == 1. Gate: zero blinks on the winning
 /// strategy — the winner becomes the PlayerEngine contract.
 @MainActor
-func runBlink(env: HarnessEnv, cycles: Int) async throws {
+func runBlink(env: HarnessEnv, cycles: Int, forceFixture: Bool = false) async throws {
     let probed = await env.probedRealFiles()
     let file: URL
     let duration: Double
     let materialNote: String
-    if let real = probed.max(by: { $0.meta.duration.seconds < $1.meta.duration.seconds }) {
+    if !forceFixture,
+       let real = probed.max(by: { $0.meta.duration.seconds < $1.meta.duration.seconds }) {
         file = real.url
         duration = real.meta.duration.seconds
         materialNote = "- material: real \(file.lastPathComponent) (\(fmt(duration, 1))s)"
     } else {
         file = try await env.ensureFixture(FixtureSet.h264A)
         duration = FixtureSet.h264A.durationSec
-        materialNote = "- material: synthetic h264A (inbox empty) — re-run when populated"
+        materialNote = forceFixture
+            ? "- material: synthetic h264A 1080p30 (--fixture comparison leg — isolates swap mechanics from heavyweight-decode spin-up)"
+            : "- material: synthetic h264A (inbox empty) — re-run when populated"
     }
     // Three ranges spread across the file; starts deliberately off whole
     // seconds (non-keyframe cuts).

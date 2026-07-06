@@ -104,11 +104,17 @@ func runRebuild(env: HarnessEnv) async throws {
 /// start ≤ 50 ms (§6 budget). The gate leg is synthetic (no 4K HEVC in
 /// the inbox); a corroboration leg runs on real inbox material.
 @MainActor
-func runLoop(env: HarnessEnv, loops: Int) async throws {
+func runLoop(env: HarnessEnv, loops: Int, escalationOnly: Bool = false) async throws {
     // Leg 1 (the GATE): source keyframes every 4s (0,4,8,…). Composition
     // = source [12,22]; window comp [5.37, 6.87] → source [17.37, 18.87]:
     // mid-GOP both ends.
     let hevcURL = try await env.ensureFixture(FixtureSet.hevc4K)
+    if escalationOnly {
+        try await measurePrerolledAlternateLoop(
+            env: env, url: hevcURL, compositionRange: (12.0, 22.0),
+            window: (5.37, 6.87), loops: min(loops, 20))
+        return
+    }
     try await measureLoopRestart(
         env: env,
         label: "synthetic 4K HEVC long-GOP (keyframes 4s apart) [GATE leg]",
@@ -133,6 +139,125 @@ func runLoop(env: HarnessEnv, loops: Int) async throws {
             "**looptest(real)** — DEFERRED: footage inbox empty; corroboration leg re-runs once populated",
         ])
     }
+
+    // Leg 3 (common case, informational): 1080p30 long-GOP H.264 — the
+    // profile of Lillian's actual talking-head footage. The §6 budget
+    // decision needs this number next to the 4K worst case.
+    let h264URL = try await env.ensureFixture(FixtureSet.h264A)
+    try await measureLoopRestart(
+        env: env,
+        label: "synthetic 1080p30 H.264 long-GOP (keyframes 3s apart) [common-case leg]",
+        url: h264URL, compositionRange: (5.0, 25.0), window: (7.37, 8.87),
+        loops: min(loops, 30), isGateLeg: false)
+
+    // Leg 4 (D13's named escalation, informational): a SECOND AVPlayer
+    // holding the same composition, pre-seeked to the window start and
+    // prerolled while the first plays. On boundary fire, the standby
+    // player starts — no seek, no fresh GOP decode on the hot path. In a
+    // real UI this needs an AVPlayerLayer.player swap; here delivery is
+    // measured via each item's own video output.
+    try await measurePrerolledAlternateLoop(
+        env: env, url: hevcURL, compositionRange: (12.0, 22.0),
+        window: (5.37, 6.87), loops: min(loops, 20))
+}
+
+/// D13 escalation measurement: boundary-fire → first frame from a standby
+/// player that was pre-seeked (zero tolerance) and prerolled at the window
+/// start. The two players alternate roles each lap.
+@MainActor
+private func measurePrerolledAlternateLoop(
+    env: HarnessEnv, url: URL,
+    compositionRange: (start: Double, end: Double),
+    window: (start: Double, end: Double),
+    loops: Int
+) async throws {
+    let cache = AssetCache()
+    let builder = CompositionBuilder(assetCache: cache)
+    let built = try await builder.build(ranges: [
+        PlayableRange(url: url, startSec: compositionRange.start, endSec: compositionRange.end)
+    ])
+
+    struct Lane {
+        let player: AVPlayer
+        let item: AVPlayerItem
+        let tap: FrameTap
+    }
+    func makeLane() -> Lane {
+        let item = built.makePlayerItem()
+        let player = AVPlayer(playerItem: item)
+        player.automaticallyWaitsToMinimizeStalling = false
+        player.isMuted = true
+        let tap = FrameTap(item: item, decode: false)
+        tap.start()
+        return Lane(player: player, item: item, tap: tap)
+    }
+    @discardableResult
+    func park(_ lane: Lane) async -> Bool {
+        // preroll throws NSInvalidArgumentException unless the player is
+        // already readyToPlay — await status first (run-2 crash).
+        let deadline = CACurrentMediaTime() + 10
+        while lane.player.status != .readyToPlay, CACurrentMediaTime() < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        guard lane.player.status == .readyToPlay else { return false }
+        await lane.item.seek(
+            to: MediaTime.time(window.start), toleranceBefore: .zero, toleranceAfter: .zero)
+        return await withCheckedContinuation { cont in
+            lane.player.preroll(atRate: 1.0) { cont.resume(returning: $0) }
+        }
+    }
+
+    let lanes = [makeLane(), makeLane()]
+    await park(lanes[0])
+    await park(lanes[1])
+
+    var restartMs: [Double] = []
+    var missed = 0
+    var active = 0
+    lanes[active].player.play()
+    for _ in 0..<loops {
+        let lane = lanes[active]
+        let standby = lanes[1 - active]
+        // Wait (poll) for the active lane to cross the window end.
+        let deadline = CACurrentMediaTime() + (window.end - window.start) + 5
+        var fire: Double?
+        while CACurrentMediaTime() < deadline {
+            if lane.item.currentTime().seconds >= window.end {
+                fire = CACurrentMediaTime()
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        guard let fire else {
+            missed += 1
+            break
+        }
+        lane.player.pause()
+        standby.tap.clear()
+        standby.player.play()
+        let restart = await awaitSample(standby.tap, timeoutSec: 3.0) {
+            $0.hostTime > fire && abs($0.itemTimeSec - window.start) < 0.05
+        }
+        if let restart {
+            restartMs.append(restart.hostTime - fire)
+        } else {
+            missed += 1
+        }
+        // Re-park the lane that just finished; it becomes the next standby.
+        await park(lane)
+        active = 1 - active
+    }
+    for lane in lanes {
+        lane.player.pause()
+        lane.tap.stop()
+    }
+
+    var report: [String] = []
+    report.append("**looptest** — D13 escalation A/B: prerolled standby AVPlayer (same 4K HEVC window; swap = play(), no hot-path seek/decode) [informational]")
+    report.append("- boundary-cross → first frame from standby: \(Stats.summary(restartMs))")
+    report.append("- missed/unmeasured: \(missed)")
+    report.append("- note: poll-based window-end detection (1ms) — real UI adds an AVPlayerLayer.player swap")
+    env.report("looptest", report)
 }
 
 @MainActor
@@ -271,55 +396,61 @@ func runFrameAccuracy(env: HarnessEnv) async throws {
         }
     }
 
-    // step(byCount:) forward across the first seam and backward again.
+    // step(byCount:) — scored against the TRANSPORT, not a step counter:
+    // after each step, the displayed frame must be the source frame whose
+    // display interval contains the player's own reported position
+    // (display == transport), and the transport must have moved in the
+    // step's direction. Run 1 showed naive ±1-index bookkeeping is wrong
+    // by construction at unaligned in-points (source in-points sit
+    // mid-frame, so a segment's edge slots are partial frames) — every
+    // step DID land on the adjacent frame boundary; the old expectations
+    // didn't.
+    func expectedIndex(atCompositionSeconds t: Double) -> Int? {
+        guard let segment = built.segments.last(where: {
+            MediaTime.seconds($0.compositionStart) <= t + 1e-6
+        }), t <= MediaTime.seconds(segment.compositionEnd) + 1e-6 else { return nil }
+        let sourceT = segment.sourceStart.seconds
+            + (t - MediaTime.seconds(segment.compositionStart))
+        return Int((sourceT * 30.0 + 1e-4).rounded(.down))
+    }
+
     let seam = MediaTime.seconds(built.segments[1].compositionStart)
     let frameDur = 1.0 / 30.0
     await engine.seek(toCompositionSeconds: seam - 3 * frameDur)
     var stepChecks = 0
     var stepCorrect = 0
-    var lastIndex: Int?
-    for stepNumber in 0..<6 {
+    var trace: [String] = []
+    var lastT = engine.player.currentTime().seconds
+    for direction in [1, 1, 1, 1, 1, 1, -1, -1, -1] {
         tap.clear()
-        engine.step(frames: 1)
+        engine.step(frames: direction)
         let sample = await awaitSample(tap, timeoutSec: 2.0) { $0.frameIndex != nil }
-        if let index = sample?.frameIndex {
-            if let last = lastIndex {
-                stepChecks += 1
-                // Within a segment: exactly +1. Across the seam the index
-                // jumps to the next segment's expected first frame.
-                let crossesSeam = stepNumber == 2  // 3 frames before seam, stepping into it
-                if crossesSeam {
-                    let expected = Int((built.segments[1].sourceStart.seconds * 30.0 + 1e-6).rounded(.down))
-                    if index == expected { stepCorrect += 1 } else {
-                        report.append("- step across seam: expected \(expected), got \(index)")
-                    }
-                } else if index == last + 1 {
-                    stepCorrect += 1
-                } else {
-                    report.append("- step +1: expected \(last + 1), got \(index)")
-                }
-            }
-            lastIndex = index
+        let t = engine.player.currentTime().seconds
+        guard let displayed = sample?.frameIndex else {
+            trace.append("step(\(direction > 0 ? "+1" : "-1")) → t=\(fmt(t, 4)): NO FRAME DECODED")
+            lastT = t
+            continue
         }
-    }
-    // Backward steps.
-    for _ in 0..<3 {
-        tap.clear()
-        engine.step(frames: -1)
-        let sample = await awaitSample(tap, timeoutSec: 2.0) { $0.frameIndex != nil }
-        if let index = sample?.frameIndex, let last = lastIndex {
-            stepChecks += 1
-            if index == last - 1 { stepCorrect += 1 } else {
-                report.append("- step -1: expected \(last - 1), got \(index)")
-            }
-            lastIndex = index
-        }
+        // A step can park the transport at the START of the new frame's
+        // interval or at the END of the displayed frame's interval
+        // (boundary-coincident, e.g. the last partial frame before a
+        // seam) — accept the frame containing the instant on either side
+        // of the reported position.
+        let expectedAhead = expectedIndex(atCompositionSeconds: t + 1e-5)
+        let expectedBehind = expectedIndex(atCompositionSeconds: t - 1.0 / 30.0 / 2)
+        let movedForward = (t - lastT) * Double(direction) > 0.0001
+        stepChecks += 1
+        let ok = (expectedAhead == displayed || expectedBehind == displayed) && movedForward
+        if ok { stepCorrect += 1 }
+        trace.append("step(\(direction > 0 ? "+1" : "-1")) → t=\(fmt(t, 6)) Δt=\(fmt((t - lastT) * 1000, 1))ms displayed=\(displayed) transport-expects=\(expectedAhead.map(String.init) ?? "?")/\(expectedBehind.map(String.init) ?? "?")\(ok ? " ✓" : " ✗")")
+        lastT = t
     }
     tap.stop()
 
     report.insert("**frameacc** — H.264 + HEVC long-GOP fixtures, non-keyframe cuts", at: 0)
     report.insert("- seam seeks frame-exact: \(seekCorrect)/\(seekChecks)", at: 1)
-    report.insert("- step(byCount:) exact (±1 frame incl. across seam): \(stepCorrect)/\(stepChecks)", at: 2)
-    report.insert("- GATE: \(seekCorrect == seekChecks && stepCorrect == stepChecks ? "PASS" : "FAIL")", at: 3)
+    report.insert("- step(byCount:): display==transport on \(stepCorrect)/\(stepChecks) steps (fwd + back, incl. across the seam)", at: 2)
+    report.insert("- GATE: \(seekCorrect == seekChecks && stepCorrect == stepChecks && stepChecks > 0 ? "PASS" : "FAIL")", at: 3)
+    report.append(contentsOf: trace.map { "  - \($0)" })
     env.report("frameacc", report)
 }

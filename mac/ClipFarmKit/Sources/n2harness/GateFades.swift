@@ -97,8 +97,25 @@ func runFades(env: HarnessEnv) async throws {
         realAudioNote = "- real-audio A/B: DEFERRED — no audio-bearing file in the footage inbox; drop one in and re-run `fades`"
     }
 
+    // Envelope diagnostic: 2ms-bin RMS trace across the seam ("|" marks
+    // the boundary) — distinguishes a smooth down/up ramp from a
+    // one-sided or blockwise-stepped ramp application in the offline
+    // reader path (the export-relevant path per D31 WYSIWYG).
+    func envelope(_ samples: [Float], around timeSec: Double) -> String {
+        var bins: [String] = []
+        var t = timeSec - 0.012
+        while t < timeSec + 0.0125 {
+            if abs(t - timeSec) < 0.0005 { bins.append("|") }
+            bins.append(fmt(rms(samples, from: t, durationMs: 2), 2))
+            t += 0.002
+        }
+        return bins.joined(separator: " ")
+    }
+
     var report: [String] = ["**fades** — ~10ms AVAudioMix ramps at cut boundaries (D31), offline-rendered"]
     report.append("- pop at mid-sine splice: fades OFF max Δ/sample = \(fmt(popOff, 3)), fades ON = \(fmt(popOn, 3)) → \(popKilled ? "killed" : "NOT killed")")
+    report.append("- envelope @seam1 ±12ms, 2ms RMS bins ('|' = cut): ON:  \(envelope(samplesOn, around: seam1))")
+    report.append("- envelope @seam1 (control):                       OFF: \(envelope(samplesOff, around: seam1))")
     report.append("- burst-onset at cut: RMS 12–24ms post-cut = \(fmt(earlyOn, 3)) vs steady = \(fmt(steadyOn, 3)) (ratio \(fmt(earlyOn / steadyOn, 2))) → \(onsetPreserved ? "onset preserved" : "SOFTENED")")
     report.append("- in-fade-window RMS (0–10ms): on=\(fmt(inFadeOn, 3)) off=\(fmt(inFadeOff, 3)) (ramp expected to sit below the off value)")
     report.append(realAudioNote)
