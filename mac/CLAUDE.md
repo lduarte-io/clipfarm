@@ -56,7 +56,7 @@ If code conflicts with spec/plan/decisions, call it out explicitly and align the
 
 - **`NATIVE_REWRITE_PLAN.md` is the master plan.** Unlike a just-in-time plan, every phase was written in detail up front — deliberately, so any future session can execute without rebuilding context. It is a living document: amend it, don't fork it.
 - **`PHASES.md`** carries the current phase's execution detail (assumptions, in-flight notes, deviations); **`COMPLETED_PHASES.md`** receives the closeout entry.
-- **One phase at a time.** Execute, then stop for Lillian's manual verification. Never auto-advance.
+- **One phase at a time.** Execute, then stop for Lillian's manual verification. Never auto-advance. *(Exception: in a `/run-phase` coordinator session, the **Autonomous batching** amendment below governs stopping points and defers — never skips — manual verification.)*
 - **Closeout ritual** at the end of each phase:
   1. Write the closeout entry: what shipped, what was assumed where the spec was ambiguous, deviations from the plan, test counts.
   2. **Read the NEXT phase's entry in `NATIVE_REWRITE_PLAN.md` in full and record a "next-phase delta" note** — anything this phase's reality changes about the next phase's scope, assumptions, or sequencing — then amend the plan doc accordingly. This is how a fully-pre-written plan stays honest.
@@ -65,6 +65,39 @@ If code conflicts with spec/plan/decisions, call it out explicitly and align the
 - **Two reviews per completed phase**: a self-assessment in-session and a separate Claude review session, both working from the `COMPLETED_PHASES.md` entry — write it detailed enough to be reviewed against the spec.
 - **Schema/model changes get their own commit** before dependent feature work, so rollbacks are clean.
 - **Backlog rule**: the PHASES.md backlog takes no entry without naming the phase that resolves it. If nothing owns it, fix it now instead of parking it.
+
+### Autonomous batching (2026-07-05 amendment — active only in `/run-phase` coordinator sessions)
+
+Lillian can delegate phase execution to a coordinator session via the `/run-phase` skill (`.claude/skills/run-phase/SKILL.md`). Deliberate process amendment, not drift. The rules:
+
+- **Cast per phase: exactly three parties.** The coordinator (writes no feature code) + ONE implementer agent + ONE cold reviewer agent, strictly sequential. Subagents never spawn subagents. No fan-outs, no swarms — the manual workflow this replaces worked *because* it was only ever two chats.
+- **Two-reviews rule, unchanged in substance:** review 1 = implementer self-assessment in-session; review 2 = a cold reviewer running `REVIEW_PROMPT.md` **verbatim** with zero implementation context (the coordinator never summarizes the work to the reviewer — the isolation is the point). Findings are adjudicated implementer-vs-reviewer, the coordinator arbitrates against spec + decisions, and **every finding gets a written disposition** in the `COMPLETED_PHASES.md` entry (`PREBUILD_REVIEW_FINDINGS.md` style).
+- **Manual verification is deferred, never skipped.** Auto-continued phases write their manual-verify checklist into the closeout entry marked `Manual verify: DEFERRED`; Lillian runs the accumulated queue at the next hard stop, and only then does an entry flip to Verified. **Debt cap: 3 phases** of deferred verification, then hard stop regardless of tier.
+- **PROVISIONAL rule** (the autonomous variant of "never implement assumptions"): ambiguity that doesn't gate the phase's core → document 2–3 options in the phase entry, implement the most spec-defensible, mark it **PROVISIONAL**, log it in `QUESTIONS.md`. Ambiguity that gates the core → stop and ask.
+- **Lillian-only calls — never made autonomously, by coordinator or subagent:**
+  - changing or contradicting any LOCKED/RESOLVED decision;
+  - adding any new third-party dependency (license vetting is hers — the D20/STTextView lesson);
+  - inventing product behavior;
+  - relaxing a §6 performance budget, or accepting a failed N2-class gate (the D11 pivot is hers);
+  - deleting or overwriting anything she created (web implementation, real footage, sidecars). Footage folders are **strictly read-only for agents** — no shell writes, moves, or deletes there, ever. The only sanctioned writes into a footage folder are ones the *app itself* performs at runtime under Lillian's direction (`.mkv` remux siblings at N3, `.whisper.json` sidecars at N14) — never agent shell commands;
+  - spec amendments beyond recording next-phase deltas.
+- **Checkpoint tiers (Track 1).** The coordinator may stop *earlier* than this table, never later:
+
+| Phase | Gate |
+|---|---|
+| N0 | START: Lillian on call for the Xcode File→New Project + Apple Development cert assist (implementer attempts pbxproj hand-authoring first). End: auto-continue, verify deferred. |
+| N1 | Auto-continue. |
+| N2 | **HARD STOP** at end: Lillian watches the playback gates and adjudicates them; a failed gate escalates immediately mid-phase (D11 pivot). |
+| N3 | Auto-continue. TCC folder prompt may need her at the machine; the "clips no longer feel cut short" listening check is deferred. |
+| N4 | **HARD STOP**: combined manual verify of N0 + N1 + N3 + N4. |
+| N5–N6 | Auto-continue. |
+| N7 | START: Ollama running + Anthropic key provisioned. **HARD STOP** at end: combined verify N5–N7 including the live tag run. |
+| N8 | Auto-continue. |
+| N9 | **HARD STOP**: grid feel + premades on the real project (N8 + N9). |
+| N10–N11 | **HARD STOP** after N11: the Chipotle flow and trim mode are the product — Lillian drives both. |
+| N12 | **HARD STOP**: frame-check exports in QuickTime, A/B preview vs file. |
+| N13 | Run with Lillian by definition. |
+| Track 2 | Tiering decided with Lillian when Track 1 closes. |
 
 ## Testing expectations
 

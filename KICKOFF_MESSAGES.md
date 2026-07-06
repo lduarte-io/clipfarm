@@ -25,7 +25,13 @@
 >
 > Output: a severity-ranked findings list — for each: `[severity] · doc + section · what's wrong or risky · evidence (link if external) · proposed fix`. End with a short "clean bill" list of load-bearing claims you verified and found solid. Do not edit any files.
 
-### NEXT — Phase N0: toolchain & skeleton (dispositions are committed; ready to paste)
+### NEXT — Autonomous coordinator run, starting at N0 (2026-07-05)
+
+> Open a fresh session and type **`/run-phase`**. That is the entire kickoff — the skill (`.claude/skills/run-phase/SKILL.md`) loads the coordinator loop, feeds the N0 kickoff below **verbatim** to the implementer agent, and runs phases under the Autonomous batching amendment in `mac/CLAUDE.md` (checkpoint tiers, deferred manual verification, Lillian-only calls). Cast is capped at coordinator + one implementer + one cold reviewer (`REVIEW_PROMPT.md`); subagents never spawn subagents.
+>
+> Human setup for the first stretch: be on call for the N0 Xcode/cert assist (~5 min, only if pbxproj hand-authoring fails); expect a TCC folder prompt around N3 ingest; plan a watch session at the N2 hard stop. Open questions accumulate in `QUESTIONS.md` and surface at checkpoints.
+
+### Phase N0: toolchain & skeleton (dispositions committed; consumed by the coordinator — or paste manually into a fresh session)
 
 > You are the **implementer** starting phase **N0 (toolchain & skeleton)** of ClipFarm's native macOS rewrite.
 >

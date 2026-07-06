@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd *)",
+      "Bash(ls *)",
+      "Bash(which *)",
+      "Bash(file *)",
+      "Bash(wc *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(rg *)",
+      "Bash(mkdir *)",
+      "Bash(swift *)",
+      "Bash(xcodebuild *)",
+      "Bash(xcbeautify *)",
+      "Bash(xcrun *)",
+      "Bash(sqlite3 *)",
+      "Bash(ffprobe *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "WebSearch",
+      "WebFetch(domain:developer.apple.com)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}

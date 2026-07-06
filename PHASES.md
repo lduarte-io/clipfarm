@@ -13,6 +13,7 @@ Phase numbering matches the spec's build order (steps 0–11).
 3. **Document assumptions in `COMPLETED_PHASES.md`** when moving an entry over — not just what was built, but what was assumed where the spec was ambiguous.
 4. **Trivial phases still get moved** to `COMPLETED_PHASES.md` (even without a written plan) so the audit trail is complete.
 5. **Each completed phase will be reviewed** by both a self-assessment in this session and a separate Claude code-review session. `COMPLETED_PHASES.md` is the artifact those reviews read.
+6. **Autonomous batching (native rewrite, 2026-07-05):** when Lillian starts a `/run-phase` coordinator session, the **Autonomous batching** amendment in `mac/CLAUDE.md` governs stopping points, deferred manual verification, and Lillian-only calls. Manual runs keep rules 1–5 unchanged.
 
 ---
 
