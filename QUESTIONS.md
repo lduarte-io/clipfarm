@@ -8,7 +8,7 @@ Format per item:
 
 ## Open
 
-*(none)*
+- **[N0 review · 2026-07-06]** `.obsidian/workspace.json` is tracked in git and keeps dirtying the working tree (cold-reviewer observation, out of N0 scope). Gitignore `.obsidian/` (+ `git rm --cached` the tracked file)? It's Lillian's editor state, so the call is hers — no agent touches it until answered.
 
 ## Answered
 

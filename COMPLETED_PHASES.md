@@ -8,6 +8,8 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 **Manual verify: DEFERRED** (N0 tier = auto-continue; queue for the next hard stop). Checklist for Lillian:
 
+*Partial verify 2026-07-06 (Lillian, live during the N1 run): opened `ClipFarm.xcodeproj` in Xcode successfully — the hand-authored pbxproj parses and loads in the GUI, settling the pbxproj-validity risk. Item 1's Run-the-app half and items 2–4 remain deferred.*
+
 1. `open mac/ClipFarm.xcodeproj` → Run: app launches, shows the six-item sidebar (Library / Project / Script / Attempts / Brief / Settings) and the right-side inspector pane with a "Preview" placeholder + toolbar toggle.
 2. `cd mac/ClipFarmKit && swift test` → 6 tests green.
 3. `cd mac && xcodebuild -scheme ClipFarm -configuration Debug build | xcbeautify -q` → clean.
