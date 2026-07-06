@@ -3,30 +3,43 @@ import AVFoundation
 import CFMedia
 import Foundation
 
-/// `swift run n2harness demo [--uniform]` — the watch-session surface:
+/// `swift run n2harness demo [--real]` — the watch-session surface:
 /// a real window + AVPlayerLayer playing a multi-source assembly through
 /// the PlayerEngine. Lillian's plan-level verify is exactly this: "watch a
 /// multi-source (camera + iPhone-style) assembly play gapless."
-/// Space = play/pause, R = reload (swap-blink eyeball), L = 1.5s loop at
-/// the current position (trim-loop eyeball), Esc/Q = quit.
+/// Default assembly = footage-inbox files interleaved with the HLG-HDR and
+/// portrait fixtures (exercises D29 + D32 in one watch); `--real` restricts
+/// it to inbox files only. Space = play/pause, R = reload (swap-blink
+/// eyeball), L = 1.5s loop at the current position (trim-loop eyeball),
+/// Esc/Q = quit.
 @MainActor
-func runDemo(env: HarnessEnv, uniform: Bool) async throws {
-    let ranges: [PlayableRange]
-    if uniform {
-        ranges = [
-            PlayableRange(url: env.footageFile("btc.0.4.mov"), startSec: 63.4, endSec: 68.9),
-            PlayableRange(url: env.footageFile("btc.0.2.mov"), startSec: 30.13, endSec: 35.2),
-            PlayableRange(url: env.footageFile("btc.0.0.mov"), startSec: 20.37, endSec: 25.5),
-            PlayableRange(url: env.footageFile("btc.0.4.mov"), startSec: 121.2, endSec: 126.0),
-        ]
+func runDemo(env: HarnessEnv, realOnly: Bool) async throws {
+    let probed = await env.probedRealFiles()
+    var realRanges: [PlayableRange] = []
+    for real in probed {
+        let d = real.meta.duration.seconds
+        realRanges.append(contentsOf: spreadRanges(
+            url: real.url, durationSec: d, count: 2, length: min(5.0, d * 0.3)))
+    }
+    var ranges: [PlayableRange]
+    if realOnly {
+        ranges = realRanges
+        guard !ranges.isEmpty else {
+            throw HarnessError.usage("demo --real needs at least one file in the footage inbox (\(env.footage.path))")
+        }
     } else {
-        ranges = [
-            PlayableRange(url: env.footageFile("btc.0.4.mov"), startSec: 63.4, endSec: 68.9),
-            PlayableRange(url: try await env.ensureFixture(FixtureSet.portrait), startSec: 3.0, endSec: 6.0),
-            PlayableRange(url: env.footageFile("btc.0.2.mov"), startSec: 30.13, endSec: 34.2),
-            PlayableRange(url: try await env.ensureFixture(FixtureSet.hlg), startSec: 8.0, endSec: 11.0),
-            PlayableRange(url: env.footageFile("btc.0.0.mov"), startSec: 20.37, endSec: 24.5),
-        ]
+        ranges = realRanges
+        // Interleave the D32 + D29 fixture material after the first real
+        // range (or standalone when the inbox is empty).
+        let portrait = PlayableRange(
+            url: try await env.ensureFixture(FixtureSet.portrait), startSec: 3.0, endSec: 6.0)
+        let hlg = PlayableRange(
+            url: try await env.ensureFixture(FixtureSet.hlg), startSec: 8.0, endSec: 11.0)
+        ranges.insert(portrait, at: ranges.isEmpty ? 0 : 1)
+        ranges.insert(hlg, at: min(3, ranges.count))
+        if realRanges.isEmpty {
+            print("demo: footage inbox is empty — playing fixture-only assembly (drop files into \(env.footage.path) for the real demo)")
+        }
     }
 
     let app = NSApplication.shared
@@ -39,7 +52,7 @@ func runDemo(env: HarnessEnv, uniform: Bool) async throws {
         contentRect: NSRect(x: 0, y: 0, width: 1280, height: 720),
         styleMask: [.titled, .closable, .resizable],
         backing: .buffered, defer: false)
-    window.title = "ClipFarm N2 demo — \(uniform ? "uniform (3× camera)" : "mixed (camera + portrait + HDR)") assembly"
+    window.title = "ClipFarm N2 demo — \(realOnly ? "inbox-only" : "inbox + portrait/HDR fixture") assembly (\(ranges.count) ranges)"
     let view = PlayerHostView(engine: engine, ranges: ranges)
     window.contentView = view
     window.center()

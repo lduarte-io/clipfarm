@@ -82,14 +82,32 @@ public enum MediaFixtureError: Error {
     case pixelBufferPoolUnavailable
 }
 
+/// Carries the writer inputs into concurrent feeder tasks. `@unchecked
+/// Sendable` — each feeder owns its input exclusively (video task never
+/// touches the audio input and vice versa), which is AVAssetWriter's
+/// documented multi-input pattern.
+private struct WriterInputs: @unchecked Sendable {
+    let video: AVAssetWriterInput
+    let adaptor: AVAssetWriterInputPixelBufferAdaptor
+    let audio: AVAssetWriterInput?
+}
+
 public enum MediaFixtureRenderer {
     /// Render `spec` into `directory` (skip-if-exists: fixtures are
-    /// deterministic, keyed by name).
+    /// deterministic, keyed by name). An existing file only counts if it
+    /// actually loads — a killed run's partial write must not poison
+    /// later gate measurements.
     public static func render(
         _ spec: MediaFixtureSpec, in directory: URL, force: Bool = false
     ) async throws -> URL {
         let url = directory.appendingPathComponent(spec.fileName)
-        if !force, FileManager.default.fileExists(atPath: url.path) { return url }
+        if !force, FileManager.default.fileExists(atPath: url.path) {
+            if let duration = try? await AVURLAsset(url: url).load(.duration),
+               abs(duration.seconds - spec.durationSec) < 0.5 {
+                return url
+            }
+            // Unreadable or truncated — fall through and re-render.
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: url)
 
@@ -134,9 +152,25 @@ public enum MediaFixtureRenderer {
         }
         writer.startSession(atSourceTime: .zero)
 
-        try await feedVideo(spec: spec, input: videoInput, adaptor: adaptor)
-        if let audioInput {
-            try await feedAudio(spec: spec, input: audioInput)
+        // Feed the inputs CONCURRENTLY. With multiple inputs the writer
+        // throttles each input to its interleave pattern — an input that
+        // races ahead goes not-ready until the others catch up, so feeding
+        // video to completion before starting audio deadlocks (the classic
+        // AVAssetWriter mistake; observed as a silent all-threads-parked
+        // hang). The `@unchecked Sendable` carrier is safe: each child
+        // task owns its input exclusively, and per-input appends are the
+        // documented multi-input feeding pattern.
+        let inputs = WriterInputs(video: videoInput, adaptor: adaptor, audio: audioInput)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await feedVideo(spec: spec, input: inputs.video, adaptor: inputs.adaptor)
+            }
+            if inputs.audio != nil {
+                group.addTask {
+                    try await feedAudio(spec: spec, input: inputs.audio!)
+                }
+            }
+            try await group.waitForAll()
         }
 
         await writer.finishWriting()
@@ -208,30 +242,42 @@ public enum MediaFixtureRenderer {
         nonisolated(unsafe) let adaptor = adaptor
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             nonisolated(unsafe) var frame = 0
+            // A failed append means the writer errored — finish + resume
+            // (throwing) exactly once, or the continuation leaks and the
+            // whole test run hangs.
+            nonisolated(unsafe) var finished = false
+            @Sendable func finish(_ result: Result<Void, Error>) {
+                guard !finished else { return }
+                finished = true
+                input.markAsFinished()
+                cont.resume(with: result)
+            }
             input.requestMediaDataWhenReady(on: queue) {
+                if finished { return }
                 while input.isReadyForMoreMediaData {
                     if frame >= spec.frameCount {
-                        input.markAsFinished()
-                        cont.resume()
+                        finish(.success(()))
                         return
                     }
                     guard let pool = adaptor.pixelBufferPool else {
-                        input.markAsFinished()
-                        cont.resume(throwing: MediaFixtureError.pixelBufferPoolUnavailable)
+                        finish(.failure(MediaFixtureError.pixelBufferPoolUnavailable))
                         return
                     }
                     var pixelBuffer: CVPixelBuffer?
                     CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer)
                     guard let pixelBuffer else {
-                        input.markAsFinished()
-                        cont.resume(throwing: MediaFixtureError.pixelBufferPoolUnavailable)
+                        finish(.failure(MediaFixtureError.pixelBufferPoolUnavailable))
                         return
                     }
                     draw(frameIndex: frame, gray: spec.grayLevel, into: pixelBuffer)
-                    adaptor.append(
+                    guard adaptor.append(
                         pixelBuffer,
                         withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: spec.fps)
-                    )
+                    ) else {
+                        finish(.failure(MediaFixtureError.writerFailed(
+                            "video append refused at frame \(frame)")))
+                        return
+                    }
                     frame += 1
                 }
             }
@@ -315,11 +361,18 @@ public enum MediaFixtureRenderer {
         nonisolated(unsafe) let input = input
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             nonisolated(unsafe) var cursor = 0
+            nonisolated(unsafe) var finished = false
+            @Sendable func finish(_ result: Result<Void, Error>) {
+                guard !finished else { return }
+                finished = true
+                input.markAsFinished()
+                cont.resume(with: result)
+            }
             input.requestMediaDataWhenReady(on: queue) {
+                if finished { return }
                 while input.isReadyForMoreMediaData {
                     if cursor >= totalSamples {
-                        input.markAsFinished()
-                        cont.resume()
+                        finish(.success(()))
                         return
                     }
                     let count = min(chunkSamples, totalSamples - cursor)
@@ -332,10 +385,13 @@ public enum MediaFixtureRenderer {
                         let buffer = try makeAudioSampleBuffer(
                             samples: samples, formatDesc: formatDesc,
                             presentationSample: cursor, sampleRate: sampleRate)
-                        input.append(buffer)
+                        guard input.append(buffer) else {
+                            finish(.failure(MediaFixtureError.writerFailed(
+                                "audio append refused at sample \(cursor)")))
+                            return
+                        }
                     } catch {
-                        input.markAsFinished()
-                        cont.resume(throwing: error)
+                        finish(.failure(error))
                         return
                     }
                     cursor += count

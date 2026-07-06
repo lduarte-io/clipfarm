@@ -6,28 +6,55 @@ import QuartzCore
 
 /// Gate 5 — composition rebuild < 10 ms @ 50 clips (warm cache) + the
 /// end-to-end number that matters: edit → new item first frame delivered.
+/// Two rebuild legs when the inbox allows: uniform (single source — bare
+/// composition, the §6 budget's shape) and mixed geometry (two differing
+/// sources — every rebuild also constructs the D32 videoComposition).
 @MainActor
 func runRebuild(env: HarnessEnv) async throws {
-    let a = env.footageFile("btc.0.0.mov")
-    let b = env.footageFile("btc.0.2.mov")
-    func makeRanges(_ edit: Int) -> [PlayableRange] {
+    let probed = await env.probedRealFiles()
+    let a: URL, b: URL
+    let da: Double, db: Double
+    let materialNote: String
+    if probed.count >= 2 {
+        let byLength = probed.sorted { $0.meta.duration.seconds > $1.meta.duration.seconds }
+        (a, da) = (byLength[0].url, byLength[0].meta.duration.seconds)
+        (b, db) = (byLength[1].url, byLength[1].meta.duration.seconds)
+        materialNote = "- material: real \(a.lastPathComponent) + \(b.lastPathComponent)"
+    } else if let only = probed.first {
+        (a, da) = (only.url, only.meta.duration.seconds)
+        (b, db) = (a, da)
+        materialNote = "- material: real \(a.lastPathComponent) only (single-file inbox; mixed leg = uniform leg)"
+    } else {
+        a = try await env.ensureFixture(FixtureSet.h264A)
+        b = try await env.ensureFixture(FixtureSet.h264B)
+        (da, db) = (FixtureSet.h264A.durationSec, FixtureSet.h264B.durationSec)
+        materialNote = "- material: synthetic h264A/h264B (inbox empty) — re-run when populated"
+    }
+
+    func makeRanges(_ edit: Int, mixed: Bool) -> [PlayableRange] {
         (0..<50).map { i in
-            let file = i % 2 == 0 ? a : b
-            let start = 3.113 + Double(i) * 1.777
+            let (file, dur) = mixed && i % 2 == 1 ? (b, db) : (a, da)
+            let usable = dur - 2.6
+            let start = 1.0 + Double(i) / 50.0 * (usable - 1.0) + 0.113
             let nudge = i == 25 ? Double(edit % 2) * (1.0 / 30.0) : 0
-            return PlayableRange(url: file, startSec: start, endSec: start + 1.5 + nudge)
+            return PlayableRange(url: file, startSec: start, endSec: start + 1.3 + nudge)
         }
     }
 
     let cache = AssetCache()
     let builder = CompositionBuilder(assetCache: cache)
-    _ = try await builder.build(ranges: makeRanges(0))  // warm the cache
+    _ = try await builder.build(ranges: makeRanges(0, mixed: false))  // warm the cache
+    _ = try await builder.build(ranges: makeRanges(0, mixed: true))
 
     var rebuildMs: [Double] = []
+    var rebuildMixedMs: [Double] = []
     for i in 0..<100 {
         let t0 = CACurrentMediaTime()
-        _ = try await builder.build(ranges: makeRanges(i))
+        _ = try await builder.build(ranges: makeRanges(i, mixed: false))
         rebuildMs.append(CACurrentMediaTime() - t0)
+        let t1 = CACurrentMediaTime()
+        _ = try await builder.build(ranges: makeRanges(i, mixed: true))
+        rebuildMixedMs.append(CACurrentMediaTime() - t1)
     }
 
     // End-to-end: edit → first frame delivered from the swapped item.
@@ -39,7 +66,7 @@ func runRebuild(env: HarnessEnv) async throws {
         tap.start()
         currentTap = tap
     }
-    try await engine.load(ranges: makeRanges(0))
+    try await engine.load(ranges: makeRanges(0, mixed: true))
     engine.player.isMuted = true
     await engine.seek(toCompositionSeconds: 8.0)
     engine.pause()
@@ -48,7 +75,7 @@ func runRebuild(env: HarnessEnv) async throws {
     var editToReadyMs: [Double] = []
     for i in 0..<30 {
         let t0 = CACurrentMediaTime()
-        try await engine.load(ranges: makeRanges(i + 1), at: 8.0)
+        try await engine.load(ranges: makeRanges(i + 1, mixed: true), at: 8.0)
         let ready = CACurrentMediaTime()
         if let tap = currentTap,
            let first = await awaitSample(tap, timeoutSec: 3.0, where: { $0.hostTime > t0 }) {
@@ -60,57 +87,96 @@ func runRebuild(env: HarnessEnv) async throws {
     currentTap?.stop()
 
     var report: [String] = []
-    report.append("**rebuild** — 50-clip composition, warm asset cache, real footage")
-    report.append("- rebuild only: \(Stats.summary(rebuildMs))")
-    report.append("- GATE (rebuild p95 < 10ms): \(Stats.percentile(rebuildMs.map { $0 * 1000 }, 95) < 10 ? "PASS" : "FAIL")")
-    report.append("- edit → load() returned (incl. build + pre-seek await + swap): \(Stats.summary(editToReadyMs))")
+    report.append("**rebuild** — 50-clip composition, warm asset cache")
+    report.append(materialNote)
+    report.append("- rebuild only, uniform (bare composition): \(Stats.summary(rebuildMs))")
+    report.append("- rebuild only, mixed geometry (+ videoComposition): \(Stats.summary(rebuildMixedMs))")
+    let uniformPass = Stats.percentile(rebuildMs.map { $0 * 1000 }, 95) < 10
+    let mixedPass = Stats.percentile(rebuildMixedMs.map { $0 * 1000 }, 95) < 10
+    report.append("- GATE (rebuild p95 < 10ms): uniform \(uniformPass ? "PASS" : "FAIL"), mixed \(mixedPass ? "PASS" : "FAIL")")
+    report.append("- edit → load() returned (mixed comp; incl. build + pre-seek await + swap): \(Stats.summary(editToReadyMs))")
     report.append("- edit → first frame delivered (paused): \(Stats.summary(editToFrameMs))")
     env.report("rebuild", report)
 }
 
 /// Gate 7 — worst-case trim-loop restart on long-GOP 4K HEVC with a
 /// non-keyframe-aligned window: boundary-fire → first frame at window
-/// start ≤ 50 ms (§6 budget).
+/// start ≤ 50 ms (§6 budget). The gate leg is synthetic (no 4K HEVC in
+/// the inbox); a corroboration leg runs on real inbox material.
 @MainActor
 func runLoop(env: HarnessEnv, loops: Int) async throws {
-    let url = try await env.ensureFixture(FixtureSet.hevc4K)
-    // Source keyframes every 4s (0,4,8,…). Composition = source [12,22];
-    // window comp [5.37, 6.87] → source [17.37, 18.87]: mid-GOP both ends.
+    // Leg 1 (the GATE): source keyframes every 4s (0,4,8,…). Composition
+    // = source [12,22]; window comp [5.37, 6.87] → source [17.37, 18.87]:
+    // mid-GOP both ends.
+    let hevcURL = try await env.ensureFixture(FixtureSet.hevc4K)
+    try await measureLoopRestart(
+        env: env,
+        label: "synthetic 4K HEVC long-GOP (keyframes 4s apart) [GATE leg]",
+        url: hevcURL, compositionRange: (12.0, 22.0), window: (5.37, 6.87),
+        loops: loops, isGateLeg: true)
+
+    // Leg 2 (corroboration): the longest real inbox file; window start
+    // carries an odd phase so it sits off recorder keyframe grids.
+    let probed = await env.probedRealFiles()
+    if let real = probed.max(by: { $0.meta.duration.seconds < $1.meta.duration.seconds }) {
+        let d = real.meta.duration.seconds
+        let lo = min(1.0, d * 0.02)
+        let windowStart = d * 0.25 - lo + 0.37  // composition time
+        try await measureLoopRestart(
+            env: env,
+            label: "real \(real.url.lastPathComponent) (\(fmt(d, 1))s) [corroboration leg]",
+            url: real.url, compositionRange: (lo, d - 0.5),
+            window: (windowStart, windowStart + 1.5),
+            loops: min(loops, 30), isGateLeg: false)
+    } else {
+        env.report("looptest", [
+            "**looptest(real)** — DEFERRED: footage inbox empty; corroboration leg re-runs once populated",
+        ])
+    }
+}
+
+@MainActor
+private func measureLoopRestart(
+    env: HarnessEnv, label: String, url: URL,
+    compositionRange: (start: Double, end: Double),
+    window: (start: Double, end: Double),
+    loops: Int, isGateLeg: Bool
+) async throws {
     let engine = PlayerEngine()
     var tap: FrameTap?
     engine.itemConfigurator = { item in
-        tap = FrameTap(item: item, decode: true)
+        tap = FrameTap(item: item, decode: false)
         tap?.start()
     }
-    try await engine.load(ranges: [PlayableRange(url: url, startSec: 12.0, endSec: 22.0)])
+    try await engine.load(ranges: [
+        PlayableRange(url: url, startSec: compositionRange.start, endSec: compositionRange.end)
+    ])
     engine.player.isMuted = true
 
-    let windowStart = 5.37
-    let windowEnd = 6.87
     // Harness-side boundary observer timestamps the fire; the engine's own
     // observer does the re-seek (both at the same boundary time).
     let fireBox = FireTimeBox()
     let observer = engine.player.addBoundaryTimeObserver(
-        forTimes: [NSValue(time: MediaTime.time(windowEnd))], queue: .main
+        forTimes: [NSValue(time: MediaTime.time(window.end))], queue: .main
     ) {
         fireBox.record(CACurrentMediaTime())
     }
     defer { engine.player.removeTimeObserver(observer) }
 
-    engine.loop(windowStartSec: windowStart, windowEndSec: windowEnd)
-    await engine.seek(toCompositionSeconds: windowStart)
+    engine.loop(windowStartSec: window.start, windowEndSec: window.end)
+    await engine.seek(toCompositionSeconds: window.start)
     engine.play()
 
     var restartMs: [Double] = []
     var missedFires = 0
     for _ in 0..<loops {
-        guard let fire = await fireBox.next(timeoutSec: (windowEnd - windowStart) + 5) else {
+        guard let fire = await fireBox.next(timeoutSec: (window.end - window.start) + 5) else {
             missedFires += 1
             continue
         }
         guard let tap else { break }
         let restart = await awaitSample(tap, timeoutSec: 3.0) {
-            $0.hostTime > fire && abs($0.itemTimeSec - windowStart) < 0.05
+            $0.hostTime > fire && abs($0.itemTimeSec - window.start) < 0.05
         }
         if let restart {
             restartMs.append(restart.hostTime - fire)
@@ -122,10 +188,13 @@ func runLoop(env: HarnessEnv, loops: Int) async throws {
     engine.pause()
 
     var report: [String] = []
-    report.append("**looptest** — 4K HEVC long-GOP (keyframes 4s apart), non-keyframe window [\(windowStart), \(windowEnd)] comp-time, \(loops) loops")
+    report.append("**looptest** — \(label), non-keyframe window [\(fmt(window.start)), \(fmt(window.end))] comp-time, \(loops) loops")
     report.append("- boundary-fire → first frame at window start: \(Stats.summary(restartMs))")
     report.append("- missed/unmeasured fires: \(missedFires)")
-    report.append("- GATE (≤ 50ms): \(Stats.percentile(restartMs.map { $0 * 1000 }, 95) <= 50 ? "PASS" : "FAIL") (p95)")
+    let verdict = Stats.percentile(restartMs.map { $0 * 1000 }, 95) <= 50 ? "PASS" : "FAIL"
+    report.append(isGateLeg
+        ? "- GATE (≤ 50ms p95): \(verdict)"
+        : "- corroboration (≤ 50ms p95, informational): \(verdict)")
     env.report("looptest", report)
 }
 
@@ -143,9 +212,9 @@ final class FireTimeBox: @unchecked Sendable {
     func next(timeoutSec: Double) async -> Double? {
         let deadline = CACurrentMediaTime() + timeoutSec
         while CACurrentMediaTime() < deadline {
-            lock.lock()
-            let value = pending.isEmpty ? nil : pending.removeFirst()
-            lock.unlock()
+            // Scoped locking — bare lock()/unlock() is (rightly) unavailable
+            // in async contexts; the critical section never suspends.
+            let value = lock.withLock { pending.isEmpty ? nil : pending.removeFirst() }
             if let value { return value }
             try? await Task.sleep(for: .milliseconds(2))
         }

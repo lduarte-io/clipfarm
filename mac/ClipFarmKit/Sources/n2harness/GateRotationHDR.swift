@@ -4,78 +4,79 @@ import CFMediaTestSupport
 import CoreMedia
 import Foundation
 
-/// Gate 3 — mixed-rotation render probe (D32): portrait iPhone-style +
-/// landscape in one composition renders correctly via videoComposition;
-/// record what passthrough export does with it.
+/// Gate 3 — mixed-rotation render probe (D32): portrait + landscape in one
+/// composition renders correctly via videoComposition; record what
+/// passthrough export does with it.
+///
+/// Leg 1 always runs with the PORTRAIT FIXTURE (its self-identifying gray
+/// is the only content the strict numeric checks can assert against);
+/// leg 2 runs real-portrait + real-landscape whenever the inbox has both
+/// orientations (content is arbitrary → pillars-black + content-present).
 @MainActor
 func runRotation(env: HarnessEnv) async throws {
-    let landscape = env.footageFile("btc.0.0.mov")
-    let portrait = try await env.ensureFixture(FixtureSet.portrait)
-    let builder = CompositionBuilder(assetCache: AssetCache())
-    let built = try await builder.build(
-        ranges: [
-            PlayableRange(url: landscape, startSec: 10.0, endSec: 12.0),
-            PlayableRange(url: portrait, startSec: 5.0, endSec: 7.0),
-        ],
-        renderSize: CGSize(width: 1920, height: 1080)
-    )
-    var report: [String] = ["**rotation** — landscape (real btc) + portrait (90° track transform) in one composition"]
-    report.append("- videoComposition attached: \(built.videoComposition != nil ? "yes (D32 conditional path)" : "NO — BUG")")
+    let probed = await env.probedRealFiles()
+    var report: [String] = ["**rotation** — mixed-geometry render probe (D32: conditional videoComposition, pillarbox default)"]
 
-    // Probe the rendered canvas during the portrait segment.
-    let engine = PlayerEngine()
-    var tap: FrameTap?
-    engine.itemConfigurator = { item in
-        tap = FrameTap(item: item, decode: false)
-        tap?.start()
+    func isLandscape(_ meta: SourceMetadata) -> Bool {
+        guard let video = meta.video else { return false }
+        return video.orientedSize.width > video.orientedSize.height
     }
-    // Rebuild through the engine (same composition inputs).
-    try await engine.load(ranges: [
-        PlayableRange(url: landscape, startSec: 10.0, endSec: 12.0),
-        PlayableRange(url: portrait, startSec: 5.0, endSec: 7.0),
-    ])
-    engine.player.isMuted = true
-    guard let tap else { throw HarnessError.internalFailure("no tap") }
-    let portraitMid = 3.0  // composition seconds — inside the portrait segment
-    tap.requestPNG(
-        atItemTime: portraitMid,
-        to: env.workdir.appendingPathComponent("frames/rotation-portrait-rendered.png"))
-    await engine.seek(toCompositionSeconds: portraitMid)
-    engine.play()
-    let sample = await awaitSample(tap, timeoutSec: 5.0) { $0.itemTimeSec >= portraitMid }
-    engine.pause()
+    let realLandscape = probed.filter { isLandscape($0.meta) }
+        .max { $0.meta.duration.seconds < $1.meta.duration.seconds }
+    let realPortrait = probed.filter { $0.meta.video != nil && !isLandscape($0.meta) }
+        .max { $0.meta.duration.seconds < $1.meta.duration.seconds }
 
-    // Grab one more delivered buffer for numeric probing.
-    var checks: [String] = []
-    if sample != nil, let pixelBuffer = try await capturePixelBuffer(engine: engine, at: portraitMid + 0.2) {
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        checks.append("- rendered canvas: \(width)×\(height) (expect 1920×1080)")
-        // Portrait 1080×1920 fit into 1920×1080 → content x ∈ [656, 1264].
-        let leftPillar = PixelProbe.meanRGB(
-            in: pixelBuffer, rect: CGRect(x: 0.02, y: 0.3, width: 0.25, height: 0.4))
-        let rightPillar = PixelProbe.meanRGB(
-            in: pixelBuffer, rect: CGRect(x: 0.73, y: 0.3, width: 0.25, height: 0.4))
-        let center = PixelProbe.meanRGB(
-            in: pixelBuffer, rect: CGRect(x: 0.42, y: 0.4, width: 0.16, height: 0.2))
-        let pillarsBlack = (leftPillar.r + leftPillar.g + leftPillar.b) / 3 < 25
-            && (rightPillar.r + rightPillar.g + rightPillar.b) / 3 < 25
-        let centerGray = abs(center.r - 118) < 25 && abs(center.g - 118) < 25
-        checks.append("- pillar bands black: \(pillarsBlack ? "yes" : "NO") (L=\(fmt(leftPillar.r, 0)) R=\(fmt(rightPillar.r, 0)))")
-        checks.append("- pillarboxed content is fixture gray: \(centerGray ? "yes" : "NO") (center r=\(fmt(center.r, 0)) g=\(fmt(center.g, 0)) b=\(fmt(center.b, 0)))")
-        checks.append("- GATE (renders correctly via videoComposition): \(pillarsBlack && centerGray ? "PASS" : "FAIL")")
+    // --- Leg 1: strict content assertions (portrait fixture) ---
+    let landscapeURL: URL
+    let landscapeStart: Double
+    if let realLandscape {
+        landscapeURL = realLandscape.url
+        landscapeStart = realLandscape.meta.duration.seconds * 0.2 + 0.37
+        report.append("- leg 1 material: real \(landscapeURL.lastPathComponent) + synthetic portrait fixture")
     } else {
-        checks.append("- GATE: FAIL (no frame delivered for probing)")
+        landscapeURL = try await env.ensureFixture(FixtureSet.h264A)
+        landscapeStart = 10.0
+        report.append("- leg 1 material: synthetic h264A + portrait fixture (no real landscape in inbox)")
     }
-    tap.stop()
-    report.append(contentsOf: checks)
+    let portraitFixture = try await env.ensureFixture(FixtureSet.portrait)
+    let leg1 = try await rotationRenderProbe(
+        env: env,
+        ranges: [
+            PlayableRange(url: landscapeURL, startSec: landscapeStart, endSec: landscapeStart + 2.0),
+            PlayableRange(url: portraitFixture, startSec: 5.0, endSec: 7.0),
+        ],
+        expectFixtureGray: true,
+        pngName: "rotation-leg1-portrait-rendered")
+    report.append(contentsOf: leg1.lines)
+    report.append("- GATE (renders correctly via videoComposition): \(leg1.pass ? "PASS" : "FAIL")")
+
+    // --- Leg 2: real + real (both orientations from the inbox) ---
+    var passthroughSource = leg1.built
+    if let realLandscape, let realPortrait {
+        report.append("- leg 2 material: real \(realLandscape.url.lastPathComponent) + real \(realPortrait.url.lastPathComponent)")
+        let dl = realLandscape.meta.duration.seconds
+        let dp = realPortrait.meta.duration.seconds
+        let leg2 = try await rotationRenderProbe(
+            env: env,
+            ranges: [
+                PlayableRange(url: realLandscape.url, startSec: dl * 0.3 + 0.11, endSec: dl * 0.3 + 2.11),
+                PlayableRange(url: realPortrait.url, startSec: dp * 0.3 + 0.13, endSec: dp * 0.3 + 2.13),
+            ],
+            expectFixtureGray: false,
+            pngName: "rotation-leg2-real-portrait-rendered")
+        report.append(contentsOf: leg2.lines)
+        report.append("- leg 2 verdict (pillars black + content present, informational): \(leg2.pass ? "PASS" : "FAIL")")
+        passthroughSource = leg2.built
+    } else {
+        report.append("- leg 2 (real + real): SKIPPED — inbox lacks one orientation; re-run when both exist")
+    }
 
     // Passthrough-export leg: record what passthrough does with mixed
     // rotation (it ignores videoComposition transforms — D32 rationale).
     let outURL = env.workdir.appendingPathComponent("export/rotation-passthrough.mov")
     try? FileManager.default.removeItem(at: outURL)
     if let session = AVAssetExportSession(
-        asset: built.composition, presetName: AVAssetExportPresetPassthrough) {
+        asset: passthroughSource.composition, presetName: AVAssetExportPresetPassthrough) {
         do {
             try await session.export(to: outURL, as: .mov)
             let meta = try await MetadataProbe.probe(url: outURL)
@@ -85,6 +86,73 @@ func runRotation(env: HarnessEnv) async throws {
         }
     }
     env.report("rotation", report)
+}
+
+/// Build → engine-load → probe one delivered frame mid-portrait-segment.
+/// Canvas expectation = the first segment's oriented size (the builder's
+/// D32 default; the engine exposes no renderSize override at N2).
+@MainActor
+private func rotationRenderProbe(
+    env: HarnessEnv, ranges: [PlayableRange], expectFixtureGray: Bool, pngName: String
+) async throws -> (lines: [String], pass: Bool, built: CompositionBuildResult) {
+    var lines: [String] = []
+    let cache = AssetCache()
+    let built = try await CompositionBuilder(assetCache: cache).build(ranges: ranges)
+    lines.append("  - videoComposition attached: \(built.videoComposition != nil ? "yes (D32 conditional path)" : "NO — BUG")")
+    guard built.videoComposition != nil else { return (lines, false, built) }
+
+    guard let firstVideo = (try await cache.loaded(for: ranges[0].url)).metadata.video,
+          let portraitVideo = (try await cache.loaded(for: ranges[1].url)).metadata.video
+    else {
+        lines.append("  - probe failed: missing video track info")
+        return (lines, false, built)
+    }
+    let canvas = firstVideo.orientedSize
+
+    let engine = PlayerEngine()
+    try await engine.load(ranges: ranges)
+    engine.player.isMuted = true
+    let portraitMid = MediaTime.seconds(built.segments[1].compositionStart)
+        + MediaTime.seconds(built.segments[1].duration) / 2
+    guard let pixelBuffer = try await capturePixelBuffer(engine: engine, at: portraitMid) else {
+        lines.append("  - no frame delivered for probing")
+        return (lines, false, built)
+    }
+    try? PixelProbe.writePNG(
+        pixelBuffer, to: env.workdir.appendingPathComponent("frames/\(pngName).png"))
+
+    let width = CVPixelBufferGetWidth(pixelBuffer)
+    let height = CVPixelBufferGetHeight(pixelBuffer)
+    let canvasOK = width == Int(canvas.width) && height == Int(canvas.height)
+    lines.append("  - rendered canvas: \(width)×\(height) (expected \(Int(canvas.width))×\(Int(canvas.height)) — first segment's oriented size)")
+
+    // Pillar geometry from the actual fit: portrait oriented size scaled
+    // into the canvas, centered.
+    let oriented = portraitVideo.orientedSize
+    let scale = min(canvas.width / oriented.width, canvas.height / oriented.height)
+    let contentLeft = (canvas.width - oriented.width * scale) / 2 / canvas.width  // normalized
+    guard contentLeft > 0.05 else {
+        lines.append("  - portrait content nearly fills the canvas (content left edge at \(fmt(contentLeft, 3))) — pillar probe not meaningful for this pair")
+        return (lines, canvasOK, built)
+    }
+    let pillarWidth = contentLeft - 0.03
+    let leftPillar = PixelProbe.meanRGB(
+        in: pixelBuffer, rect: CGRect(x: 0.01, y: 0.3, width: pillarWidth, height: 0.4))
+    let rightPillar = PixelProbe.meanRGB(
+        in: pixelBuffer, rect: CGRect(x: 0.99 - pillarWidth, y: 0.3, width: pillarWidth, height: 0.4))
+    let center = PixelProbe.meanRGB(
+        in: pixelBuffer, rect: CGRect(x: 0.42, y: 0.4, width: 0.16, height: 0.2))
+    let pillarsBlack = (leftPillar.r + leftPillar.g + leftPillar.b) / 3 < 25
+        && (rightPillar.r + rightPillar.g + rightPillar.b) / 3 < 25
+    let centerMean = (center.r + center.g + center.b) / 3
+    let contentOK = expectFixtureGray
+        ? abs(center.r - 118) < 25 && abs(center.g - 118) < 25
+        : centerMean > 20
+    lines.append("  - pillar bands black: \(pillarsBlack ? "yes" : "NO") (L=\(fmt(leftPillar.r, 0)) R=\(fmt(rightPillar.r, 0)); content left edge \(fmt(contentLeft, 3)))")
+    lines.append(expectFixtureGray
+        ? "  - pillarboxed content is fixture gray: \(contentOK ? "yes" : "NO") (center r=\(fmt(center.r, 0)) g=\(fmt(center.g, 0)) b=\(fmt(center.b, 0)))"
+        : "  - pillarboxed content present (non-black): \(contentOK ? "yes" : "NO") (center mean=\(fmt(centerMean, 0)))")
+    return (lines, canvasOK && pillarsBlack && contentOK, built)
 }
 
 /// Gate 4 — HDR↔SDR seam probe (D29): alternating HLG/SDR segments, with
@@ -104,6 +172,7 @@ func runHDRSeam(env: HarnessEnv) async throws {
     let builder = CompositionBuilder(assetCache: AssetCache())
     let managed = try await builder.build(ranges: ranges)  // color-managed (D29 enforced)
     var report: [String] = ["**hdrseam** — SDR(709) and HLG(2020) segments, matched nominal content (gray 118)"]
+    report.append("- material: synthetic SDR + synthetic HLG (the inbox holds no HDR material — PROVISIONAL 1); re-run with a real iPhone HDR clip in the inbox at the watch session if one exists")
     report.append("- builder attached videoComposition with 709 color properties: \(managed.videoComposition?.colorPrimaries != nil ? "yes" : "NO — BUG")")
 
     // Preview probe, managed path.

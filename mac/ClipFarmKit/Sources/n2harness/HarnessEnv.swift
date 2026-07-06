@@ -1,18 +1,23 @@
+import CFMedia
 import CFMediaTestSupport
 import Foundation
 
-/// Shared environment for every gate: working directory, footage paths,
+/// Shared environment for every gate: working directory, the footage inbox,
 /// the synthetic fixture set (PHASES.md → N2 PROVISIONAL 1), report sink.
 ///
-/// FOOTAGE IS STRICTLY READ-ONLY. Nothing in the harness ever writes into
-/// the dogfood folder; all outputs land in the (regenerable) workdir.
+/// Footage comes from the inbox `~/ClipFarm/Footage/` (D34 / spec
+/// amendment 14) — a managed working folder Lillian populates herself.
+/// The harness only ever READS it (its outputs are all regenerable and
+/// land in the workdir); real-file gate legs adapt to whatever is in the
+/// inbox and fall back to synthetic fixtures — flagged in the report —
+/// when no qualifying file exists. Footage anywhere else (including the
+/// retired `~/Desktop/AdAstra/…` dogfood path) is off-limits.
 struct HarnessEnv {
     let workdir: URL
     let footage: URL
 
     static let defaultFootage = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(
-            "Desktop/AdAstra/2ndMind/Creation/PlanetLillian/Video/Scripts/mp4files/05.19.26")
+        .appendingPathComponent("ClipFarm/Footage")
 
     static let defaultWorkdir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Caches/ClipFarm-N2Gates")
@@ -42,8 +47,26 @@ struct HarnessEnv {
 
     var fixtureDir: URL { workdir.appendingPathComponent("fixtures") }
 
-    func footageFile(_ name: String) -> URL {
-        footage.appendingPathComponent(name)
+    /// Video files currently in the footage inbox, sorted by name.
+    func realVideoFiles() -> [URL] {
+        let extensions: Set<String> = ["mov", "mp4", "m4v"]
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: footage, includingPropertiesForKeys: nil)) ?? []
+        return contents
+            .filter { extensions.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// Inbox files with probed metadata — durations drive every gate's
+    /// range layout (files change between runs; nothing is hardcoded).
+    func probedRealFiles() async -> [(url: URL, meta: SourceMetadata)] {
+        var probed: [(url: URL, meta: SourceMetadata)] = []
+        for url in realVideoFiles() {
+            if let meta = try? await MetadataProbe.probe(url: url) {
+                probed.append((url, meta))
+            }
+        }
+        return probed
     }
 
     func ensureFixture(_ spec: MediaFixtureSpec) async throws -> URL {
@@ -142,4 +165,36 @@ enum Stats {
 
 func fmt(_ value: Double, _ digits: Int = 2) -> String {
     String(format: "%.\(digits)f", value)
+}
+
+/// `count` ranges of `length` seconds spread across a file's usable span.
+/// Starts carry an odd sub-second phase so they never land on whole
+/// seconds (recorder keyframes sit on regular grids — cuts stay
+/// deliberately non-keyframe-aligned).
+func spreadRanges(url: URL, durationSec: Double, count: Int, length: Double) -> [PlayableRange] {
+    let lo = min(1.37, durationSec * 0.05)
+    let hi = durationSec - length - 0.25
+    guard hi > lo, count > 0 else { return [] }
+    let step = count > 1 ? (hi - lo) / Double(count) : 0
+    return (0..<count).map { i in
+        let start = min(lo + Double(i) * step + 0.113, hi)
+        return PlayableRange(url: url, startSec: start, endSec: start + length)
+    }
+}
+
+/// Round-robin interleave so consecutive playback ranges alternate source
+/// files wherever possible (cross-file seams are the harder case).
+func roundRobin<T>(_ groups: [[T]]) -> [T] {
+    var result: [T] = []
+    var index = 0
+    var appended = true
+    while appended {
+        appended = false
+        for group in groups where index < group.count {
+            result.append(group[index])
+            appended = true
+        }
+        index += 1
+    }
+    return result
 }

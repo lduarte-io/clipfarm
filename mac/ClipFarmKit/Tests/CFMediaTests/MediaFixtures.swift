@@ -11,8 +11,22 @@ actor TestFixtures {
     private let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("cfmedia-test-fixtures-\(ProcessInfo.processInfo.processIdentifier)")
 
+    /// One render Task per spec. Actor reentrancy means a bare
+    /// check-file-then-render suspends across the render — two parallel
+    /// tests asking for the same spec would BOTH see it missing and write
+    /// the same path concurrently (one writer dies; its media-data
+    /// callback stops; the test run hangs). Memoizing the in-flight Task
+    /// makes the second caller await the first render instead.
+    private var renders: [String: Task<URL, Error>] = [:]
+
     func url(for spec: MediaFixtureSpec) async throws -> URL {
-        try await MediaFixtureRenderer.render(spec, in: directory)
+        if let inFlight = renders[spec.name] {
+            return try await inFlight.value
+        }
+        let directory = self.directory
+        let render = Task { try await MediaFixtureRenderer.render(spec, in: directory) }
+        renders[spec.name] = render
+        return try await render.value
     }
 }
 

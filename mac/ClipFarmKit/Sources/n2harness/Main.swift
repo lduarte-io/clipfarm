@@ -1,24 +1,27 @@
 import Foundation
 
 /// N2 gate harness (PHASES.md → N2). One subcommand per exit gate; every
-/// run appends numbers to `<workdir>/reports/`. Footage is read-only;
-/// everything the harness produces is regenerable.
+/// run appends numbers to `<workdir>/reports/`. Real material comes from
+/// the footage inbox `~/ClipFarm/Footage/` (D34) — read-only here, adapts
+/// to whatever Lillian dropped in, falls back to synthetic fixtures (with
+/// a report flag) when no qualifying file exists. Everything the harness
+/// produces is regenerable.
 ///
-///   swift run n2harness fixtures                # render the synthetic set
-///   swift run n2harness seams uniform|mixed     # seam-drop instrumentation
-///   swift run n2harness blink [--cycles N]      # swap-blink A/B
-///   swift run n2harness rotation                # D32 mixed-rotation probe
-///   swift run n2harness hdrseam                 # D29 HDR↔SDR probe + export
-///   swift run n2harness rebuild                 # <10ms rebuild + edit→frame
-///   swift run n2harness frameacc                # frame accuracy + stepping
-///   swift run n2harness looptest [--loops N]    # trim-loop restart, 4K HEVC
-///   swift run n2harness fades                   # micro-fade pop/onset math
-///   swift run n2harness exportspike a|b|c|all   # the half-day export spike
-///   swift run n2harness demo [--uniform]        # watch-session window
-///   swift run n2harness all                     # every headless gate
+///   swift run n2harness fixtures                 # render the synthetic set
+///   swift run n2harness seams uniform|real|mixed # seam-drop instrumentation
+///   swift run n2harness blink [--cycles N]       # swap-blink A/B
+///   swift run n2harness rotation                 # D32 mixed-rotation probe
+///   swift run n2harness hdrseam                  # D29 HDR↔SDR probe + export
+///   swift run n2harness rebuild                  # <10ms rebuild + edit→frame
+///   swift run n2harness frameacc                 # frame accuracy + stepping
+///   swift run n2harness looptest [--loops N]     # trim-loop restart, 4K HEVC
+///   swift run n2harness fades                    # micro-fade pop/onset math
+///   swift run n2harness exportspike a|b|c|all    # the half-day export spike
+///   swift run n2harness demo [--real]            # watch-session window
+///   swift run n2harness all                      # every headless gate
 ///
 /// Options: --workdir <dir> (default ~/Library/Caches/ClipFarm-N2Gates),
-/// --footage <dir> (default the 05.19.26 dogfood folder).
+/// --footage <dir> (default ~/ClipFarm/Footage — the D34 inbox).
 enum HarnessError: Error {
     case usage(String)
     case internalFailure(String)
@@ -78,9 +81,10 @@ struct N2Harness {
         case "exportspike":
             try await runExportSpike(env: env, experiment: arguments.first ?? "all")
         case "demo":
-            try await runDemo(env: env, uniform: arguments.contains("--uniform"))
+            try await runDemo(env: env, realOnly: arguments.contains("--real"))
         case "all":
             try await runSeams(env: env, variant: "uniform")
+            try await runSeams(env: env, variant: "real")
             try await runSeams(env: env, variant: "mixed")
             try await runBlink(env: env, cycles: 100)
             try await runRotation(env: env)

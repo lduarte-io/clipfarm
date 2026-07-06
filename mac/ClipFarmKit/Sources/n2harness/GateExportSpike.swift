@@ -82,6 +82,7 @@ private func passthroughExperiment(env: HarnessEnv) async throws {
 
 /// Shared output analysis: duration, elst authorship, Apple-side frame
 /// exactness (self-identifying fixture frames), libav-side view.
+@MainActor
 private func analyzeSplice(
     url: URL, built: CompositionBuildResult, env: HarnessEnv, label: String
 ) async throws -> [String] {
@@ -105,9 +106,9 @@ private func analyzeSplice(
     }
 
     // Frame exactness, Apple-side (player honors edit lists).
-    let item = await AVPlayerItem(asset: asset)
-    let player = await AVPlayer(playerItem: item)
-    await MainActor.run { player.isMuted = true }
+    let item = AVPlayerItem(asset: asset)
+    let player = AVPlayer(playerItem: item)
+    player.isMuted = true
     var frameChecks: [String] = []
     for segment in built.segments {
         let expected = Int((segment.sourceStart.seconds * 30.0 + 1e-6).rounded(.down))
@@ -230,9 +231,9 @@ private func sequentialWriterExperiment(env: HarnessEnv) async throws {
     let duration = try await asset.load(.duration).seconds
     let expected = (ranges[0].endSec - ranges[0].startSec) + (ranges[1].endSec - ranges[1].startSec)
     report.append("- output duration: \(fmt(duration, 3))s (expected \(fmt(expected, 3))s if BOTH segments' lead-ins are edited out)")
-    let item = await AVPlayerItem(asset: asset)
-    let player = await AVPlayer(playerItem: item)
-    await MainActor.run { player.isMuted = true }
+    let item = AVPlayerItem(asset: asset)
+    let player = AVPlayer(playerItem: item)
+    player.isMuted = true
     let seg2StartInTarget = ranges[0].endSec - ranges[0].startSec  // presentation timeline starts at 0 via elst… probe both interpretations
     for probe in [0.001, seg2StartInTarget + 0.001] {
         let pixelBuffer = try await capturePixelBufferDirect(item: item, at: probe)
@@ -298,18 +299,29 @@ private func elstABExperiment(env: HarnessEnv) async throws {
     report.append(contentsOf: try await analyzeSplice(
         url: outURL, built: built, env: env, label: "standard"))
 
-    // Real-footage passthrough variant for ecosystem eyeballing (btc.0.0 +
-    // btc.0.2 — actual recorder H.264).
-    let realBuilt = try await builder.build(
-        ranges: [
-            PlayableRange(url: env.footageFile("btc.0.0.mov"), startSec: 20.37, endSec: 24.11),
-            PlayableRange(url: env.footageFile("btc.0.2.mov"), startSec: 30.13, endSec: 33.91),
-        ],
-        smoothCutAudio: false)
-    let realURL = env.workdir.appendingPathComponent("export/spike-c-real-passthrough.mov")
-    try? FileManager.default.removeItem(at: realURL)
-    if let realSession = AVAssetExportSession(
-        asset: realBuilt.composition, presetName: AVAssetExportPresetPassthrough) {
+    // Real-footage passthrough variants for ecosystem eyeballing: one
+    // self-splice per inbox file (uniform geometry per file — the clean
+    // elst question; non-keyframe cuts by odd-phase construction).
+    let probed = await env.probedRealFiles()
+    if probed.isEmpty {
+        report.append("- real-footage passthrough: DEFERRED — footage inbox empty; re-run `exportspike c` when populated")
+    }
+    for real in probed.prefix(2) {
+        let d = real.meta.duration.seconds
+        let stem = real.url.deletingPathExtension().lastPathComponent
+        let realRanges = [
+            PlayableRange(url: real.url, startSec: d * 0.2 + 0.37, endSec: d * 0.2 + 3.87),
+            PlayableRange(url: real.url, startSec: d * 0.6 + 0.13, endSec: d * 0.6 + 3.63),
+        ]
+        let expected = realRanges.reduce(0.0) { $0 + ($1.endSec - $1.startSec) }
+        let realBuilt = try await builder.build(ranges: realRanges, smoothCutAudio: false)
+        let realURL = env.workdir.appendingPathComponent("export/spike-c-real-\(stem).mov")
+        try? FileManager.default.removeItem(at: realURL)
+        guard let realSession = AVAssetExportSession(
+            asset: realBuilt.composition, presetName: AVAssetExportPresetPassthrough) else {
+            report.append("- real passthrough (\(stem)): AVAssetExportSession(passthrough) REFUSED the composition")
+            continue
+        }
         do {
             try await realSession.export(to: realURL, as: .mov)
             let duration = try await AVURLAsset(url: realURL).load(.duration).seconds
@@ -319,10 +331,10 @@ private func elstABExperiment(env: HarnessEnv) async throws {
                 "-show_entries", "stream=start_time,duration,nb_frames",
                 "-of", "default=noprint_wrappers=1", realURL.path,
             ])
-            report.append("- real-footage passthrough: AVF duration \(fmt(duration, 3))s (expected 7.520s); elst \(edits.map { "×\($0.count)" }.joined(separator: ",")); libav: \(ffprobe.replacingOccurrences(of: "\n", with: " "))")
-            report.append("- file kept: export/spike-c-real-passthrough.mov")
+            report.append("- real passthrough (\(stem), self-splice): AVF duration \(fmt(duration, 3))s (expected \(fmt(expected, 3))s); elst \(edits.map { "×\($0.count)" }.joined(separator: ",")); libav: \(ffprobe.replacingOccurrences(of: "\n", with: " "))")
+            report.append("- file kept: export/\(realURL.lastPathComponent)")
         } catch {
-            report.append("- real-footage passthrough FAILED: \(error)")
+            report.append("- real passthrough (\(stem)) FAILED: \(error)")
         }
     }
     env.report("exportspike", report)

@@ -39,6 +39,16 @@ public struct BuiltSegment: Sendable, Equatable {
     public let sourceStart: CMTime
 
     public var compositionEnd: CMTime { compositionStart + duration }
+
+    public init(
+        range: PlayableRange, compositionStart: CMTime, duration: CMTime,
+        sourceStart: CMTime
+    ) {
+        self.range = range
+        self.compositionStart = compositionStart
+        self.duration = duration
+        self.sourceStart = sourceStart
+    }
 }
 
 /// An immutable snapshot build (§2.5 rule 4): every edit produces a fresh
@@ -48,6 +58,18 @@ public struct CompositionBuildResult {
     public let videoComposition: AVVideoComposition?
     public let audioMix: AVAudioMix?
     public let segments: [BuiltSegment]
+
+    public init(
+        composition: AVComposition,
+        videoComposition: AVVideoComposition?,
+        audioMix: AVAudioMix?,
+        segments: [BuiltSegment]
+    ) {
+        self.composition = composition
+        self.videoComposition = videoComposition
+        self.audioMix = audioMix
+        self.segments = segments
+    }
 
     public var duration: CMTime {
         segments.last?.compositionEnd ?? .zero

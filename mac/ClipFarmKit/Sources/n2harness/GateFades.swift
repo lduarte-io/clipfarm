@@ -8,8 +8,8 @@ import Foundation
 /// SAME composition with fades on/off — (a) sample discontinuity at a
 /// mid-sine splice must collapse, (b) a burst onset placed exactly at a
 /// cut must reach full level within the 10ms fade window. Audible legs:
-/// WAV pairs (fixture + real speech from btc.0.4) written for the watch
-/// session.
+/// WAV pairs (fixture + real audio from the footage inbox) written for
+/// the watch session.
 @MainActor
 func runFades(env: HarnessEnv) async throws {
     let url = try await env.ensureFixture(FixtureSet.bursts)
@@ -75,24 +75,33 @@ func runFades(env: HarnessEnv) async throws {
     try writeWAV(samplesOff, sampleRate: Int(sampleRate),
                  to: env.workdir.appendingPathComponent("audio/fixture-fades-off.wav"))
 
-    // Real-speech A/B from btc.0.4 (mid-speech cuts, for listening).
-    let speech = env.footageFile("btc.0.4.mov")
-    let speechRanges = [
-        PlayableRange(url: speech, startSec: 63.4, endSec: 66.9),
-        PlayableRange(url: speech, startSec: 121.2, endSec: 124.6),
-        PlayableRange(url: speech, startSec: 245.7, endSec: 249.1),
-    ]
-    let speechOn = try await renderAudio(built: builder.build(ranges: speechRanges, smoothCutAudio: true))
-    let speechOff = try await renderAudio(built: builder.build(ranges: speechRanges, smoothCutAudio: false))
-    try writeWAV(speechOn, sampleRate: Int(sampleRate),
-                 to: env.workdir.appendingPathComponent("audio/speech-fades-on.wav"))
-    try writeWAV(speechOff, sampleRate: Int(sampleRate),
-                 to: env.workdir.appendingPathComponent("audio/speech-fades-off.wav"))
+    // Real-audio A/B (mid-recording cuts, for listening at the watch
+    // session) from the first inbox file that carries an audio track.
+    let probed = await env.probedRealFiles()
+    var realAudioNote: String
+    if let real = probed.first(where: { $0.meta.hasAudio }) {
+        let d = real.meta.duration.seconds
+        let realRanges = [
+            PlayableRange(url: real.url, startSec: d * 0.13, endSec: d * 0.29),
+            PlayableRange(url: real.url, startSec: d * 0.45, endSec: d * 0.62),
+            PlayableRange(url: real.url, startSec: d * 0.78, endSec: d * 0.92),
+        ]
+        let realOn = try await renderAudio(built: builder.build(ranges: realRanges, smoothCutAudio: true))
+        let realOff = try await renderAudio(built: builder.build(ranges: realRanges, smoothCutAudio: false))
+        try writeWAV(realOn, sampleRate: Int(sampleRate),
+                     to: env.workdir.appendingPathComponent("audio/real-fades-on.wav"))
+        try writeWAV(realOff, sampleRate: Int(sampleRate),
+                     to: env.workdir.appendingPathComponent("audio/real-fades-off.wav"))
+        realAudioNote = "- real-audio A/B from \(real.url.lastPathComponent): audio/real-fades-{on,off}.wav (2 mid-recording cuts)"
+    } else {
+        realAudioNote = "- real-audio A/B: DEFERRED — no audio-bearing file in the footage inbox; drop one in and re-run `fades`"
+    }
 
     var report: [String] = ["**fades** — ~10ms AVAudioMix ramps at cut boundaries (D31), offline-rendered"]
     report.append("- pop at mid-sine splice: fades OFF max Δ/sample = \(fmt(popOff, 3)), fades ON = \(fmt(popOn, 3)) → \(popKilled ? "killed" : "NOT killed")")
     report.append("- burst-onset at cut: RMS 12–24ms post-cut = \(fmt(earlyOn, 3)) vs steady = \(fmt(steadyOn, 3)) (ratio \(fmt(earlyOn / steadyOn, 2))) → \(onsetPreserved ? "onset preserved" : "SOFTENED")")
     report.append("- in-fade-window RMS (0–10ms): on=\(fmt(inFadeOn, 3)) off=\(fmt(inFadeOff, 3)) (ramp expected to sit below the off value)")
+    report.append(realAudioNote)
     report.append("- GATE: \(popKilled && onsetPreserved ? "PASS" : "FAIL") (programmatic; audible A/B at audio/*.wav for the watch session)")
     env.report("fades", report)
 }
@@ -100,8 +109,12 @@ func runFades(env: HarnessEnv) async throws {
 /// Offline-render a composition's audio (honoring its audioMix) to mono
 /// Float32 48kHz.
 func renderAudio(built: CompositionBuildResult) async throws -> [Float] {
-    let reader = try AVAssetReader(asset: built.composition)
-    let audioTracks = try await built.composition.loadTracks(withMediaType: .audio)
+    // AVAssetReader's initializer demands a `sending` asset. The build
+    // result is an immutable snapshot (§2.5 rule 4) that nothing mutates
+    // after construction, and this reader is drained before return — safe.
+    nonisolated(unsafe) let composition = built.composition
+    let reader = try AVAssetReader(asset: composition)
+    let audioTracks = try await composition.loadTracks(withMediaType: .audio)
     let output = AVAssetReaderAudioMixOutput(
         audioTracks: audioTracks,
         audioSettings: [

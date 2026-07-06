@@ -7,30 +7,67 @@ import QuartzCore
 /// Gate 1 — seam-drop instrumentation: 20+ deliberately non-keyframe cuts;
 /// p95 inter-frame delivery gap at seams ≤ 1 incoming frame duration.
 ///
-/// Two runs: `uniform` (real dogfood H.264, bare composition — the common
-/// case) and `mixed` (H.264 + HEVC 4K + ProRes + HLG-HDR + portrait, the
+/// Three runs: `uniform` (same-geometry trio, bare composition — the
+/// common case; synthetic, since the inbox's real files are mutually
+/// mixed-geometry), `real` (whatever is in the footage inbox, D34), and
+/// `mixed` (real + HEVC 4K + ProRes + HLG-HDR + portrait fixtures — the
 /// videoComposition path).
 @MainActor
 func runSeams(env: HarnessEnv, variant: String) async throws {
+    var material: [String] = []
     let ranges: [PlayableRange]
     switch variant {
     case "uniform":
-        // Real footage, three files, offsets chosen off any whole second
-        // (recorder keyframes land on regular grids; ffprobe-verified
-        // non-keyframe in the closeout notes).
+        // Bare-composition leg needs uniform geometry across ≥3 files —
+        // not constructible from the current inbox (portrait iPhone +
+        // 4K-class landscape are mutually mixed), so this leg is synthetic
+        // (PROVISIONAL 1): H.264 + H.264 + HEVC, all 1920×1080 identity,
+        // long-GOP, cuts off the keyframe grid.
         let files = [
-            env.footageFile("btc.0.0.mov"),
-            env.footageFile("btc.0.2.mov"),
-            env.footageFile("btc.01.mov"),
+            try await env.ensureFixture(FixtureSet.h264A),
+            try await env.ensureFixture(FixtureSet.h264B),
+            try await env.ensureFixture(FixtureSet.hevc1080),
         ]
+        material.append("- material: synthetic h264A/h264B/hevc1080 (uniform 1080p geometry, bare composition)")
         ranges = (0..<24).map { i in
             let file = files[i % files.count]
-            let start = 7.37 + Double(i) * 3.113
+            let start = 7.37 + Double(i % 8) * 3.113
             return PlayableRange(url: file, startSec: start, endSec: start + 1.8)
         }
+    case "real":
+        let probed = await env.probedRealFiles()
+        guard !probed.isEmpty else {
+            env.report("seams-real", [
+                "**seams(real)** — DEFERRED: footage inbox (\(env.footage.path)) has no video files; drop files in (D34) and re-run `swift run n2harness seams real`",
+            ])
+            return
+        }
+        material.append("- material: real inbox files — "
+            + probed.map { "\($0.url.lastPathComponent) (\(fmt($0.meta.duration.seconds, 1))s)" }
+                .joined(separator: ", "))
+        let perFile = max(2, 25 / probed.count)
+        let groups = probed.map { file in
+            spreadRanges(
+                url: file.url, durationSec: file.meta.duration.seconds,
+                count: perFile, length: 1.8)
+        }
+        ranges = roundRobin(groups)
+        guard ranges.count >= 2 else {
+            throw HarnessError.internalFailure("inbox files too short for seam ranges")
+        }
     case "mixed":
+        let probed = await env.probedRealFiles()
+        let realLead = probed.max { $0.meta.duration.seconds < $1.meta.duration.seconds }
+        let lead: URL
+        if let realLead {
+            lead = realLead.url
+            material.append("- material: real \(lead.lastPathComponent) + hevc4K/proRes/hlg/portrait fixtures (HDR + ProRes legs synthetic — no such real material in the inbox)")
+        } else {
+            lead = try await env.ensureFixture(FixtureSet.h264A)
+            material.append("- material: ALL synthetic (inbox empty) — re-run when populated")
+        }
         let sources = [
-            env.footageFile("btc.0.0.mov"),
+            lead,
             try await env.ensureFixture(FixtureSet.hevc4K),
             try await env.ensureFixture(FixtureSet.proRes),
             try await env.ensureFixture(FixtureSet.hlg),
@@ -42,7 +79,7 @@ func runSeams(env: HarnessEnv, variant: String) async throws {
             return PlayableRange(url: source, startSec: start, endSec: start + 1.7)
         }
     default:
-        throw HarnessError.usage("seams variant must be uniform|mixed")
+        throw HarnessError.usage("seams variant must be uniform|real|mixed")
     }
 
     let engine = PlayerEngine()
@@ -95,9 +132,11 @@ func runSeams(env: HarnessEnv, variant: String) async throws {
     let p95Ratio = Stats.percentile(seamGapRatios, 95)
     let pass = p95Ratio <= 1.0 + 0.15  // ±poll-resolution allowance is NOT applied to the gate; see report
     let strictPass = p95Ratio <= 1.0
-    report.append("**seams(\(variant))** — \(built.segments.count - 1) seams over \(fmt(total, 1))s")
-    report.append("- inter-frame delivery gap at seams: \(Stats.summary(seamGapsMs))")
-    report.append("- gap / incoming-frame-duration: p50=\(fmt(Stats.percentile(seamGapRatios, 50))) p95=\(fmt(p95Ratio)) max=\(fmt(seamGapRatios.max() ?? .nan))")
-    report.append("- GATE (p95 ratio ≤ 1.0): \(strictPass ? "PASS" : (pass ? "MARGINAL (within 2kHz poll resolution)" : "FAIL"))")
-    env.report("seams-\(variant)", report)
+    var out: [String] = ["**seams(\(variant))** — \(built.segments.count - 1) seams over \(fmt(total, 1))s"]
+    out.append(contentsOf: material)
+    out.append("- inter-frame delivery gap at seams: \(Stats.summary(seamGapsMs))")
+    out.append("- gap / incoming-frame-duration: p50=\(fmt(Stats.percentile(seamGapRatios, 50))) p95=\(fmt(p95Ratio)) max=\(fmt(seamGapRatios.max() ?? .nan))")
+    out.append("- GATE (p95 ratio ≤ 1.0): \(strictPass ? "PASS" : (pass ? "MARGINAL (within 2kHz poll resolution)" : "FAIL"))")
+    out.append(contentsOf: report)
+    env.report("seams-\(variant)", out)
 }

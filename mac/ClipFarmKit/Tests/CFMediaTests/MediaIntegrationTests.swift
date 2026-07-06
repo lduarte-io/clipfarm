@@ -60,9 +60,13 @@ import Testing
         outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
     reader.add(output)
     #expect(reader.startReading())
-    for expected in 0..<10 {
+    // Anchor each decoded index to the sample's OWN presentation time —
+    // H.264 B-frame reordering means emission order need not be 0,1,2,…
+    for _ in 0..<10 {
         let sample = try #require(output.copyNextSampleBuffer())
         let pixelBuffer = try #require(CMSampleBufferGetImageBuffer(sample))
+        let pts = CMSampleBufferGetPresentationTimeStamp(sample).seconds
+        let expected = Int((pts * 30.0).rounded())
         #expect(PixelProbe.frameIndex(in: pixelBuffer) == expected)
         #expect(!PixelProbe.isBlack(pixelBuffer))
     }

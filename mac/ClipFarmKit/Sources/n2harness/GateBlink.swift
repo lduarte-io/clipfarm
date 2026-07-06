@@ -11,15 +11,30 @@ import QuartzCore
 /// strategy — the winner becomes the PlayerEngine contract.
 @MainActor
 func runBlink(env: HarnessEnv, cycles: Int) async throws {
-    let file = env.footageFile("btc.0.0.mov")
+    let probed = await env.probedRealFiles()
+    let file: URL
+    let duration: Double
+    let materialNote: String
+    if let real = probed.max(by: { $0.meta.duration.seconds < $1.meta.duration.seconds }) {
+        file = real.url
+        duration = real.meta.duration.seconds
+        materialNote = "- material: real \(file.lastPathComponent) (\(fmt(duration, 1))s)"
+    } else {
+        file = try await env.ensureFixture(FixtureSet.h264A)
+        duration = FixtureSet.h264A.durationSec
+        materialNote = "- material: synthetic h264A (inbox empty) — re-run when populated"
+    }
+    // Three ranges spread across the file; starts deliberately off whole
+    // seconds (non-keyframe cuts).
+    let anchors = [duration * 0.10, duration * 0.45, duration * 0.75]
     func makeRanges(_ edit: Int) -> [PlayableRange] {
         // The middle range's end breathes by ±1 frame per edit — the
         // smallest realistic trim-nudge edit.
         let nudge = Double(edit % 2) * (1.0 / 30.0)
         return [
-            PlayableRange(url: file, startSec: 10.37, endSec: 14.21),
-            PlayableRange(url: file, startSec: 30.11, endSec: 33.97 + nudge),
-            PlayableRange(url: file, startSec: 50.23, endSec: 54.02),
+            PlayableRange(url: file, startSec: anchors[0] + 0.37, endSec: anchors[0] + 4.21),
+            PlayableRange(url: file, startSec: anchors[1] + 0.11, endSec: anchors[1] + 3.97 + nudge),
+            PlayableRange(url: file, startSec: anchors[2] + 0.23, endSec: anchors[2] + 4.02),
         ]
     }
 
@@ -73,21 +88,30 @@ func runBlink(env: HarnessEnv, cycles: Int) async throws {
     // fallback — §2.5 rule 4) ---
     let cache = AssetCache()
     let loaded = try await cache.loaded(for: file)
-    guard let videoTrack = loaded.videoTrack, let audioTrack = loaded.audioTrack else {
-        throw HarnessError.internalFailure("btc.0.0 tracks missing")
+    guard let videoTrack = loaded.videoTrack else {
+        throw HarnessError.internalFailure("\(file.lastPathComponent) has no video track")
     }
+    // Audio is optional — the inbox can hold video-only files.
+    let audioTrack = loaded.audioTrack
     let mutable = AVMutableComposition()
     let mv = mutable.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
-    let ma = mutable.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
+    let ma = audioTrack == nil
+        ? nil
+        : mutable.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
     func rebuildInPlace(_ edit: Int) throws {
-        mv.removeTimeRange(CMTimeRange(start: .zero, duration: mutable.duration))
-        ma.removeTimeRange(CMTimeRange(start: .zero, duration: mutable.duration))
+        // Capture the span once — mutable.duration shrinks as soon as the
+        // first track is emptied, which would leave a tail on the second.
+        let whole = CMTimeRange(start: .zero, duration: mutable.duration)
+        mv.removeTimeRange(whole)
+        ma?.removeTimeRange(whole)
         var cursor = CMTime.zero
         for range in makeRanges(edit) {
             let tr = CMTimeRange(
                 start: MediaTime.time(range.startSec), end: MediaTime.time(range.endSec))
             try mv.insertTimeRange(tr, of: videoTrack, at: cursor)
-            try ma.insertTimeRange(tr, of: audioTrack, at: cursor)
+            if let audioTrack, let ma {
+                try ma.insertTimeRange(tr, of: audioTrack, at: cursor)
+            }
             cursor = cursor + tr.duration
         }
     }
@@ -131,6 +155,7 @@ func runBlink(env: HarnessEnv, cycles: Int) async throws {
 
     var report: [String] = []
     report.append("**blink** — \(cycles) edit cycles per strategy (playing, muted)")
+    report.append(materialNote)
     report.append("- A rebuild+pre-seek+swap: blinks=\(blinksA) (black=\(blackA))  delivery gap across swap: \(Stats.summary(swapGapsMs))")
     report.append("- B mutate-in-place:       blinks=\(blinksB) (black=\(blackB))  delivery gap across edit: \(Stats.summary(mutateGapsMs))")
     let winner = blinksA <= blinksB ? "A (rebuild+swap — the §2.5 rule 4 default)" : "B (mutate-in-place — the designed fallback)"
