@@ -85,9 +85,15 @@ func runDemo(env: HarnessEnv, realOnly: Bool, selfCheck: Bool = false) async thr
     let view = PlayerHostView(engine: engine, ranges: ranges)
     window.contentView = view
     window.center()
-    window.makeKeyAndOrderFront(nil)
-    window.makeFirstResponder(view)
-    app.activate()
+    window.isReleasedWhenClosed = false
+
+    let terminateObserver = NotificationCenter.default.addObserver(
+        forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+    ) { _ in
+        fputs("demo: NSApplication willTerminate\n", stderr)
+        fflush(stderr)
+    }
+    _ = terminateObserver
     let closeObserver = NotificationCenter.default.addObserver(
         forName: NSWindow.willCloseNotification, object: window, queue: nil
     ) { _ in
@@ -95,62 +101,84 @@ func runDemo(env: HarnessEnv, realOnly: Bool, selfCheck: Bool = false) async thr
         fflush(stdout)
         exit(0)
     }
-    defer { NotificationCenter.default.removeObserver(closeObserver) }
-    app.finishLaunching()
+    _ = closeObserver
 
-    engine.play()
-    print("demo: playing \(ranges.count) ranges. Space=pause  R=reload(swap)  L=loop-here  Esc/Q=quit  (click the window once if keys don't respond)")
-    fflush(stdout)
-
-    // Run-loop integration (black-window incident, root cause 2): this
-    // process's async main() executes ON the main dispatch queue, and a
-    // nested `app.run()` inside a dispatch callout NEVER drains that
-    // queue — so every DispatchQueue.main block, every @MainActor Task
-    // (the R-key reload), and the engine's queue-.main observers starve.
-    // Instead of app.run(), a hybrid pump: service AppKit events for a
-    // slice, then SUSPEND (Task.sleep) so control returns to the main
-    // queue's top level and MainActor/dispatch work drains. Everything
-    // works: window events, engine observers, concurrency.
-    let started = CACurrentMediaTime()
-    var nextCheck = 2.0
-    let checks: [Double] = [2.0, 5.0]
-    var checkIndex = 0
-    while true {
-        let sliceEnd = Date().addingTimeInterval(0.008)
-        while let event = app.nextEvent(
-            matching: .any, until: sliceEnd, inMode: .default, dequeue: true) {
-            app.sendEvent(event)
+    // Self-checks + playback start are main-queue work — schedulable
+    // normally because of the park-and-run structure below.
+    for checkAt in [2.0, 5.0] {
+        DispatchQueue.main.asyncAfter(deadline: .now() + checkAt) {
+            MainActor.assumeIsolated {
+                let item = engine.player.currentItem
+                let layer = view.presentationLayer
+                let frames = tap?.snapshot() ?? []
+                let screenDescription = window.screen.map {
+                    "\(Int($0.frame.width))×\(Int($0.frame.height))\($0 == NSScreen.main ? " (main)" : "")"
+                } ?? "NONE"
+                print(
+                    "DEMO SELF-CHECK @\(Int(checkAt))s: "
+                    + "rate=\(engine.player.rate) "
+                    + "itemStatus=\(item.map { String(describing: $0.status.rawValue) } ?? "nil") "
+                    + "itemError=\(item?.error.map(String.init(describing:)) ?? "nil") "
+                    + "itemTime=\(fmt(engine.currentTimeSec, 2)) "
+                    + "layerIsBacking=\(view.layer === layer) "
+                    + "layerReadyForDisplay=\(layer.isReadyForDisplay) "
+                    + "layerBounds=\(Int(layer.bounds.width))×\(Int(layer.bounds.height)) "
+                    + "videoRect=\(Int(layer.videoRect.width))×\(Int(layer.videoRect.height)) "
+                    + "decodedFrames=\(frames.count) lastFrameItemTime=\(frames.last.map { fmt($0.itemTimeSec, 2) } ?? "—")"
+                )
+                print(
+                    "DEMO WINDOW-CHECK @\(Int(checkAt))s: "
+                    + "visible=\(window.isVisible) "
+                    + "onScreen(occlusion)=\(window.occlusionState.contains(.visible)) "
+                    + "key=\(window.isKeyWindow) "
+                    + "windowNumber=\(window.windowNumber) "
+                    + "frame=\(Int(window.frame.origin.x)),\(Int(window.frame.origin.y)) \(Int(window.frame.width))×\(Int(window.frame.height)) "
+                    + "screen=\(screenDescription) "
+                    + "appActive=\(NSApp.isActive) "
+                    + "policy=\(NSApp.activationPolicy() == .regular ? "regular" : "NOT-regular")"
+                )
+                fflush(stdout)
+            }
         }
-        app.updateWindows()
-        try? await Task.sleep(for: .milliseconds(4))
-
-        let elapsed = CACurrentMediaTime() - started
-        if checkIndex < checks.count, elapsed >= checks[checkIndex] {
-            nextCheck = checks[checkIndex]
-            checkIndex += 1
-            let item = engine.player.currentItem
-            let layer = view.presentationLayer
-            let frames = tap?.snapshot() ?? []
-            print(
-                "DEMO SELF-CHECK @\(Int(nextCheck))s: "
-                + "rate=\(engine.player.rate) "
-                + "itemStatus=\(item.map { String(describing: $0.status.rawValue) } ?? "nil") "
-                + "itemError=\(item?.error.map(String.init(describing:)) ?? "nil") "
-                + "itemTime=\(fmt(engine.currentTimeSec, 2)) "
-                + "layerIsBacking=\(view.layer === layer) "
-                + "layerReadyForDisplay=\(layer.isReadyForDisplay) "
-                + "layerBounds=\(Int(layer.bounds.width))×\(Int(layer.bounds.height)) "
-                + "videoRect=\(Int(layer.videoRect.width))×\(Int(layer.videoRect.height)) "
-                + "decodedFrames=\(frames.count) lastFrameItemTime=\(frames.last.map { fmt($0.itemTimeSec, 2) } ?? "—")"
-            )
-            fflush(stdout)
-        }
-        if selfCheck, elapsed >= 6.5 {
+    }
+    if selfCheck {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.5) {
             print("demo --selfcheck: auto-exit")
             fflush(stdout)
             exit(0)
         }
     }
+
+    // Park-and-run (black/invisible-window incident, the load-bearing
+    // structure): async main()'s frame IS a main-dispatch-queue job — any
+    // `app.run()` inside it starves the queue (no DispatchQueue.main
+    // blocks, no @MainActor tasks, no queue-.main observers — root cause
+    // 2), and a hand-rolled event pump surfaces windows unreliably from a
+    // CLI process (root cause 3: occlusion=false — ordered behind the
+    // active Terminal under cooperative activation; the aggressive
+    // orderFrontRegardless/.floating workaround intermittently drew a
+    // silent exit(0) in shell-spawned contexts). Instead: schedule the
+    // AppKit phase as a RUN-LOOP-SOURCE callout — not a queue callout —
+    // then SUSPEND this frame forever. The suspension completes the
+    // main-queue job, freeing the queue; the run loop then performs the
+    // block, and app.run() executes with its full presentation/activation
+    // machinery AND a serviceable main queue: dispatch drains, @MainActor
+    // tasks run (R-key reload), engine observers fire.
+    CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+        MainActor.assumeIsolated {
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(view)
+            app.activate()
+            engine.play()
+            print("demo: playing \(ranges.count) ranges. Space=pause  R=reload(swap)  L=loop-here  Esc/Q=quit  (if the window isn't frontmost, click it or use Cmd-Tab)")
+            fflush(stdout)
+            app.run()
+        }
+    }
+    CFRunLoopWakeUp(CFRunLoopGetMain())
+    // Suspend forever — the process lives in app.run(); exit is via the
+    // window-close observer, Q/Esc, or --selfcheck auto-exit.
+    await withUnsafeContinuation { (_: UnsafeContinuation<Void, Never>) in }
 }
 
 @MainActor
