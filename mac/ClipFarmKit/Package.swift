@@ -68,6 +68,21 @@ let package = Package(
             dependencies: ["CFDomain"],
             swiftSettings: kitSwiftSettings
         ),
+        // Synthetic-media rendering (AVAssetWriter fixtures with
+        // frame-index-encoded content) + pixel probing, shared by
+        // CFMediaTests and the N2 gate harness. Never ships.
+        .target(
+            name: "CFMediaTestSupport",
+            swiftSettings: kitSwiftSettings
+        ),
+        // N2 debug harness (PHASES.md → N2 PROVISIONAL 3): drives the gate
+        // measurements from the CLI (`swift run n2harness <gate>`).
+        // Debug tooling — never ships, not part of the library product.
+        .executableTarget(
+            name: "n2harness",
+            dependencies: ["CFDomain", "CFMedia", "CFMediaTestSupport"],
+            swiftSettings: kitSwiftSettings
+        ),
 
         .testTarget(
             name: "CFDomainTests",
@@ -86,7 +101,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CFMediaTests",
-            dependencies: ["CFMedia"],
+            dependencies: ["CFMedia", "CFMediaTestSupport"],
             swiftSettings: kitSwiftSettings
         ),
         .testTarget(
