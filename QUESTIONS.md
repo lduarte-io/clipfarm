@@ -8,7 +8,11 @@ Format per item:
 
 ## Open
 
-*(none — all N2 items resolved 2026-07-06; the one open gate row (HDR re-run on real material) lives on the N2 watch-session checklist, not here.)*
+- **[N3 · 2026-07-06]** `.mkv` remux provenance — where does the original `.mkv` path live? (a) new nullable `sources.original_path` column (schema §2.3 amendment) / (b) JSON blob piggyback / (c) don't persist → implemented **(a)** as the plan-promised "reviewable default" (`LibrarySchema` v2 migration; `Source.originalPath`). PROVISIONAL 1 in the PHASES.md N3 entry.
+- **[N3 · 2026-07-06]** D18 `.fixedPadding` tail clamping — pad past the last word by `tailPaddingSec`, but clamped how? (a) clamp to next clip's first-word start AND source duration / (b) unclamped / (c) duration-only → implemented **(a)** (padding must never swallow the next take's onset or run past the file). PROVISIONAL 2.
+- **[N3 · 2026-07-06]** Re-apply segmentation semantics — (a) wholesale replace of all non-`boundary_edited` clips / (b) ID-preserving diff (unchanged recomputed ranges keep their existing rows — tags and `created_at` survive; only genuinely changed boundaries delete+insert) → implemented **(b)**. PROVISIONAL 3.
+- **[N3 · 2026-07-06]** Ingest undo granularity — (a) one grouped "Ingest Folder" undo step / (b) per-source steps / (c) not undoable → implemented **(a)**. PROVISIONAL 4.
+- **[N3 · 2026-07-06]** Failed `.mkv` remux disposition — (a) reject the file (`remux-failed`, detail points at ffmpeg install/Settings) / (b) register a dead footage-only source pointing at the unplayable `.mkv` / (c) abort the ingest → implemented **(a)** (mirrors the `__`-stem hard-reject: the source itself is the problem; re-ingest picks it up after ffmpeg is fixed). PROVISIONAL 5.
 
 ## Answered
 
