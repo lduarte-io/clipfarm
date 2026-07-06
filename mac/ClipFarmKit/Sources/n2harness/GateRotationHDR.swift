@@ -161,31 +161,98 @@ private func rotationRenderProbe(
 /// export.
 @MainActor
 func runHDRSeam(env: HarnessEnv) async throws {
-    let sdr = try await env.ensureFixture(FixtureSet.h264A)   // gray 118, BT.709
-    let hdr = try await env.ensureFixture(FixtureSet.hlg)     // gray 118 nominal, HLG/BT.2020
-    let ranges = [
-        PlayableRange(url: sdr, startSec: 5.0, endSec: 7.0),
-        PlayableRange(url: hdr, startSec: 5.0, endSec: 7.0),
-        PlayableRange(url: sdr, startSec: 20.0, endSec: 22.0),
-        PlayableRange(url: hdr, startSec: 20.0, endSec: 22.0),
-    ]
+    // Leg 1 — synthetic control (kept deliberately: its fixture-encode
+    // caveat is exactly why the real legs matter; matched nominal gray
+    // makes the cross-seam criterion meaningful here and only here).
+    let sdrFixture = try await env.ensureFixture(FixtureSet.h264A)   // gray 118, BT.709
+    let hlgFixture = try await env.ensureFixture(FixtureSet.hlg)     // gray 118 nominal, HLG/BT.2020
+    try await hdrSeamLeg(
+        env: env,
+        label: "synthetic-control",
+        material: "synthetic SDR h264A + synthetic HLG fixture (control leg; fixture-encode nominal-match caveat applies — PROVISIONAL 1)",
+        ranges: [
+            PlayableRange(url: sdrFixture, startSec: 5.0, endSec: 7.0),
+            PlayableRange(url: hlgFixture, startSec: 5.0, endSec: 7.0),
+            PlayableRange(url: sdrFixture, startSec: 20.0, endSec: 22.0),
+            PlayableRange(url: hlgFixture, startSec: 20.0, endSec: 22.0),
+        ],
+        matchedNominalContent: true)
+
+    // Real legs — adaptive over the footage inbox (this leg was hardcoded
+    // to synthetics until 2026-07-06; the closeout records that honestly).
+    let probed = await env.probedRealFiles()
+    let hdrFiles = probed.filter { $0.meta.video?.isHDR == true }
+    let sdrFiles = probed.filter { $0.meta.video != nil && $0.meta.video?.isHDR == false }
+    guard !hdrFiles.isEmpty else {
+        env.report("hdrseam", [
+            "**hdrseam(real)** — DEFERRED: no HDR file in the footage inbox (\(env.footage.path)); drop a real HLG clip in and re-run",
+        ])
+        return
+    }
+    guard let sdrReal = sdrFiles.max(by: { $0.meta.duration.seconds < $1.meta.duration.seconds }) else {
+        env.report("hdrseam", ["**hdrseam(real)** — inbox has HDR but no SDR material to alternate against; drop an SDR clip in and re-run"])
+        return
+    }
+    // HEVC HLG first — the iPhone-consumer profile D29 targets; ProRes
+    // HLG (all-intra acquisition profile) as a second leg.
+    let orderedHDR = hdrFiles.sorted { a, b in
+        let aHEVC = a.meta.video?.codec.hasPrefix("hvc") ?? false
+        let bHEVC = b.meta.video?.codec.hasPrefix("hvc") ?? false
+        if aHEVC != bHEVC { return aHEVC }
+        return a.url.lastPathComponent < b.url.lastPathComponent
+    }
+    for hdrFile in orderedHDR {
+        let dSDR = sdrReal.meta.duration.seconds
+        let dHDR = hdrFile.meta.duration.seconds
+        // Duration-aware layout, front-weighted (0.2d / 0.55d starts):
+        // deliberately clear of any late-clip anomalies (one delivered
+        // ProRes clip washes to white in its final ~1s — stress material,
+        // not a defect; these ranges never reach it).
+        let ranges = [
+            PlayableRange(url: sdrReal.url, startSec: dSDR * 0.2 + 0.11, endSec: dSDR * 0.2 + 2.11),
+            PlayableRange(url: hdrFile.url, startSec: dHDR * 0.2 + 0.13, endSec: dHDR * 0.2 + 2.13),
+            PlayableRange(url: sdrReal.url, startSec: dSDR * 0.55 + 0.11, endSec: dSDR * 0.55 + 2.11),
+            PlayableRange(url: hdrFile.url, startSec: dHDR * 0.55 + 0.13, endSec: dHDR * 0.55 + 2.13),
+        ]
+        let stem = hdrFile.url.deletingPathExtension().lastPathComponent
+        let codec = hdrFile.meta.video?.codec ?? "?"
+        try await hdrSeamLeg(
+            env: env,
+            label: "real-\(stem)",
+            material: "REAL: \(sdrReal.url.lastPathComponent) (SDR) alternating with \(hdrFile.url.lastPathComponent) (\(codec), HLG/BT.2020, \(fmt(dHDR, 1))s)",
+            ranges: ranges,
+            matchedNominalContent: false)
+    }
+}
+
+/// One SDR↔HDR alternation leg: managed build (D29 color pin) vs bare
+/// control in preview, plus a Standard-tier export of the managed path.
+///
+/// Measured criterion, stated explicitly: the LOAD-BEARING number on any
+/// material is **max per-segment |preview − export|** (WYSIWYG, ≤ 6/255).
+/// The cross-seam "no visible shift" number is only meaningful on
+/// matched-nominal synthetic content (segments carry the same nominal
+/// gray); on real material adjacent segments have different content, so
+/// cross-seam shift is reported for reference, not scored.
+@MainActor
+private func hdrSeamLeg(
+    env: HarnessEnv, label: String, material: String,
+    ranges: [PlayableRange], matchedNominalContent: Bool
+) async throws {
     let builder = CompositionBuilder(assetCache: AssetCache())
-    let managed = try await builder.build(ranges: ranges, smoothCutAudio: true)  // color-managed (D29 enforced)
-    var report: [String] = ["**hdrseam** — SDR(709) and HLG(2020) segments, matched nominal content (gray 118)"]
-    report.append("- material: synthetic SDR + synthetic HLG (the inbox holds no HDR material — PROVISIONAL 1); re-run with a real iPhone HDR clip in the inbox at the watch session if one exists")
+    let managed = try await builder.build(ranges: ranges, smoothCutAudio: true)  // D29 enforced
+    var report: [String] = ["**hdrseam(\(label))**"]
+    report.append("- material: \(material)")
     report.append("- builder attached videoComposition with 709 color properties: \(managed.videoComposition?.colorPrimaries != nil ? "yes" : "NO — BUG")")
 
-    // Preview probe, managed path.
-    let managedMeans = try await segmentMeans(built: managed, label: "preview-managed", env: env)
-    report.append("- preview WITH color properties (mean gray per segment): \(managedMeans.map { fmt($0, 1) }.joined(separator: " | "))")
+    let managedMeans = try await segmentMeans(built: managed, label: "hdrseam-\(label)-managed", env: env)
+    report.append("- preview WITH color properties (mean/255 per segment): \(managedMeans.map { fmt($0, 1) }.joined(separator: " | "))")
 
-    // Control: bare composition (no videoComposition) — what D29 warns about.
     let bare = try await bareComposition(ranges: ranges)
-    let bareMeans = try await segmentMeans(built: bare, label: "preview-bare", env: env)
-    report.append("- preview WITHOUT color properties (control): \(bareMeans.map { fmt($0, 1) }.joined(separator: " | "))")
+    let bareMeans = try await segmentMeans(built: bare, label: "hdrseam-\(label)-bare", env: env)
+    report.append("- preview WITHOUT color properties (control):        \(bareMeans.map { fmt($0, 1) }.joined(separator: " | "))")
 
-    // Standard-tier export of the managed path (re-encode, SDR target).
-    let outURL = env.workdir.appendingPathComponent("export/hdrseam-standard.mp4")
+    let outURL = env.workdir.appendingPathComponent("export/hdrseam-\(label)-standard.mp4")
     try? FileManager.default.removeItem(at: outURL)
     guard let session = AVAssetExportSession(
         asset: managed.composition, presetName: AVAssetExportPreset1920x1080) else {
@@ -195,20 +262,27 @@ func runHDRSeam(env: HarnessEnv) async throws {
     try await session.export(to: outURL, as: .mp4)
     let exportMeans = try await fileSegmentMeans(
         url: outURL, boundaries: managed.segments.map { MediaTime.seconds($0.compositionStart) })
-    report.append("- Standard-tier export (same videoComposition): \(exportMeans.map { fmt($0, 1) }.joined(separator: " | "))")
+    report.append("- Standard-tier export (same videoComposition):      \(exportMeans.map { fmt($0, 1) }.joined(separator: " | "))")
 
-    // Numbers → verdicts.
     func maxSeamShift(_ means: [Double]) -> Double {
         guard means.count >= 2 else { return .nan }
         return zip(means, means.dropFirst()).map { abs($0 - $1) }.max() ?? .nan
     }
-    let managedShift = maxSeamShift(managedMeans)
-    let bareShift = maxSeamShift(bareMeans)
     let previewExportDelta = zip(managedMeans, exportMeans).map { abs($0 - $1) }.max() ?? .nan
-    report.append("- max cross-seam shift: managed=\(fmt(managedShift, 1))/255, bare control=\(fmt(bareShift, 1))/255")
-    report.append("- max |preview − export| per segment: \(fmt(previewExportDelta, 1))/255")
-    let pass = managedShift <= 8 && previewExportDelta <= 6
-    report.append("- GATE (no visible shift ∧ preview == export): \(pass ? "PASS" : "FAIL") (thresholds 8/255 seam, 6/255 preview-vs-export; PNGs in frames/ for the watch session)")
+    let colorPinEffect = zip(managedMeans, bareMeans).map { abs($0 - $1) }.max() ?? .nan
+    report.append("- max |preview − export| per segment (THE WYSIWYG number): \(fmt(previewExportDelta, 1))/255")
+    report.append("- max |managed − bare| per segment (what the D29 color pin changes in preview): \(fmt(colorPinEffect, 1))/255")
+    if matchedNominalContent {
+        let managedShift = maxSeamShift(managedMeans)
+        let bareShift = maxSeamShift(bareMeans)
+        report.append("- max cross-seam shift (matched nominal gray): managed=\(fmt(managedShift, 1))/255, bare control=\(fmt(bareShift, 1))/255")
+        let pass = managedShift <= 8 && previewExportDelta <= 6
+        report.append("- GATE (no visible shift ∧ preview == export): \(pass ? "PASS" : "FAIL") (thresholds 8/255 seam, 6/255 preview-vs-export)")
+    } else {
+        report.append("- cross-seam shift (reference only — adjacent segments are different real content, not scored): managed=\(fmt(maxSeamShift(managedMeans), 1))/255")
+        let pass = previewExportDelta <= 6
+        report.append("- GATE criterion on real material: max per-segment |preview − export| ≤ 6/255 → \(pass ? "PASS" : "FAIL") (PNGs at frames/hdrseam-\(label)-*.png for the eyeball)")
+    }
     env.report("hdrseam", report)
 }
 
