@@ -23,7 +23,7 @@ You are a **cold reviewer** with zero implementation context, by design. Build y
 
 Rules:
 - **Read-only.** Do not edit files, do not fix anything, do not commit.
-- **Do not spawn subagents or use the Agent tool under any circumstances** — do all work yourself in this session.
+- **Agent tool: retrieval helper only.** You may run at most ONE read-only retrieval helper at a time (`subagent_type: "Explore"`, `model: "sonnet"`) for locating code/usages, web/API documentation lookups, or log sweeps. It must not write anything or spawn agents of its own, and you must never use it to read, summarize, or interpret the binding documents listed above on your behalf — those you read first-hand, in full, yourself. All other work you do yourself in this session.
 - The Python implementation at the repo root is the **reference, not the oracle** — adjudicate any divergence against the spec.
 
 Output — a severity-ranked findings list. For each finding:
