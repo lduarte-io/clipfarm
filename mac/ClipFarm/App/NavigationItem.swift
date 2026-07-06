@@ -1,13 +1,26 @@
 /// The six top-level pages (spec → Frontend pages; nav skeleton per plan N0).
 enum NavigationItem: String, CaseIterable, Identifiable {
-    case library = "Library"
-    case project = "Project"
-    case script = "Script"
-    case attempts = "Attempts"
-    case brief = "Brief"
-    case settings = "Settings"
+    case library
+    case project
+    case script
+    case attempts
+    case brief
+    case settings
 
     var id: Self { self }
+
+    /// User-facing label — deliberately separate from `rawValue`, which stays a
+    /// stable identifier (localization at Track 2 never touches case names).
+    var label: String {
+        switch self {
+        case .library: "Library"
+        case .project: "Project"
+        case .script: "Script"
+        case .attempts: "Attempts"
+        case .brief: "Brief"
+        case .settings: "Settings"
+        }
+    }
 
     var systemImage: String {
         switch self {

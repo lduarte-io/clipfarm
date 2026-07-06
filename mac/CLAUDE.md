@@ -154,11 +154,16 @@ cd mac/ClipFarmKit && swift test                 # optionally: --filter CFDomain
 # Build the app
 xcodebuild -scheme ClipFarm -configuration Debug build | xcbeautify -q
 
-# App-target tests
+# Run: launch the built product binary directly for stdout/stderr logs
+~/Library/Developer/Xcode/DerivedData/ClipFarm-*/Build/Products/Debug/ClipFarm.app/Contents/MacOS/ClipFarm
+
+# App-target tests (none exist yet — D25 is manual UI verify; a passing run is
+# vacuous until app test targets land, and adding them WILL require scheme
+# edits despite the buildable-folder rule)
 xcodebuild test -scheme ClipFarm -destination 'platform=macOS'
 
 # Clean build
 xcodebuild clean -scheme ClipFarm
 ```
 
-(Verified at N0: the scheme is `ClipFarm`, shared in the repo (`xcodebuild` commands run from `mac/`); `xcbeautify` 3.2.1 installed via Homebrew. The bare `xcodebuild build` emits a benign "multiple matching destinations" note — arm64 is picked automatically.)
+(Verified at N0: the scheme is `ClipFarm`, shared in the repo (`xcodebuild` commands run from `mac/`); `xcbeautify` 3.2.1 installed via Homebrew. The bare `xcodebuild build` emits a benign "multiple matching destinations" note — arm64 is picked automatically. Two lockfiles pin GRDB — `mac/ClipFarmKit/Package.resolved` and `mac/ClipFarm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`; after any dependency re-resolve, re-commit **both** so the `swift test` loop and app builds stay on the same version.)

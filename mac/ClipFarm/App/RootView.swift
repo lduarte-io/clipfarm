@@ -7,7 +7,7 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView {
             List(NavigationItem.allCases, selection: $selection) { item in
-                Label(item.rawValue, systemImage: item.systemImage)
+                Label(item.label, systemImage: item.systemImage)
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 200, max: 280)
         } detail: {

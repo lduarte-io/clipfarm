@@ -32,13 +32,28 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 **Environment recorded:** Xcode 26.3 (17C519), Swift 6.2.4, macOS 26.4.1, GRDB 7.11.1, xcbeautify 3.2.1.
 
-**PROVISIONAL calls (all logged in `QUESTIONS.md`, options in the PHASES.md N0 plan entry):** (1) GRDB pin = `from: "7.0.0"` + committed Package.resolved rather than `exact:`; (2) one umbrella `ClipFarmKit` product rather than five products; (3) minimal intra-Kit dependency graph (everything → CFDomain only; CFStore also → GRDB) — edges added when a phase needs them; (4) app-target Swift language mode 6.0 for app/package symmetry.
+**Provisional calls — all four RESOLVED (Lillian, 2026-07-05: keep as implemented; `QUESTIONS.md` → Answered).** Options recorded here with their alternatives, since the pre-code PHASES.md plan entry was collapsed to a pointer at closeout and never committed (cold-review finding 1 below):
+
+1. **GRDB pin mechanics** — options: `exact:` a specific 7.x (blocks GRDB patch releases; requires guessing the latest version) / `from: "7.0.0"` with the exact version pinned by the committed `Package.resolved` (standard SPM practice) / vendored checkout (heaviest, nothing needs it). Implemented and kept: `from:` + Package.resolved at 7.11.1.
+2. **Package product shape** — one umbrella `ClipFarmKit` library product exporting all five targets (one pbxproj product dependency; app still imports modules individually) vs five separate products. Implemented and kept: umbrella.
+3. **Intra-Kit dependency graph** — guess the full graph now (e.g. CFExport→CFMedia) vs minimal (every non-domain target → CFDomain only; CFStore also → GRDB), edges added when a phase needs them. Implemented and kept: minimal.
+4. **App-target Swift language mode** — `SWIFT_VERSION=5.0` (Apple's migration recommendation, wrong for greenfield) vs `6.0` (strict concurrency; matches Kit targets, which default to mode 6 under swift-tools 6.2). Implemented and kept: 6.0.
 
 **Deviations from plan:** none of substance. xcbeautify was missing from the machine and installed via Homebrew — treated as executing the documented CLI loop (dev tooling named in mac/CLAUDE.md), not as a new third-party dependency; flagged here for transparency. `swift test` output shows the toolchain's testing library targeting `arm64e-apple-macos14.0` — that is the prebuilt Swift Testing runtime's own deployment floor, not the package's (platform macOS 26 is enforced at compile time).
 
 **Test counts:** 6 smoke tests (baseline for N1; no ported tests yet by design).
 
-**Next-phase delta (N1, per the closeout ritual):** read in full; **no amendment to the N1 plan entry required.** Reality anchors for N1: GRDB is 7.11.1; `kitSwiftSettings` in `Package.swift` already applies the isolation policy to any new code in existing targets (N1 adds files, not targets); the five module-marker enums (`CFDomainModule` etc.) are placeholders N1 may keep or delete; smoke tests sit in `Tests/<Target>Tests/` ready to grow; the `swift test` loop is fast (~9s cold, sub-second incremental) so the ~90 N1 tests ride it comfortably. One sequencing note: N1's "close→swap→reopen" path touches UndoManager, which is an AppKit-side object — keep the CFStore surface a protocol-friendly seam (e.g. an `onReopen` hook) so the Kit target stays UI-free; resolve at N1 planning time.
+**Next-phase delta (N1, per the closeout ritual):** read in full; **no amendment to the N1 plan entry required.** Reality anchors for N1: GRDB is 7.11.1; `kitSwiftSettings` in `Package.swift` already applies the isolation policy to any new code in existing targets (N1 adds files, not targets); the five module-marker enums (`CFDomainModule` etc.) are N0 scaffolding to be deleted as real code lands — together with the `precondition(...)` linkage probe in `ClipFarmApp.init` (finding 6); smoke tests sit in `Tests/<Target>Tests/` ready to grow; the `swift test` loop is fast (~9s cold, sub-second incremental) so the ~90 N1 tests ride it comfortably. One sequencing note *(wording corrected per cold-review finding 2)*: `UndoManager` is a **Foundation** class — Kit tests drive it directly against store methods, exactly as mac/CLAUDE.md's register→undo→redo rule requires; only the *window's instance* (`NSWindow.undoManager` / `@Environment(\.undoManager)`) is vended app-side. Design consequence: CFStore's close→swap→reopen path takes an injected `UndoManager` (or exposes a clear-stack hook) rather than owning a window's; exact shape resolved at N1 planning time.
+
+**Cold review (2026-07-06) — findings & dispositions** (review 2 of 2; reviewer ran with zero implementation context; adjudicated implementer-vs-reviewer per the autonomous-batching rules; all seven findings verified against the tree before disposition):
+
+1. **[MINOR] Closeout referenced a PHASES.md N0 plan entry that was never committed** → **ACCEPTED.** Correct: the plan entry was written pre-code per workflow rule 1 but collapsed to a pointer at closeout inside a single commit, so the plan-first artifact never reached git (`git show 9b8add9 -- PHASES.md` = pointer only). Fixed: the provisional-calls section above now carries the four options verbatim and points at `QUESTIONS.md`. **Process rule for future auto-continued phases: commit the PHASES.md plan entry (or preserve it verbatim in the closeout) so the audit trail the two-review process depends on is in git.**
+2. **[MINOR] "UndoManager is an AppKit-side object" premise in the N1 delta + kickoff** → **ACCEPTED.** `UndoManager` is Foundation; that is precisely why mac/CLAUDE.md can require driving it directly in Kit tests. Wording corrected in both places (delta above; `KICKOFF_MESSAGES.md` N1 kickoff); the seam advice survives as a design choice — inject the manager, never own a window's.
+3. **[NIT] Missing "Run" line in mac/CLAUDE.md Commands vs plan §2.1** → **ACCEPTED.** Direct-binary run line added to the Commands block.
+4. **[NIT] `xcodebuild test` passes vacuously (empty `<Testables>`, no app test targets)** → **ACCEPTED.** Parenthetical added to Commands: no app test targets exist yet (D25); when they land they WILL require scheme edits despite the buildable-folder rule.
+5. **[NIT] Dual `Package.resolved` drift hazard under `from:`** → **ACCEPTED.** Rule added to the Commands note (and the `QUESTIONS.md` answered entry): after any dependency re-resolve, re-commit **both** lockfiles so `swift test` and app builds stay on the same GRDB.
+6. **[NIT] `precondition(...)` linkage probe ships in Release** → **ACCEPTED, deletion scheduled at N1** (no code change now — linkage proof is still doing its N0 job until real Kit imports exist). The N1 kickoff now explicitly instructs deleting the probe together with the module-marker enums.
+7. **[NIT] `NavigationItem.rawValue` doubles as user-facing label** → **ACCEPTED, fixed now** rather than parked (backlog rule: nothing owned it). Raw values are now lowercase identifiers; labels come from a dedicated `label` property; rebuilt clean via the documented loop.
 
 **Files:**
 
@@ -62,6 +77,14 @@ MODIFIED:
   PHASES.md                  — N0 plan entry → closeout pointer
   KICKOFF_MESSAGES.md        — N0 marked used; N1 kickoff queued
   QUESTIONS.md               — 4 PROVISIONAL items
+
+ADJUDICATION FOLLOW-UP (2026-07-06, second commit):
+  mac/ClipFarm/App/NavigationItem.swift — label/identifier split (finding 7)
+  mac/ClipFarm/App/RootView.swift       — uses item.label (finding 7)
+  mac/CLAUDE.md                         — Run line, vacuous-test note, dual-lockfile rule (findings 3/4/5)
+  KICKOFF_MESSAGES.md                   — UndoManager correction + scaffolding-cleanup step (findings 2/6)
+  COMPLETED_PHASES.md                   — this disposition block; provisionals flipped to resolved (finding 1, Item 2)
+  QUESTIONS.md                          — 4 items moved Open → Answered (Lillian: keep as implemented)
 ```
 
 ---

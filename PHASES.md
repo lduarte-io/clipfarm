@@ -19,7 +19,7 @@ Phase numbering matches the spec's build order (steps 0–11).
 
 ## Phase N0 — Built ✅ 2026-07-05 (manual verify DEFERRED per N0 tier)
 
-Toolchain & skeleton for the native rewrite. See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase N0 for the closeout entry, the deferred manual-verify checklist, and the four PROVISIONAL calls (also in `QUESTIONS.md`). Verified in-session: `swift test` 6/6 green, `xcodebuild build` clean + signed with the real Apple Development cert (team `384925MZJ6`), non-sandboxed, buildable-folder stray-file check passed, launch smoke passed. **Next phase: N1** (kickoff queued in `KICKOFF_MESSAGES.md`).
+Toolchain & skeleton for the native rewrite. See [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase N0 for the closeout entry, the deferred manual-verify checklist, the four provisional calls (**all resolved — Lillian 2026-07-05: keep as implemented**; `QUESTIONS.md` → Answered), and the cold-review dispositions (7 findings, all accepted, fixed 2026-07-06). Verified in-session: `swift test` 6/6 green, `xcodebuild build` clean + signed with the real Apple Development cert (team `384925MZJ6`), non-sandboxed, buildable-folder stray-file check passed, launch smoke passed. **Next phase: N1** (kickoff queued in `KICKOFF_MESSAGES.md`).
 
 ---
 
