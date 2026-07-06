@@ -9,6 +9,9 @@ Format per item:
 ## Open
 
 - **[N0 review · 2026-07-06]** `.obsidian/workspace.json` is tracked in git and keeps dirtying the working tree (cold-reviewer observation, out of N0 scope). Gitignore `.obsidian/` (+ `git rm --cached` the tracked file)? It's Lillian's editor state, so the call is hers — no agent touches it until answered.
+- **[N1 · 2026-07-06]** Are per-library **settings writes undoable**? mac/CLAUDE.md's blanket "every store mutation lands with a register→undo→redo test" vs the macOS convention that config changes never sit on the document undo stack — options: (a) undo-register settings writes too / (b) scope the undo rule to library-*content* mutations / (c) defer settings entirely to N3 → implemented **(b)**, PROVISIONAL (`mac/ClipFarmKit/Sources/CFStore/LibrarySettings.swift`; COMPLETED_PHASES → N1 provisional 1). D18's re-apply action stays snapshot-protected + undoable at N3 either way.
+- **[N1 · 2026-07-06]** Snapshot filename token: the reference used a 4-char **content hash** to avoid same-millisecond collisions; with `VACUUM INTO` the content isn't knowable before the copy — options: hash the live DB file bytes (reads whole file + WAL) / random 4-hex token (same collision-avoidance purpose, no content claim) / monotonic counter in `meta` → implemented the **random token**, PROVISIONAL (`Snapshots.swift`; N1 provisional 2).
+- **[N1 · 2026-07-06]** `tailPaddingSec` default for D18's fixed-padding tail policy ("+N ms", no N specified) — options: 0.0 (inert until N3's segmentation UI exposes it) / invent ~0.25s / no default → implemented **0.0**, PROVISIONAL (`LibrarySettings.swift`; N1 provisional 3). N3 owns the real value.
 
 ## Answered
 

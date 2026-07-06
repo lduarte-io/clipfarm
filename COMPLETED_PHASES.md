@@ -4,6 +4,115 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase N1 — Domain models + persistence core (native rewrite)
+
+**Manual verify: DEFERRED** (N1 tier = auto-continue; queue for the next hard stop — N2's by tier table, N4's combined verify covers N1 formally). Checklist for Lillian:
+
+1. `cd mac/ClipFarmKit && swift test` → 116 tests green (~30s cold build, <1s test run).
+2. `cd mac && xcodebuild -scheme ClipFarm -configuration Debug build | xcbeautify -q` → clean (the app no longer carries the N0 linkage probe).
+3. Schema check — pre-verified in-session against a scratch library (`sqlite3 <lib>/clipfarm.db .schema` matches plan §2.3 exactly: all ten tables + `clips_fts` + three sync triggers + the `COALESCE` unique index; `.snapshots/` pruned to exactly 50 after 56 snapshot calls; the pre-destructive snapshot held the pre-change rows while the main DB held the post-change state). To re-verify by hand, any CFStore test's temp library works, or ask a session to re-run the scratch-evidence drill.
+
+**Built (2026-07-06):** the data layer, per plan §4/N1 — `models.py`/`store.py`/`resolver.py`/`continuity.py` ported; nothing sits on it yet. Plan entry committed pre-implementation (`911c939`, per the N0 finding-1 process rule); work landed as three commits (schema+models → resolver+continuity → services+settings scaffolding).
+
+**CFDomain (pure, zero deps — not even Foundation):**
+
+- `Entities.swift` + `EntitiesCodable.swift` — field-for-field port of every entity: `Source` (+ native `isHDR`/`naturalWidth`/`naturalHeight`), `Clip` (+ new `boundaryEdited`; `tracks` nil until N18), `TracksOverride`/`AudioOverride`/`VideoOverride`/`Overlay`, `ProjectTag`, `Script` (amendment-#10 naming), `Project`, `ClipProjectTag`, `AttemptClip`, `Attempt` (+ `needsReview`), `VoiceAnnotation`; enums `ClipCategory`, `TagKind` (incl. `.tag`), `TagSource`, `PremadeBucket`, `AttemptSource`. Timestamps stay ISO strings (backup-format parity). Codable with the documented snake_case keys, decode-with-defaults (missing optional/defaulted keys tolerated — the substrate for the N3/N9 fixture loader and the N13 tolerant restore), encode writes explicit `null`s.
+- `ClipFarmState.swift` — the whole-library value container mirroring the documented JSON shape + **uniqueness as domain rule**: `validateClipProjectTagUniqueness` throws on duplicate `(clip_id, project_id, project_tag_id, category)`; nil tag ID is a value, not a bypass (finding 10 — domain validation is the enforcer).
+- `Whisper.swift` — sidecar models (`schema_version` pinned; full ingest validation semantics arrive at N3) + `allWords` flattening; leading-space word convention preserved and tested.
+- `Identifiers.swift` — `ClipID.hms` (`HH-MM-SS.mmm`, **half-even rounding** matching Python 3's `int(round())` so IDs golden-master-match at N3 — tested at exact .5ms boundaries), `ClipID.make`, stem validation + sanitized-rename helper, `nextNumericID` (max+1 over all numeric keys, gaps never refilled, non-numeric ignored — Python `isdigit()` parity).
+- `Resolver.swift` — `resolveAttempt` port, contract intact: order preserved; dangling ref → one `.tombstone`; source-bounds clamp with warnings; zero/negative effective duration throws; `internalPauseMaxSec` splits on **strictly-greater** gaps with the gap **dropped entirely**; straddle-excluding word filter ported as-is (N15 owns the fix); missing source/transcript → single-range fallback + warning. **Port adaptations (purity):** transcripts via injected `transcriptProvider: (Source) -> WhisperTranscript?`; diagnostics via `onWarning: (ResolverWarning) -> Void` (typed cases replace log-string assertions); `KeyError`/`ValueError` → `ResolverError`.
+- `Continuity.swift` — `continuityScore` (runs = same source AND forward progression; max-run/total; empty/all-orphan/zero-runtime throw typed errors) + `refreshContinuityScore(of: inout Attempt, in:)` (degenerate → nil; the `refresh_attempt_continuity` port).
+
+**CFStore (the only GRDB seam):**
+
+- `LibrarySchema.swift` — `DatabaseMigrator`, `"v1"` registered from day one; tables exactly per plan §2.3. FTS5 **external-content** `clips_fts` + insert/delete/`UPDATE OF transcript_text` triggers (undo-safe — undo replays ordinary statements). **NULL-proof unique index** `(clip_id, project_id, COALESCE(project_tag_id,''), category)`. FK edges follow the plan's explicit markings: `clips.source_id`, `clip_project_tags.clip_id`, `project_tags.project_id`, `attempt_clips.attempt_id` (with `ON DELETE CASCADE` — an attempt's clip list is its own composition) are FKs; `attempt_clips.clip_id` and `attempts.parent_attempt_id` are **deliberately not** (tombstones + dangling fork parents); `attempts.project_id` / `clip_project_tags.project_id` are plain columns (unmarked in §2.3; N6's delete-project-hard-deletes-attempts stays explicit op code). `meta.schema_version` is informational (the migrator is the enforcer; the backup JSON will carry it).
+- `LibraryStore.swift` — `open(at:undoManager:now:)`: create folder → `DatabasePool` (WAL) → **refuse a superseded library** (`hasBeenSuperseded` → `librarySupersededByNewerApp`) → migrate → stamp `meta.created_at` once (injected clock) → **source-integrity check** (missing files flip `unavailable`, reappearing files flip back; never crash the load). `close()`. Injected `UndoManager?` + injected `now` (inject-time-and-identity rule).
+- `Records.swift` — per-table Codable record adapters (CFDomain stays GRDB-free); `clips.tracks` and `projects.script_lines` are JSON text columns mapped inside CFStore only; `script == nil` (NULL) vs `Script(lines: [])` (`'[]'`) round-trip distinctly (tested).
+- `Snapshots.swift` — `<ISO>-<ms>-<token4>__<reason>.db` under `.snapshots/`, prune to 50, partial-file cleanup on a failed `VACUUM INTO`. **`performDestructive(reason:_:)` runs snapshot + mutating transaction inside ONE `writeWithoutTransaction` barrier** (finding 11: VACUUM can't run inside a transaction; one barrier access means no writer can interleave). Failed mutations roll back while the pre-op snapshot remains. Undo of a destructive op takes no snapshot (tested).
+- `StoreMutations.swift` — N1 mutation surface: `addSource` (allocates via `nextNumericID`), `addClips` (bulk, all-or-nothing, duplicate-ID rejection), `addClipProjectTag` (domain-validates against stored rows; DB index as backstop), `importState` (whole-library replace in one transaction — the fixture/restore primitive; validates first, clears the undo stack by design, not undo-registered). Undo plumbing: a symmetric `registerUndo(actionName:inverse:reapply:)` helper — each inverse re-registers its counterpart, giving unbounded undo/redo chains; every mutation names its action ("Add Source" / "Add Clips" / "Tag Clip").
+- `StoreReads.swift` — `fetchState()` (whole-library value snapshot: backup/fixture/round-trip primitive; per-view reads arrive with ValueObservation at N4+), `source(id:)`, `clip(id:)`.
+- `LibrarySettings.swift` — typed per-library settings over the `settings` table (D18 scaffolding): `silenceThresholdSec` (2.0), `tailPolicy` (extend-to-next-word-start / fixed-padding / word-end), `tailPaddingSec`. Missing keys → defaults; unknown keys ignored; unparseable values fall back.
+- `LibraryManager.swift` — the **close→swap→reopen path**: undo stack cleared FIRST on every transition (inverses capture the outgoing store), then close, then open; `storeDidChange` fires with the new store (nil on close) — the ValueObservation-restart hook N4+ subscribes to; snapshot-restore and backup-restore (N13) reuse this path.
+
+**CFLLM (settings scaffolding, D22/D23):**
+
+- `TaggingPreferences.swift` — app-level prefs in injected `UserDefaults`: provider (ollama default), `llama3.1:8b`, `claude-sonnet-4-6`, model-options constant; garbage stored values fall back.
+- `SecretStore.swift` — protocol + `KeychainSecretStore` (generic password, service `org.duartes.clipfarm`) + `InMemorySecretStore`. The API key's only home is the Keychain — tested that nothing key-shaped reaches UserDefaults. **Live-Keychain path verified at N7** with the Settings page (tests use the in-memory double to keep `swift test` off the login keychain).
+
+**N0 scaffolding cleanup:** `CFDomainModule`/`CFStoreModule`/`CFLLMModule` markers + their smoke tests deleted; the `precondition` linkage probe removed from `ClipFarmApp.swift` (real Kit code proves linkage). CFMedia/CFExport markers remain until N2. New **`CFTestSupport`** target (fixture builders — `Fixtures.state/stateWithClips/transcript/fullState` mirror the reference suites' helpers) under the same `kitSwiftSettings`; not part of the library product, never ships.
+
+**Platform discovery (corrects the N0 delta and the N1 kickoff's premise):** the macOS 26 SDK marks `NSUndoManager` **`NS_SWIFT_UI_ACTOR` (@MainActor)** — the class and the `registerUndo` handler closures. "UndoManager is Foundation, drive it directly from Kit tests" stands, but the calls are MainActor-isolated. Resolution: **method-level `@MainActor`** on the undo-registering mutations (`addSource`/`addClips`/`addClipProjectTag`/`importState`), on `LibraryManager`, and on the undo-driving tests — explicitly NOT a Kit-target isolation-default flip (forbidden). Reads, snapshots, `performDestructive`, and settings stay nonisolated. Architecturally consistent with §2.7 (user mutations arrive from the MainActor AppStore); if a background writer (N7 tagging commit) ever needs a non-undo bulk path, it can be added nonisolated then.
+
+**Naming deviation:** the reference's `Category` type is **`ClipCategory`** in Swift — `Category` collides with an SDK type in any Foundation-importing file ("port semantics, not spellings").
+
+**Provisional calls (3) — logged in `QUESTIONS.md`:**
+
+1. **Settings writes are not undo-registered.** mac/CLAUDE.md's blanket "every store mutation lands with a register→undo→redo test" vs the platform convention that config changes never sit on the document undo stack. Options: (a) undo-register settings too; (b) scope undo to library-content mutations; (c) defer settings to N3. Implemented **(b)** — D18's re-apply action (the thing that changes *data*) is snapshot-protected + undoable at N3 regardless. **PROVISIONAL.**
+2. **Snapshot filename token is a random 4-hex collision token, not a content hash.** The reference hashed file bytes; with `VACUUM INTO` the content isn't knowable pre-copy without reading the whole DB (+WAL). The spec's stated purpose is same-millisecond collision avoidance, which the token satisfies (tested under a frozen clock). Options: hash live file bytes / random token / meta counter. Implemented **token**. **PROVISIONAL.**
+3. **`tailPaddingSec` defaults to 0.0** (inert — equivalent to word-end until N3's UI exposes it). D18 names "fixed padding +N ms" without a default N; scaffolding must not invent a listening-behavior default. **PROVISIONAL.**
+
+**Recorded divergences from the Python reference (adjudicated against spec/plan):**
+
+- Watcher/conflict-freeze/`WritesFrozenError` tests: not ported (D7 — machinery dissolved).
+- "Snapshot with no state file → None": doesn't port — an open library always has a database file; a snapshot always lands.
+- Atomic-write/tmp-file/save-lock tests: superseded by SQLite transactions + GRDB's serialized writer.
+- `test_settings` reshaped across three lanes: segmentation → DB settings table (CFStoreTests); provider/model → UserDefaults (CFLLMTests); API key → Keychain contract (CFLLMTests). The chmod-0o600 and plaintext-at-rest tests died with the settings file — the key not being in a file is the point.
+- Uniqueness-test fixtures now create the clips they tag (`clip_project_tags.clip_id` IS an FK per §2.3; the reference fixtures dangled).
+- Resolver: `KeyError`/`ValueError` → typed errors; caplog assertions → `onWarning` captures; transcripts injected rather than disk-loaded inside the resolver.
+- `unavailable` semantics: the integrity check also flips `true → false` when a file reappears (reference behavior, kept: it recomputed the flag both ways).
+
+**Deviations from the committed plan entry:** one — the commit split. `StoreMutations`/`StoreReads` rode in the schema commit rather than the services commit, because SPM refuses a test target with zero sources: deleting the N0 smoke test in the schema commit required at least one real CFStoreTests file, and every store test needs `importState`/`fetchState`. The schema commit therefore contains the persistence core + its ported tests; the services commit carries snapshots/settings/manager/CFLLM. Recorded here per the audit-trail rule.
+
+**Swift Testing gotcha (for future phases):** a closure whose only `try`s live inside `#expect` macros is inferred non-throwing (macro bodies are invisible to throws inference) — annotate such closures `{ (x) throws in … }`. Two tests carry the comment.
+
+**Test counts:** **116 green** (`swift test`, <1s run): CFDomainTests 51 (resolver 14, continuity 9, refresh 5, identifiers 11, model defaults + Codable + uniqueness rule 12), CFStoreTests 57 (open/schema 7, round-trip 8, uniqueness 7, integrity 3, snapshots 9, migrations 4, settings 5, FTS sync 3, undo 7, manager 4), CFLLMTests 6, smoke (CFMedia/CFExport markers) 2. Baseline for N2. `xcodebuild` app build clean.
+
+**Next-phase delta (N2, per the closeout ritual — plan §4/N2 read in full):**
+
+1. **Resolver handoff shape:** N2's `PlayerEngine` consumes `[ResolvedItem]` (`.range(ResolvedRange)` with `clipID`/`sourceID`/`effectiveStartSec`/`effectiveEndSec`, `.tombstone` skipped by the builder per §2.5 rule 7). The N2 debug harness can bypass the resolver entirely (hand-specified file/start/end ranges — no ingest, as planned) but the CFMedia range type should be constructible from `ResolvedRange` + a source-path lookup.
+2. **`transcriptProvider` is the engine's job to supply** when internal-pause expansion is wanted; N2's harness passes `{ _ in nil }` — real sidecar loading arrives with N3/N4 (a CFStore/CFMedia-side loader, cached, like the reference's `transcripts.py`).
+3. **"Smooth cut audio" setting:** micro-fades are in N2 scope; the per-library `LibrarySettings` accessor for it doesn't exist yet — add `smoothCutAudio: Bool = true` to `LibrarySettings` (one accessor + tests) when the engine wires it. Plan §4/N2 amended with a parenthetical.
+4. **UndoManager is @MainActor in the macOS 26 SDK** (see platform discovery above) — N2 doesn't register undo, but any phase that does inherits the method-level-@MainActor pattern, and undo-driving tests are `@MainActor @Test`.
+5. **Marker cleanup continues:** delete `CFMediaModule` (+ smoke test) as N2's real CFMedia code lands; `CFExportModule` goes when the export mini-spike writes real CFExport code (or at N12, whichever first).
+6. **Footage stays read-only:** N2's gates run against real files in the dogfood folder — reads only, ever; no shell writes there (standing rule).
+7. `swift test` baseline is 116; N2 adds CFMedia tests where logic is testable without hardware timing (gate measurements are the harness's job, not unit tests).
+
+**Files:**
+
+```
+NEW:
+  mac/ClipFarmKit/Sources/CFDomain/{Entities,EntitiesCodable,ClipFarmState,
+                                    Whisper,Identifiers,Resolver,Continuity}.swift
+  mac/ClipFarmKit/Sources/CFStore/{LibrarySchema,Records,LibraryStore,StoreReads,
+                                   StoreMutations,Snapshots,LibrarySettings,
+                                   LibraryManager}.swift
+  mac/ClipFarmKit/Sources/CFLLM/{TaggingPreferences,SecretStore}.swift
+  mac/ClipFarmKit/Sources/CFTestSupport/Fixtures.swift
+  mac/ClipFarmKit/Tests/CFDomainTests/{ResolverTests,ContinuityTests,
+      ContinuityRefreshTests,IdentifierTests,ModelDefaultsTests}.swift
+  mac/ClipFarmKit/Tests/CFStoreTests/{StoreTestSupport,StoreOpenTests,
+      StoreRoundTripTests,UniquenessTests,SourceIntegrityTests,SnapshotTests,
+      MigrationTests,LibrarySettingsTests,FTSSyncTests,UndoTests,
+      LibraryManagerTests}.swift
+  mac/ClipFarmKit/Tests/CFLLMTests/TaggingPreferencesTests.swift
+
+DELETED (N0 scaffolding):
+  mac/ClipFarmKit/Sources/{CFDomain/CFDomain,CFStore/CFStore,CFLLM/CFLLM}.swift
+  mac/ClipFarmKit/Tests/{CFDomainTests/CFDomainSmokeTests,
+      CFStoreTests/CFStoreSmokeTests,CFLLMTests/CFLLMSmokeTests}.swift
+
+MODIFIED:
+  mac/ClipFarmKit/Package.swift        — CFTestSupport target; CFStoreTests + GRDB
+  mac/ClipFarm/App/ClipFarmApp.swift   — linkage probe removed
+  PHASES.md                            — N1 plan entry (committed pre-code) → pointer
+  NATIVE_REWRITE_PLAN.md               — N2 scope parenthetical (delta #3)
+  COMPLETED_PHASES.md                  — this entry
+  KICKOFF_MESSAGES.md                  — N1 marked used; N2 kickoff queued
+  QUESTIONS.md                         — 3 PROVISIONAL items
+```
+
+---
+
 ## Phase N0 — Toolchain & skeleton (native rewrite)
 
 **Manual verify: DEFERRED** (N0 tier = auto-continue; queue for the next hard stop). Checklist for Lillian:

@@ -261,7 +261,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Goal:** prove the thesis of the rewrite before building UI on it. This phase exists to fail fast if any research assumption is wrong.
 
-**Scope:** CFMedia — `AssetCache`, `MetadataProbe` (async `load(.duration/.nominalFrameRate/.formatDescriptions/.naturalSize/.preferredTransform)` + HDR detection), `CompositionBuilder` (rules §2.5 incl. audio micro-fades), `PlayerEngine` (full API §2.5 incl. loop mode). Debug-only harness: hand-specified `(file, start, end)` ranges over real files from the dogfood folder — no ingest needed yet.
+**Scope:** CFMedia — `AssetCache`, `MetadataProbe` (async `load(.duration/.nominalFrameRate/.formatDescriptions/.naturalSize/.preferredTransform)` + HDR detection), `CompositionBuilder` (rules §2.5 incl. audio micro-fades — the "smooth cut audio" per-library setting gets its `LibrarySettings` accessor here, on N1's settings table), `PlayerEngine` (full API §2.5 incl. loop mode). Debug-only harness: hand-specified `(file, start, end)` ranges over real files from the dogfood folder — no ingest needed yet. *(N1 delta: the engine consumes N1's `[ResolvedItem]`; the harness may bypass the resolver with raw ranges and passes a nil `transcriptProvider` — sidecar loading arrives N3/N4.)*
 
 **Exit criteria (hard gates — measured, not eyeballed; expanded per the pre-build review):**
 - **Seam-drop instrumentation**: 20+ deliberately non-keyframe-aligned cuts across ≥3 files (ProRes + H.264 + HEVC, incl. 4K and one iPhone HDR clip); capture frame-delivery timestamps; gate p95 inter-frame gap at seams ≤ 1 frame duration. If seams drop, A/B Apple's documented mitigation — two alternating video tracks in one composition — before anything custom.
