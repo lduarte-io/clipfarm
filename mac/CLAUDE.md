@@ -79,7 +79,7 @@ Lillian can delegate phase execution to a coordinator session via the `/run-phas
   - adding any new third-party dependency (license vetting is hers — the D20/STTextView lesson);
   - inventing product behavior;
   - relaxing a §6 performance budget, or accepting a failed N2-class gate (the D11 pivot is hers);
-  - deleting or overwriting anything she created (web implementation, real footage, sidecars). Footage folders are **strictly read-only for agents** — no shell writes, moves, or deletes there, ever. The only sanctioned writes into a footage folder are ones the *app itself* performs at runtime under Lillian's direction (`.mkv` remux siblings at N3, `.whisper.json` sidecars at N14) — never agent shell commands;
+  - deleting or overwriting anything she created (web implementation, her original recordings outside the footage inbox, sidecars next to those originals). **Footage inbox (D34, 2026-07-06):** ClipFarm's footage lives in **`~/ClipFarm/Footage/`** — outside any cloud-synced path, populated by Lillian herself. The inbox is a **managed working folder, not canonical storage**: the app (and agents exercising it) may write, reorganize, and delete files *within the inbox* — that's its job as an editor's media pool, and the unavailable-source greying invariant is the safety net. Footage anywhere else — including the retired `~/Desktop/AdAstra/…` dogfood path — is off-limits: don't read it as operative data, never write to it;
   - spec amendments beyond recording next-phase deltas.
 - **Checkpoint tiers (Track 1).** The coordinator may stop *earlier* than this table, never later:
 

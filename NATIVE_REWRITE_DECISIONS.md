@@ -125,6 +125,11 @@
 **The contradiction (verified in the Python code):** create-clip-from-range allows overlap on the same source (the Phase 10a 30s-take + 10s-highlight case), but adjust-boundaries rejected *any* resulting overlap — so deliberately overlapping clips could never be nudged; N11's trim mode would have hit this immediately.
 **Pick:** **adjust allows overlap**, matching create — overlap is simply a legal state on a source; only merge rejects overlapping ranges (the operation is undefined for them). Deliberate divergence from the Python reference; ported with a named test for the previously-frozen case. Rejected alternatives: reject-only-*new*-overlaps (guardrail, but more complex and inconsistent with create), keep-as-is (a known landmine).
 
+### D34 — Footage inbox outside cloud sync — **Status: LOCKED (Lillian, 2026-07-06, during the iCloud incident)**
+**Why it exists:** the 2026-07-06 iCloud incident — `fileproviderd`/`cloudd` saturation strangled all Desktop file I/O (the repo was emergency-moved to `~/dev/clipfarm`), and the dogfood footage under `~/Desktop/AdAstra/…` sat in the same synced path: performance-gate measurements skew under sync storms, and "optimize storage" can evict media to cloud-only mid-edit.
+**Pick:** ClipFarm reads footage from a dedicated drop folder outside any cloud-synced path — default **`~/ClipFarm/Footage/`**, created on first run; ingest defaults there. The inbox is a **managed working folder, not canonical storage** (Lillian: "it's not the place to store your files as the only place for your files, it's a place for video to be edited — every existing video editor lets you delete the clips you drop in"): ClipFarm may organize and **delete** files within it; the unavailable-source greying invariant is the safety net. Lillian populates it manually; the old dogfood path is retired from operative docs and existing files stay put until she moves them herself. Agents may treat the inbox as a normal working folder; footage anywhere *else* (Lillian's originals) remains off-limits.
+**Rejected:** keep reading from the synced Desktop path (permanent I/O + eviction hazard); agents migrating her files (moving her media is hers to do); treating the inbox as sacrosanct archival storage (wrong mental model for an editor's media pool).
+
 ---
 
 ## D. App architecture
