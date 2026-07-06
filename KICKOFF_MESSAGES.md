@@ -31,7 +31,27 @@
 >
 > Human setup for the first stretch: be on call for the N0 Xcode/cert assist (~5 min, only if pbxproj hand-authoring fails); expect a TCC folder prompt around N3 ingest; plan a watch session at the N2 hard stop. Open questions accumulate in `QUESTIONS.md` and surface at checkpoints.
 
-### Phase N3: ingest (written at N2 closeout — consumed by the coordinator only after Lillian's N2 HARD-STOP watch session adjudicates the gate table, never before)
+### Phase N4: Library (transcript browser + search) — written at N3 closeout. N4 ends in a HARD STOP: combined manual verify of N3 + N4 (N0/N1 cleared at the N2 stop).
+
+> You are the **implementer** starting phase **N4 (Library — transcript browser + search)** of ClipFarm's native macOS rewrite. Goal (plan §4/N4): the manual escape hatch, native — browse any recording without watching it linearly. **N4 tier: HARD STOP at end** — Lillian runs the combined N3 + N4 manual verify (the N3 deferred checklist is in `COMPLETED_PHASES.md` → Phase N3; deferred-verification debt is currently 1 phase).
+>
+> State after N3 (closeout: `COMPLETED_PHASES.md` → Phase N3 — read it in full, including the environment findings and the deferred checklist): ingest is real end-to-end — `LibraryStore.ingestFolder` (two-pass, injected probe/remux seams), `.mkv` remux via CFExport's `FFmpegLocator`/`MKVRemuxer` (swift-subprocess pinned `1.0.0-beta.1`), CFDomain `Segmentation` + D18 tail policies + `WhisperTranscript.transcriptText(from:to:)`, per-source `reapplySegmentation` (boundary_edited skip, snapshot + undo), `WaveformService` (binary strips at `<library>/cache/waveforms/`), schema v2 (`sources.original_path`), and a minimal app shell: `AppStore` (@MainActor @Observable, Environment-injected, window-UndoManager wiring), Library ingest UI (NSOpenPanel defaulting to the footage inbox + drag-in), Settings segmentation section. **Golden masters pass on real data** — Swift segmentation == web output bit-for-bit on the three web-processed inbox sources (10/91/8 clips). `swift test` baseline: **228 green** from `mac/ClipFarmKit`.
+>
+> Read first: `mac/CLAUDE.md` (binding — note the retrieval-helper amendment effective N4: you may run at most ONE read-only `Explore` helper for retrieval, never for binding documents), `NATIVE_REWRITE_PLAN.md` §4/N4 (scope: source sidebar with unavailable greying + footage-only badge; the transcript view as a **raw NSTextView/TextKit 2 wrapper behind the `TranscriptViewAdapter` seam** — D20 FLIPPED, no STTextView, budget the selection/highlight plumbing by hand; FTS5 phrase+prefix search UI; click clip → inspector pane plays via PlayerEngine; deep-link plumbing for later grid→library navigation), `NATIVE_REWRITE_DECISIONS.md` (D20 flip, D30, D6/FTS5), and `COMPLETED_PHASES.md` → N3 next-phase delta.
+>
+> N3 deltas that change N4 (full list in the N3 closeout):
+> - **Sidecar validation already exists** — CFStore's `Sidecar.load` (typed rejections, schema-version gate). The `transcripts.py` port is the **mtime-keyed cache wrapped around that seam**, not a re-implementation.
+> - **FTS rows are already written at ingest** (external-content triggers, tested) — search is read-side UI + a store search API; new FTS5 phrase/prefix tests per plan §3.
+> - **AppStore exists but is refetch-based** — N4 brings GRDB `ValueObservation` read models per plan §2.7. Preserve the N3 affordances in the Library rebuild: ingest toolbar/drop, per-source Re-apply Segmentation, footage-only badges, Settings segmentation section.
+> - **Real material is one click away**: the inbox holds btc.0.2/btc.0.4/freestylingbtc0 (web-processed, with sidecars) + five footage-only files. Ingesting via the UI populates the real `~/ClipFarm/` library (109 clips) — btc.0.4 (34 min, 4,735 words) is the transcript-view scale test (plan §6: no typing/scroll lag).
+> - **Environment cleanup before the hard stop**: a stale pre-N3 ClipFarm instance sits SUSPENDED under Lillian's Xcode debugger (PID 51307 at N3 time) and makes fresh instances' windows self-close — have Lillian stop that debug session first; the stale DerivedData dir `ClipFarm-dzsggxcpzdvnckfgvjjmixtxvsrb` is safe to delete (the live one is `ClipFarm-evnssetyqxmfyefwuavdrlclsyiw`).
+> - PlayerEngine consumption for click-to-play: `PlayableRange` + `PlayerEngine.load(ranges:smoothCutAudio:)` (smoothCutAudio is a required parameter — read it from `LibrarySettings`).
+>
+> Workflow (binding): write the N4 plan entry into `PHASES.md` before code and commit it before implementation; schema/model changes get their own commit; port tests per plan §3 (transcripts 7, whisper-validation 6 — check which already landed at N1/N3, search 13 → FTS5-upgraded semantics); tests run at the END (baseline 228). Autonomous mode: non-gating ambiguity → PROVISIONAL (2–3 options, most spec-defensible, log in `QUESTIONS.md`); core-gating ambiguity → stop and ask. Never: add a dependency without Lillian's version/license approval (STTextView is explicitly rejected — D20), contradict a LOCKED/RESOLVED decision, invent product behavior, write footage anywhere but inside the inbox. At closeout: `COMPLETED_PHASES.md` entry (reviewable-cold detail), read the N5 plan entry in full + record the next-phase delta, write the N5 kickoff, update pointers, commit per convention — then STOP for the hard-stop combined verify.
+>
+> Report back with: what shipped, test counts, PROVISIONAL calls, and the combined N3+N4 manual-verify checklist for Lillian.
+
+### [USED 2026-07-06] Phase N3: ingest (written at N2 closeout — consumed 2026-07-06; closeout in `COMPLETED_PHASES.md` → Phase N3; manual verify deferred to the N4 hard stop)
 
 > You are the **implementer** starting phase **N3 (ingest)** of ClipFarm's native macOS rewrite. Goal (plan §4/N3): point at a folder, get sources + clips — natively, with segmentation as a tunable setting (D18). Real data lives in the native app from here on (D9: no importer; this is how the library gets populated). N3 tier: auto-continue (a TCC folder prompt may need Lillian at the machine; the "clips no longer feel cut short" listening check is deferred to the N4 combined verify).
 >
@@ -107,6 +127,7 @@
 
 ## Used
 
+- **Phase N3 kickoff** — used 2026-07-06 (kept inline above, marked USED). Output: native ingest end-to-end (segmentation + D18 tail policies, .mkv remux seam, re-apply action, waveforms, app ingest UI), 228 tests green, golden masters pass on real data; closeout in `COMPLETED_PHASES.md` → Phase N3; manual verify deferred to the N4 hard stop.
 - **Phase N1 kickoff** — used 2026-07-06 (kept inline above, marked USED). Output: domain models + persistence core, 118 tests green (post-adjudication); closeout + cold-review dispositions in `COMPLETED_PHASES.md` → Phase N1; manual verify deferred per tier.
 - **Phase N0 kickoff** — used 2026-07-05 (kept inline above, marked USED). Output: `mac/` skeleton built and verified; closeout in `COMPLETED_PHASES.md` → Phase N0; manual verify deferred per tier.
 - **Pre-build decision review** — used 2026-07-05 (kept inline above, marked USED). Output: `PREBUILD_REVIEW_FINDINGS.md`; all 19 findings dispositioned the same day (D20 flipped, D32/D33 added, N2 gates expanded).

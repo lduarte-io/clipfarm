@@ -298,7 +298,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Goal:** the manual escape hatch, native. Browse any recording without watching it linearly.
 
-**Port map:** `transcripts.py` (mtime-keyed cache), whisper sidecar validation; `search.py` semantics superseded by FTS5.
+**Port map:** `transcripts.py` (mtime-keyed cache), whisper sidecar validation *(N3 delta: validation already landed in CFStore's `Sidecar.load` — typed rejections, schema-version gate; N4 wraps that seam with the mtime-keyed cache rather than re-implementing)*; `search.py` semantics superseded by FTS5 *(N3 delta: FTS rows are already written at ingest and tested — N4's search work is read-side UI only)*.
 
 **Scope:** source sidebar (unavailable greyed out; footage-only badge); transcript view as a **raw NSTextView / TextKit 2 wrapper** (D20 — flipped at the pre-build disposition: STTextView is GPLv3/commercial and Lillian chose zero license entanglement) — word-level ranges, inline clip-boundary highlighting, click-word, drag-select — still contained behind the **`TranscriptViewAdapter` seam** (set content / word hit-test / highlight ranges / selection events / scroll-to-word) as module hygiene; budget the few extra days of selection/highlight plumbing STTextView would have provided; FTS5 search UI with phrase + prefix support (upgrade over web, new tests); click clip → inspector pane plays it via PlayerEngine; deep-link plumbing (select source + scroll to word) for later grid → library navigation.
 
