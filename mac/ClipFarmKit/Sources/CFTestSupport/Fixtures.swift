@@ -135,6 +135,7 @@ public enum Fixtures {
         state.sources["1"] = Source(
             filename: "btc.0.4.mov",
             path: "/footage/btc.0.4.mov",
+            originalPath: "/footage/btc.0.4.mkv",
             durationSec: 1812.34,
             fps: 60.0,
             transcriptPath: "/footage/btc.0.4.whisper.json",

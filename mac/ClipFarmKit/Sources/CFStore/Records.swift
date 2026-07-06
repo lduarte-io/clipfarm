@@ -17,6 +17,7 @@ struct SourceRecord: Codable, FetchableRecord, PersistableRecord {
 
     enum CodingKeys: String, CodingKey {
         case id, filename, path, fps, unavailable
+        case originalPath = "original_path"
         case durationSec = "duration_sec"
         case transcriptPath = "transcript_path"
         case addedAt = "added_at"
@@ -28,6 +29,7 @@ struct SourceRecord: Codable, FetchableRecord, PersistableRecord {
     var id: String
     var filename: String
     var path: String
+    var originalPath: String?
     var durationSec: Double?
     var fps: Double?
     var transcriptPath: String?
@@ -41,6 +43,7 @@ struct SourceRecord: Codable, FetchableRecord, PersistableRecord {
         self.id = id
         self.filename = source.filename
         self.path = source.path
+        self.originalPath = source.originalPath
         self.durationSec = source.durationSec
         self.fps = source.fps
         self.transcriptPath = source.transcriptPath
@@ -55,6 +58,7 @@ struct SourceRecord: Codable, FetchableRecord, PersistableRecord {
         Source(
             filename: filename,
             path: path,
+            originalPath: originalPath,
             durationSec: durationSec,
             fps: fps,
             transcriptPath: transcriptPath,

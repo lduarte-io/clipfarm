@@ -29,7 +29,8 @@ import Testing
 @MainActor @Test func emptyLibraryFetchesEmptyStateAtCurrentVersion() throws {
     try withScratchStore { store in
         let state = try store.fetchState()
-        #expect(state == ClipFarmState(version: 1))
+        #expect(state == ClipFarmState())
+        #expect(state.version == ClipFarmState.currentVersion)
     }
 }
 

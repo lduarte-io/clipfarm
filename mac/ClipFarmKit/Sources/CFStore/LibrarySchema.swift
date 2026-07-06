@@ -1,3 +1,4 @@
+import CFDomain
 import GRDB
 
 /// The library database schema — plan §2.3, versioned via `DatabaseMigrator`
@@ -13,8 +14,9 @@ import GRDB
 ///   dangling reference ("fork of [deleted attempt]").
 enum LibrarySchema {
     /// Informational schema version written to `meta`; bump together with a
-    /// new registered migration.
-    static let schemaVersion = 1
+    /// new registered migration. Mirrors `ClipFarmState.currentVersion` —
+    /// one versioning stream, DB schema and backup shape together.
+    static let schemaVersion = ClipFarmState.currentVersion
 
     static func migrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -175,10 +177,22 @@ enum LibrarySchema {
                 END;
                 """)
 
+            // Literal '1': each migration stamps the version IT produces, so
+            // a fresh database walks 1 → 2 → … exactly like an upgraded one.
             try db.execute(
-                sql: "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
-                arguments: [String(schemaVersion)]
+                sql: "INSERT INTO meta(key, value) VALUES ('schema_version', '1')"
             )
+        }
+
+        // v2 (N3): `.mkv` sources are remuxed to a sibling `.mp4` at ingest
+        // (D15) — `path` records the playable `.mp4`, `original_path` keeps
+        // the original `.mkv` as provenance (provenance forever; N3
+        // PROVISIONAL 1). NULL for every non-remuxed source.
+        migrator.registerMigration("v2") { db in
+            try db.execute(sql: """
+                ALTER TABLE sources ADD COLUMN original_path TEXT;
+                UPDATE meta SET value = '2' WHERE key = 'schema_version';
+                """)
         }
 
         return migrator

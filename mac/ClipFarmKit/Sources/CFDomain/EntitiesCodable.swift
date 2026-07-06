@@ -111,6 +111,7 @@ extension Source: Codable {
     enum CodingKeys: String, CodingKey {
         case filename
         case path
+        case originalPath = "original_path"
         case durationSec = "duration_sec"
         case fps
         case transcriptPath = "transcript_path"
@@ -126,6 +127,7 @@ extension Source: Codable {
         self.init(
             filename: try c.decode(String.self, forKey: .filename),
             path: try c.decode(String.self, forKey: .path),
+            originalPath: try c.decodeIfPresent(String.self, forKey: .originalPath),
             durationSec: try c.decodeIfPresent(Double.self, forKey: .durationSec),
             fps: try c.decodeIfPresent(Double.self, forKey: .fps),
             transcriptPath: try c.decodeIfPresent(String.self, forKey: .transcriptPath),
@@ -141,6 +143,7 @@ extension Source: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(filename, forKey: .filename)
         try c.encode(path, forKey: .path)
+        try c.encode(originalPath, forKey: .originalPath)
         try c.encode(durationSec, forKey: .durationSec)
         try c.encode(fps, forKey: .fps)
         try c.encode(transcriptPath, forKey: .transcriptPath)

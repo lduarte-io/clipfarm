@@ -7,6 +7,12 @@
 /// context (resolver, continuity).
 
 public struct ClipFarmState: Equatable, Sendable {
+    /// The current state-shape version. One versioning stream with the
+    /// database schema (the backup JSON carries the schema version so
+    /// restores migrate — plan §2.3); CFStore's `LibrarySchema` mirrors it.
+    /// History: 1 = web v0 shape; 2 = N3 (`sources.original_path`).
+    public static let currentVersion = 2
+
     public var version: Int
     public var sources: [String: Source]
     public var clips: [String: Clip]
@@ -16,7 +22,7 @@ public struct ClipFarmState: Equatable, Sendable {
     public var voiceAnnotations: [VoiceAnnotation]
 
     public init(
-        version: Int = 1,
+        version: Int = ClipFarmState.currentVersion,
         sources: [String: Source] = [:],
         clips: [String: Clip] = [:],
         projects: [String: Project] = [:],

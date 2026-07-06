@@ -120,7 +120,13 @@ public struct TracksOverride: Equatable, Sendable {
 public struct Source: Equatable, Sendable {
     public var filename: String
     public var path: String
+    /// Provenance for `.mkv` sources remuxed at ingest (D15): `path` records
+    /// the playable remuxed `.mp4`; this keeps the original `.mkv` path.
+    /// `nil` for every non-remuxed source. Schema v2 / N3 PROVISIONAL 1.
+    public var originalPath: String?
     public var durationSec: Double?
+    /// Display only — `nominalFrameRate` at probe time. Frame math uses the
+    /// track's `minFrameDuration` via CFMedia, never this (VFR footage).
     public var fps: Double?
     public var transcriptPath: String?
     public var addedAt: String
@@ -133,6 +139,7 @@ public struct Source: Equatable, Sendable {
     public init(
         filename: String,
         path: String,
+        originalPath: String? = nil,
         durationSec: Double? = nil,
         fps: Double? = nil,
         transcriptPath: String? = nil,
@@ -144,6 +151,7 @@ public struct Source: Equatable, Sendable {
     ) {
         self.filename = filename
         self.path = path
+        self.originalPath = originalPath
         self.durationSec = durationSec
         self.fps = fps
         self.transcriptPath = transcriptPath
