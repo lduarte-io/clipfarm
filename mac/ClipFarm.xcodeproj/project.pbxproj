@@ -17,10 +17,6 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		CF000000000000000000000F /* ClipFarm */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
 			path = ClipFarm;
 			sourceTree = "<group>";
 		};

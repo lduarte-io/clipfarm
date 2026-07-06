@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct RootView: View {
+    @Environment(AppStore.self) private var appStore
+    // The window's UndoManager — handed to the library store at open so
+    // the system Edit menu (Cmd+Z) drives store undo directly.
+    @Environment(\.undoManager) private var undoManager
     @State private var selection: NavigationItem? = .library
     @State private var isInspectorPresented = true
 
@@ -25,6 +29,9 @@ struct RootView: View {
                         }
                     }
                 }
+        }
+        .task {
+            appStore.openDefaultLibraryIfNeeded(undoManager: undoManager)
         }
     }
 
