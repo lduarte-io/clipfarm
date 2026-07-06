@@ -1,3 +1,4 @@
+import CFDomain
 import Foundation
 import GRDB
 
@@ -8,18 +9,9 @@ import GRDB
 ///
 /// Missing keys read as defaults; unknown keys in the table are ignored
 /// (tolerance); unparseable values fall back to defaults rather than fail.
-
-/// D18: how a clip's `end_sec` extends past its last word.
-public enum SegmentationTailPolicy: String, Sendable, CaseIterable, Codable {
-    /// Default: each clip's end extends to the next word's start; the last
-    /// clip extends to the source duration.
-    case extendToNextWordStart = "extend-to-next-word-start"
-    /// Fixed padding of `tailPaddingSec` beyond the last word's end.
-    case fixedPadding = "fixed-padding"
-    /// The raw Whisper `word.end` (the web implementation's behavior —
-    /// clips routinely felt cut short; kept for golden-master comparison).
-    case wordEnd = "word-end"
-}
+///
+/// `SegmentationTailPolicy` moved to CFDomain at N3 (the pure tail-policy
+/// function lives there); re-exported through the CFDomain import.
 
 public struct LibrarySettings: Equatable, Sendable {
     /// Silence gap that opens a new clip (segmentation splits when gap

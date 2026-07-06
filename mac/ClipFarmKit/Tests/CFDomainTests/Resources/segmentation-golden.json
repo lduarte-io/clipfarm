@@ -1,0 +1,4293 @@
+{
+ "stem": "golden",
+ "seed": 20260706,
+ "duration": 641.5115,
+ "words": [
+  {
+   "start": 0.25,
+   "end": 0.342,
+   "word": " w0",
+   "probability": 0.9
+  },
+  {
+   "start": 1.906,
+   "end": 1.997,
+   "word": " w1",
+   "probability": 0.9
+  },
+  {
+   "start": 2.095,
+   "end": 2.331,
+   "word": " w2",
+   "probability": 0.9
+  },
+  {
+   "start": 4.171,
+   "end": 4.501,
+   "word": " w3",
+   "probability": 0.9
+  },
+  {
+   "start": 4.582,
+   "end": 4.758,
+   "word": " w4",
+   "probability": 0.9
+  },
+  {
+   "start": 4.92,
+   "end": 5.302,
+   "word": " w5",
+   "probability": 0.9
+  },
+  {
+   "start": 5.769,
+   "end": 6.322,
+   "word": " w6",
+   "probability": 0.9
+  },
+  {
+   "start": 7.816,
+   "end": 8.38,
+   "word": " w7",
+   "probability": 0.9
+  },
+  {
+   "start": 15.027,
+   "end": 15.345,
+   "word": " w8",
+   "probability": 0.9
+  },
+  {
+   "start": 17.345,
+   "end": 17.586,
+   "word": " w9",
+   "probability": 0.9
+  },
+  {
+   "start": 25.826,
+   "end": 26.049,
+   "word": " w10",
+   "probability": 0.9
+  },
+  {
+   "start": 26.64,
+   "end": 27.129,
+   "word": " w11",
+   "probability": 0.9
+  },
+  {
+   "start": 28.536,
+   "end": 28.937,
+   "word": " w12",
+   "probability": 0.9
+  },
+  {
+   "start": 29.414,
+   "end": 29.717,
+   "word": " w13",
+   "probability": 0.9
+  },
+  {
+   "start": 29.901,
+   "end": 30.077,
+   "word": " w14",
+   "probability": 0.9
+  },
+  {
+   "start": 31.634,
+   "end": 32.13,
+   "word": " w15",
+   "probability": 0.9
+  },
+  {
+   "start": 33.012,
+   "end": 33.16,
+   "word": " w16",
+   "probability": 0.9
+  },
+  {
+   "start": 34.148,
+   "end": 34.602,
+   "word": " w17",
+   "probability": 0.9
+  },
+  {
+   "start": 36.308,
+   "end": 36.647,
+   "word": " w18",
+   "probability": 0.9
+  },
+  {
+   "start": 38.647,
+   "end": 39.008,
+   "word": " w19",
+   "probability": 0.9
+  },
+  {
+   "start": 40.78,
+   "end": 41.368,
+   "word": " w20",
+   "probability": 0.9
+  },
+  {
+   "start": 42.55,
+   "end": 42.66,
+   "word": " w21",
+   "probability": 0.9
+  },
+  {
+   "start": 44.528,
+   "end": 45.052,
+   "word": " w22",
+   "probability": 0.9
+  },
+  {
+   "start": 45.7,
+   "end": 46.135,
+   "word": " w23",
+   "probability": 0.9
+  },
+  {
+   "start": 46.885,
+   "end": 47.231,
+   "word": " w24",
+   "probability": 0.9
+  },
+  {
+   "start": 48.838,
+   "end": 49.275,
+   "word": " w25",
+   "probability": 0.9
+  },
+  {
+   "start": 50.595,
+   "end": 51.022,
+   "word": " w26",
+   "probability": 0.9
+  },
+  {
+   "start": 51.022,
+   "end": 51.184,
+   "word": " w27",
+   "probability": 0.9
+  },
+  {
+   "start": 52.348,
+   "end": 52.784,
+   "word": " w28",
+   "probability": 0.9
+  },
+  {
+   "start": 53.006,
+   "end": 53.505,
+   "word": " w29",
+   "probability": 0.9
+  },
+  {
+   "start": 57.27,
+   "end": 57.364,
+   "word": " w30",
+   "probability": 0.9
+  },
+  {
+   "start": 58.68,
+   "end": 59.17,
+   "word": " w31",
+   "probability": 0.9
+  },
+  {
+   "start": 68.019,
+   "end": 68.503,
+   "word": " w32",
+   "probability": 0.9
+  },
+  {
+   "start": 69.253,
+   "end": 69.676,
+   "word": " w33",
+   "probability": 0.9
+  },
+  {
+   "start": 71.482,
+   "end": 71.723,
+   "word": " w34",
+   "probability": 0.9
+  },
+  {
+   "start": 72.997,
+   "end": 73.557,
+   "word": " w35",
+   "probability": 0.9
+  },
+  {
+   "start": 74.375,
+   "end": 74.738,
+   "word": " w36",
+   "probability": 0.9
+  },
+  {
+   "start": 74.738,
+   "end": 75.298,
+   "word": " w37",
+   "probability": 0.9
+  },
+  {
+   "start": 75.298,
+   "end": 75.415,
+   "word": " w38",
+   "probability": 0.9
+  },
+  {
+   "start": 76.821,
+   "end": 77.186,
+   "word": " w39",
+   "probability": 0.9
+  },
+  {
+   "start": 77.951,
+   "end": 78.241,
+   "word": " w40",
+   "probability": 0.9
+  },
+  {
+   "start": 78.991,
+   "end": 79.228,
+   "word": " w41",
+   "probability": 0.9
+  },
+  {
+   "start": 80.762,
+   "end": 80.861,
+   "word": " w42",
+   "probability": 0.9
+  },
+  {
+   "start": 81.509,
+   "end": 81.696,
+   "word": " w43",
+   "probability": 0.9
+  },
+  {
+   "start": 82.491,
+   "end": 82.853,
+   "word": " w44",
+   "probability": 0.9
+  },
+  {
+   "start": 85.645,
+   "end": 85.795,
+   "word": " w45",
+   "probability": 0.9
+  },
+  {
+   "start": 87.364,
+   "end": 87.844,
+   "word": " w46",
+   "probability": 0.9
+  },
+  {
+   "start": 88.555,
+   "end": 88.673,
+   "word": " w47",
+   "probability": 0.9
+  },
+  {
+   "start": 90.673,
+   "end": 90.889,
+   "word": " w48",
+   "probability": 0.9
+  },
+  {
+   "start": 91.22,
+   "end": 91.379,
+   "word": " w49",
+   "probability": 0.9
+  },
+  {
+   "start": 91.637,
+   "end": 92.141,
+   "word": " w50",
+   "probability": 0.9
+  },
+  {
+   "start": 92.343,
+   "end": 92.539,
+   "word": " w51",
+   "probability": 0.9
+  },
+  {
+   "start": 94.175,
+   "end": 94.332,
+   "word": " w52",
+   "probability": 0.9
+  },
+  {
+   "start": 95.082,
+   "end": 95.676,
+   "word": " w53",
+   "probability": 0.9
+  },
+  {
+   "start": 96.426,
+   "end": 96.563,
+   "word": " w54",
+   "probability": 0.9
+  },
+  {
+   "start": 97.555,
+   "end": 97.762,
+   "word": " w55",
+   "probability": 0.9
+  },
+  {
+   "start": 99.311,
+   "end": 99.851,
+   "word": " w56",
+   "probability": 0.9
+  },
+  {
+   "start": 101.668,
+   "end": 102.249,
+   "word": " w57",
+   "probability": 0.9
+  },
+  {
+   "start": 102.972,
+   "end": 103.465,
+   "word": " w58",
+   "probability": 0.9
+  },
+  {
+   "start": 111.352,
+   "end": 111.565,
+   "word": " w59",
+   "probability": 0.9
+  },
+  {
+   "start": 111.565,
+   "end": 112.11,
+   "word": " w60",
+   "probability": 0.9
+  },
+  {
+   "start": 112.542,
+   "end": 112.799,
+   "word": " w61",
+   "probability": 0.9
+  },
+  {
+   "start": 113.673,
+   "end": 114.237,
+   "word": " w62",
+   "probability": 0.9
+  },
+  {
+   "start": 114.486,
+   "end": 114.62,
+   "word": " w63",
+   "probability": 0.9
+  },
+  {
+   "start": 115.146,
+   "end": 115.316,
+   "word": " w64",
+   "probability": 0.9
+  },
+  {
+   "start": 116.066,
+   "end": 116.343,
+   "word": " w65",
+   "probability": 0.9
+  },
+  {
+   "start": 117.077,
+   "end": 117.25,
+   "word": " w66",
+   "probability": 0.9
+  },
+  {
+   "start": 118.071,
+   "end": 118.562,
+   "word": " w67",
+   "probability": 0.9
+  },
+  {
+   "start": 119.506,
+   "end": 119.59,
+   "word": " w68",
+   "probability": 0.9
+  },
+  {
+   "start": 119.848,
+   "end": 120.147,
+   "word": " w69",
+   "probability": 0.9
+  },
+  {
+   "start": 120.931,
+   "end": 121.363,
+   "word": " w70",
+   "probability": 0.9
+  },
+  {
+   "start": 122.292,
+   "end": 122.673,
+   "word": " w71",
+   "probability": 0.9
+  },
+  {
+   "start": 123.423,
+   "end": 123.571,
+   "word": " w72",
+   "probability": 0.9
+  },
+  {
+   "start": 124.331,
+   "end": 124.435,
+   "word": " w73",
+   "probability": 0.9
+  },
+  {
+   "start": 126.174,
+   "end": 126.739,
+   "word": " w74",
+   "probability": 0.9
+  },
+  {
+   "start": 130.789,
+   "end": 131.198,
+   "word": " w75",
+   "probability": 0.9
+  },
+  {
+   "start": 131.708,
+   "end": 132.293,
+   "word": " w76",
+   "probability": 0.9
+  },
+  {
+   "start": 132.455,
+   "end": 132.553,
+   "word": " w77",
+   "probability": 0.9
+  },
+  {
+   "start": 133.496,
+   "end": 133.85,
+   "word": " w78",
+   "probability": 0.9
+  },
+  {
+   "start": 134.891,
+   "end": 135.452,
+   "word": " w79",
+   "probability": 0.9
+  },
+  {
+   "start": 136.422,
+   "end": 136.941,
+   "word": " w80",
+   "probability": 0.9
+  },
+  {
+   "start": 144.276,
+   "end": 144.633,
+   "word": " w81",
+   "probability": 0.9
+  },
+  {
+   "start": 145.634,
+   "end": 146.185,
+   "word": " w82",
+   "probability": 0.9
+  },
+  {
+   "start": 147.079,
+   "end": 147.386,
+   "word": " w83",
+   "probability": 0.9
+  },
+  {
+   "start": 149.386,
+   "end": 149.969,
+   "word": " w84",
+   "probability": 0.9
+  },
+  {
+   "start": 150.1,
+   "end": 150.507,
+   "word": " w85",
+   "probability": 0.9
+  },
+  {
+   "start": 152.507,
+   "end": 152.84,
+   "word": " w86",
+   "probability": 0.9
+  },
+  {
+   "start": 154.132,
+   "end": 154.312,
+   "word": " w87",
+   "probability": 0.9
+  },
+  {
+   "start": 155.636,
+   "end": 155.844,
+   "word": " w88",
+   "probability": 0.9
+  },
+  {
+   "start": 156.033,
+   "end": 156.131,
+   "word": " w89",
+   "probability": 0.9
+  },
+  {
+   "start": 157.172,
+   "end": 157.607,
+   "word": " w90",
+   "probability": 0.9
+  },
+  {
+   "start": 158.339,
+   "end": 158.68,
+   "word": " w91",
+   "probability": 0.9
+  },
+  {
+   "start": 159.121,
+   "end": 159.206,
+   "word": " w92",
+   "probability": 0.9
+  },
+  {
+   "start": 159.772,
+   "end": 160.201,
+   "word": " w93",
+   "probability": 0.9
+  },
+  {
+   "start": 160.827,
+   "end": 161.381,
+   "word": " w94",
+   "probability": 0.9
+  },
+  {
+   "start": 163.744,
+   "end": 164.261,
+   "word": " w95",
+   "probability": 0.9
+  },
+  {
+   "start": 165.506,
+   "end": 165.624,
+   "word": " w96",
+   "probability": 0.9
+  },
+  {
+   "start": 171.008,
+   "end": 171.479,
+   "word": " w97",
+   "probability": 0.9
+  },
+  {
+   "start": 172.068,
+   "end": 172.466,
+   "word": " w98",
+   "probability": 0.9
+  },
+  {
+   "start": 173.546,
+   "end": 173.797,
+   "word": " w99",
+   "probability": 0.9
+  },
+  {
+   "start": 174.068,
+   "end": 174.34,
+   "word": " w100",
+   "probability": 0.9
+  },
+  {
+   "start": 175.947,
+   "end": 176.535,
+   "word": " w101",
+   "probability": 0.9
+  },
+  {
+   "start": 176.535,
+   "end": 176.827,
+   "word": " w102",
+   "probability": 0.9
+  },
+  {
+   "start": 178.618,
+   "end": 178.993,
+   "word": " w103",
+   "probability": 0.9
+  },
+  {
+   "start": 180.993,
+   "end": 181.455,
+   "word": " w104",
+   "probability": 0.9
+  },
+  {
+   "start": 182.39,
+   "end": 182.871,
+   "word": " w105",
+   "probability": 0.9
+  },
+  {
+   "start": 184.681,
+   "end": 184.98,
+   "word": " w106",
+   "probability": 0.9
+  },
+  {
+   "start": 185.898,
+   "end": 186.049,
+   "word": " w107",
+   "probability": 0.9
+  },
+  {
+   "start": 186.873,
+   "end": 187.206,
+   "word": " w108",
+   "probability": 0.9
+  },
+  {
+   "start": 188.476,
+   "end": 189.023,
+   "word": " w109",
+   "probability": 0.9
+  },
+  {
+   "start": 189.762,
+   "end": 190.214,
+   "word": " w110",
+   "probability": 0.9
+  },
+  {
+   "start": 190.256,
+   "end": 190.361,
+   "word": " w111",
+   "probability": 0.9
+  },
+  {
+   "start": 191.357,
+   "end": 191.72,
+   "word": " w112",
+   "probability": 0.9
+  },
+  {
+   "start": 191.909,
+   "end": 192.412,
+   "word": " w113",
+   "probability": 0.9
+  },
+  {
+   "start": 193.114,
+   "end": 193.421,
+   "word": " w114",
+   "probability": 0.9
+  },
+  {
+   "start": 194.46,
+   "end": 194.858,
+   "word": " w115",
+   "probability": 0.9
+  },
+  {
+   "start": 202.41,
+   "end": 202.553,
+   "word": " w116",
+   "probability": 0.9
+  },
+  {
+   "start": 202.728,
+   "end": 202.98,
+   "word": " w117",
+   "probability": 0.9
+  },
+  {
+   "start": 203.021,
+   "end": 203.255,
+   "word": " w118",
+   "probability": 0.9
+  },
+  {
+   "start": 203.418,
+   "end": 203.785,
+   "word": " w119",
+   "probability": 0.9
+  },
+  {
+   "start": 204.871,
+   "end": 204.956,
+   "word": " w120",
+   "probability": 0.9
+  },
+  {
+   "start": 205.259,
+   "end": 205.396,
+   "word": " w121",
+   "probability": 0.9
+  },
+  {
+   "start": 206.146,
+   "end": 206.234,
+   "word": " w122",
+   "probability": 0.9
+  },
+  {
+   "start": 207.343,
+   "end": 207.896,
+   "word": " w123",
+   "probability": 0.9
+  },
+  {
+   "start": 209.896,
+   "end": 210.486,
+   "word": " w124",
+   "probability": 0.9
+  },
+  {
+   "start": 211.915,
+   "end": 212.09,
+   "word": " w125",
+   "probability": 0.9
+  },
+  {
+   "start": 212.278,
+   "end": 212.463,
+   "word": " w126",
+   "probability": 0.9
+  },
+  {
+   "start": 213.685,
+   "end": 214.092,
+   "word": " w127",
+   "probability": 0.9
+  },
+  {
+   "start": 215.96,
+   "end": 216.536,
+   "word": " w128",
+   "probability": 0.9
+  },
+  {
+   "start": 217.357,
+   "end": 217.728,
+   "word": " w129",
+   "probability": 0.9
+  },
+  {
+   "start": 217.728,
+   "end": 217.907,
+   "word": " w130",
+   "probability": 0.9
+  },
+  {
+   "start": 218.422,
+   "end": 218.889,
+   "word": " w131",
+   "probability": 0.9
+  },
+  {
+   "start": 227.09,
+   "end": 227.63,
+   "word": " w132",
+   "probability": 0.9
+  },
+  {
+   "start": 228.153,
+   "end": 228.593,
+   "word": " w133",
+   "probability": 0.9
+  },
+  {
+   "start": 228.593,
+   "end": 228.95,
+   "word": " w134",
+   "probability": 0.9
+  },
+  {
+   "start": 230.239,
+   "end": 230.447,
+   "word": " w135",
+   "probability": 0.9
+  },
+  {
+   "start": 232.131,
+   "end": 232.489,
+   "word": " w136",
+   "probability": 0.9
+  },
+  {
+   "start": 239.212,
+   "end": 239.707,
+   "word": " w137",
+   "probability": 0.9
+  },
+  {
+   "start": 240.311,
+   "end": 240.581,
+   "word": " w138",
+   "probability": 0.9
+  },
+  {
+   "start": 241.331,
+   "end": 241.659,
+   "word": " w139",
+   "probability": 0.9
+  },
+  {
+   "start": 242.363,
+   "end": 242.669,
+   "word": " w140",
+   "probability": 0.9
+  },
+  {
+   "start": 243.807,
+   "end": 244.253,
+   "word": " w141",
+   "probability": 0.9
+  },
+  {
+   "start": 246.12,
+   "end": 246.637,
+   "word": " w142",
+   "probability": 0.9
+  },
+  {
+   "start": 247.73,
+   "end": 247.839,
+   "word": " w143",
+   "probability": 0.9
+  },
+  {
+   "start": 247.839,
+   "end": 248.418,
+   "word": " w144",
+   "probability": 0.9
+  },
+  {
+   "start": 248.418,
+   "end": 248.512,
+   "word": " w145",
+   "probability": 0.9
+  },
+  {
+   "start": 249.276,
+   "end": 249.384,
+   "word": " w146",
+   "probability": 0.9
+  },
+  {
+   "start": 256.36,
+   "end": 256.458,
+   "word": " w147",
+   "probability": 0.9
+  },
+  {
+   "start": 258.074,
+   "end": 258.652,
+   "word": " w148",
+   "probability": 0.9
+  },
+  {
+   "start": 259.086,
+   "end": 259.415,
+   "word": " w149",
+   "probability": 0.9
+  },
+  {
+   "start": 259.842,
+   "end": 260.15,
+   "word": " w150",
+   "probability": 0.9
+  },
+  {
+   "start": 260.9,
+   "end": 261.24,
+   "word": " w151",
+   "probability": 0.9
+  },
+  {
+   "start": 261.869,
+   "end": 262.454,
+   "word": " w152",
+   "probability": 0.9
+  },
+  {
+   "start": 263.538,
+   "end": 264.023,
+   "word": " w153",
+   "probability": 0.9
+  },
+  {
+   "start": 265.393,
+   "end": 265.696,
+   "word": " w154",
+   "probability": 0.9
+  },
+  {
+   "start": 266.071,
+   "end": 266.261,
+   "word": " w155",
+   "probability": 0.9
+  },
+  {
+   "start": 266.816,
+   "end": 267.298,
+   "word": " w156",
+   "probability": 0.9
+  },
+  {
+   "start": 268.072,
+   "end": 268.211,
+   "word": " w157",
+   "probability": 0.9
+  },
+  {
+   "start": 268.511,
+   "end": 268.766,
+   "word": " w158",
+   "probability": 0.9
+  },
+  {
+   "start": 268.779,
+   "end": 268.879,
+   "word": " w159",
+   "probability": 0.9
+  },
+  {
+   "start": 270.574,
+   "end": 271.097,
+   "word": " w160",
+   "probability": 0.9
+  },
+  {
+   "start": 271.097,
+   "end": 271.569,
+   "word": " w161",
+   "probability": 0.9
+  },
+  {
+   "start": 271.804,
+   "end": 272.265,
+   "word": " w162",
+   "probability": 0.9
+  },
+  {
+   "start": 272.934,
+   "end": 273.453,
+   "word": " w163",
+   "probability": 0.9
+  },
+  {
+   "start": 275.453,
+   "end": 275.736,
+   "word": " w164",
+   "probability": 0.9
+  },
+  {
+   "start": 276.877,
+   "end": 277.04,
+   "word": " w165",
+   "probability": 0.9
+  },
+  {
+   "start": 278.192,
+   "end": 278.631,
+   "word": " w166",
+   "probability": 0.9
+  },
+  {
+   "start": 279.381,
+   "end": 279.796,
+   "word": " w167",
+   "probability": 0.9
+  },
+  {
+   "start": 280.268,
+   "end": 280.721,
+   "word": " w168",
+   "probability": 0.9
+  },
+  {
+   "start": 281.001,
+   "end": 281.405,
+   "word": " w169",
+   "probability": 0.9
+  },
+  {
+   "start": 282.571,
+   "end": 282.856,
+   "word": " w170",
+   "probability": 0.9
+  },
+  {
+   "start": 284.007,
+   "end": 284.109,
+   "word": " w171",
+   "probability": 0.9
+  },
+  {
+   "start": 284.327,
+   "end": 284.786,
+   "word": " w172",
+   "probability": 0.9
+  },
+  {
+   "start": 285.98,
+   "end": 286.268,
+   "word": " w173",
+   "probability": 0.9
+  },
+  {
+   "start": 287.771,
+   "end": 288.085,
+   "word": " w174",
+   "probability": 0.9
+  },
+  {
+   "start": 289.17,
+   "end": 289.632,
+   "word": " w175",
+   "probability": 0.9
+  },
+  {
+   "start": 290.382,
+   "end": 290.469,
+   "word": " w176",
+   "probability": 0.9
+  },
+  {
+   "start": 290.945,
+   "end": 291.089,
+   "word": " w177",
+   "probability": 0.9
+  },
+  {
+   "start": 291.102,
+   "end": 291.38,
+   "word": " w178",
+   "probability": 0.9
+  },
+  {
+   "start": 295.239,
+   "end": 295.627,
+   "word": " w179",
+   "probability": 0.9
+  },
+  {
+   "start": 295.692,
+   "end": 296.266,
+   "word": " w180",
+   "probability": 0.9
+  },
+  {
+   "start": 297.184,
+   "end": 297.469,
+   "word": " w181",
+   "probability": 0.9
+  },
+  {
+   "start": 299.469,
+   "end": 299.832,
+   "word": " w182",
+   "probability": 0.9
+  },
+  {
+   "start": 300.4,
+   "end": 300.502,
+   "word": " w183",
+   "probability": 0.9
+  },
+  {
+   "start": 300.883,
+   "end": 300.977,
+   "word": " w184",
+   "probability": 0.9
+  },
+  {
+   "start": 302.398,
+   "end": 302.502,
+   "word": " w185",
+   "probability": 0.9
+  },
+  {
+   "start": 304.502,
+   "end": 305.031,
+   "word": " w186",
+   "probability": 0.9
+  },
+  {
+   "start": 306.786,
+   "end": 307.147,
+   "word": " w187",
+   "probability": 0.9
+  },
+  {
+   "start": 312.142,
+   "end": 312.389,
+   "word": " w188",
+   "probability": 0.9
+  },
+  {
+   "start": 313.27,
+   "end": 313.575,
+   "word": " w189",
+   "probability": 0.9
+  },
+  {
+   "start": 316.009,
+   "end": 316.131,
+   "word": " w190",
+   "probability": 0.9
+  },
+  {
+   "start": 316.49,
+   "end": 316.781,
+   "word": " w191",
+   "probability": 0.9
+  },
+  {
+   "start": 317.803,
+   "end": 318.397,
+   "word": " w192",
+   "probability": 0.9
+  },
+  {
+   "start": 318.667,
+   "end": 319.096,
+   "word": " w193",
+   "probability": 0.9
+  },
+  {
+   "start": 320.788,
+   "end": 321.045,
+   "word": " w194",
+   "probability": 0.9
+  },
+  {
+   "start": 322.654,
+   "end": 322.842,
+   "word": " w195",
+   "probability": 0.9
+  },
+  {
+   "start": 322.842,
+   "end": 322.983,
+   "word": " w196",
+   "probability": 0.9
+  },
+  {
+   "start": 323.733,
+   "end": 323.924,
+   "word": " w197",
+   "probability": 0.9
+  },
+  {
+   "start": 325.291,
+   "end": 325.881,
+   "word": " w198",
+   "probability": 0.9
+  },
+  {
+   "start": 327.716,
+   "end": 328.097,
+   "word": " w199",
+   "probability": 0.9
+  },
+  {
+   "start": 328.539,
+   "end": 328.806,
+   "word": " w200",
+   "probability": 0.9
+  },
+  {
+   "start": 330.316,
+   "end": 330.517,
+   "word": " w201",
+   "probability": 0.9
+  },
+  {
+   "start": 332.517,
+   "end": 332.98,
+   "word": " w202",
+   "probability": 0.9
+  },
+  {
+   "start": 332.98,
+   "end": 333.236,
+   "word": " w203",
+   "probability": 0.9
+  },
+  {
+   "start": 334.853,
+   "end": 335.21,
+   "word": " w204",
+   "probability": 0.9
+  },
+  {
+   "start": 335.762,
+   "end": 335.96,
+   "word": " w205",
+   "probability": 0.9
+  },
+  {
+   "start": 342.317,
+   "end": 342.734,
+   "word": " w206",
+   "probability": 0.9
+  },
+  {
+   "start": 343.024,
+   "end": 343.526,
+   "word": " w207",
+   "probability": 0.9
+  },
+  {
+   "start": 344.569,
+   "end": 344.859,
+   "word": " w208",
+   "probability": 0.9
+  },
+  {
+   "start": 345.687,
+   "end": 346.164,
+   "word": " w209",
+   "probability": 0.9
+  },
+  {
+   "start": 347.64,
+   "end": 348.208,
+   "word": " w210",
+   "probability": 0.9
+  },
+  {
+   "start": 349.192,
+   "end": 349.69,
+   "word": " w211",
+   "probability": 0.9
+  },
+  {
+   "start": 350.455,
+   "end": 350.636,
+   "word": " w212",
+   "probability": 0.9
+  },
+  {
+   "start": 352.113,
+   "end": 352.292,
+   "word": " w213",
+   "probability": 0.9
+  },
+  {
+   "start": 353.294,
+   "end": 353.424,
+   "word": " w214",
+   "probability": 0.9
+  },
+  {
+   "start": 355.424,
+   "end": 355.542,
+   "word": " w215",
+   "probability": 0.9
+  },
+  {
+   "start": 356.041,
+   "end": 356.427,
+   "word": " w216",
+   "probability": 0.9
+  },
+  {
+   "start": 358.132,
+   "end": 358.377,
+   "word": " w217",
+   "probability": 0.9
+  },
+  {
+   "start": 358.837,
+   "end": 359.436,
+   "word": " w218",
+   "probability": 0.9
+  },
+  {
+   "start": 359.563,
+   "end": 360.142,
+   "word": " w219",
+   "probability": 0.9
+  },
+  {
+   "start": 362.142,
+   "end": 362.317,
+   "word": " w220",
+   "probability": 0.9
+  },
+  {
+   "start": 362.654,
+   "end": 362.796,
+   "word": " w221",
+   "probability": 0.9
+  },
+  {
+   "start": 363.101,
+   "end": 363.189,
+   "word": " w222",
+   "probability": 0.9
+  },
+  {
+   "start": 364.903,
+   "end": 365.054,
+   "word": " w223",
+   "probability": 0.9
+  },
+  {
+   "start": 365.795,
+   "end": 366.036,
+   "word": " w224",
+   "probability": 0.9
+  },
+  {
+   "start": 368.89,
+   "end": 369.307,
+   "word": " w225",
+   "probability": 0.9
+  },
+  {
+   "start": 369.973,
+   "end": 370.339,
+   "word": " w226",
+   "probability": 0.9
+  },
+  {
+   "start": 371.294,
+   "end": 371.711,
+   "word": " w227",
+   "probability": 0.9
+  },
+  {
+   "start": 372.156,
+   "end": 372.558,
+   "word": " w228",
+   "probability": 0.9
+  },
+  {
+   "start": 373.925,
+   "end": 374.426,
+   "word": " w229",
+   "probability": 0.9
+  },
+  {
+   "start": 374.426,
+   "end": 374.74,
+   "word": " w230",
+   "probability": 0.9
+  },
+  {
+   "start": 375.501,
+   "end": 375.846,
+   "word": " w231",
+   "probability": 0.9
+  },
+  {
+   "start": 376.366,
+   "end": 376.535,
+   "word": " w232",
+   "probability": 0.9
+  },
+  {
+   "start": 378.391,
+   "end": 378.563,
+   "word": " w233",
+   "probability": 0.9
+  },
+  {
+   "start": 379.313,
+   "end": 379.907,
+   "word": " w234",
+   "probability": 0.9
+  },
+  {
+   "start": 381.907,
+   "end": 382.022,
+   "word": " w235",
+   "probability": 0.9
+  },
+  {
+   "start": 384.022,
+   "end": 384.333,
+   "word": " w236",
+   "probability": 0.9
+  },
+  {
+   "start": 385.238,
+   "end": 385.814,
+   "word": " w237",
+   "probability": 0.9
+  },
+  {
+   "start": 386.724,
+   "end": 387.071,
+   "word": " w238",
+   "probability": 0.9
+  },
+  {
+   "start": 394.803,
+   "end": 395.167,
+   "word": " w239",
+   "probability": 0.9
+  },
+  {
+   "start": 395.929,
+   "end": 396.055,
+   "word": " w240",
+   "probability": 0.9
+  },
+  {
+   "start": 397.619,
+   "end": 397.929,
+   "word": " w241",
+   "probability": 0.9
+  },
+  {
+   "start": 398.496,
+   "end": 398.77,
+   "word": " w242",
+   "probability": 0.9
+  },
+  {
+   "start": 400.053,
+   "end": 400.449,
+   "word": " w243",
+   "probability": 0.9
+  },
+  {
+   "start": 401.199,
+   "end": 401.61,
+   "word": " w244",
+   "probability": 0.9
+  },
+  {
+   "start": 403.159,
+   "end": 403.691,
+   "word": " w245",
+   "probability": 0.9
+  },
+  {
+   "start": 404.441,
+   "end": 404.559,
+   "word": " w246",
+   "probability": 0.9
+  },
+  {
+   "start": 404.788,
+   "end": 404.992,
+   "word": " w247",
+   "probability": 0.9
+  },
+  {
+   "start": 406.24,
+   "end": 406.65,
+   "word": " w248",
+   "probability": 0.9
+  },
+  {
+   "start": 408.054,
+   "end": 408.185,
+   "word": " w249",
+   "probability": 0.9
+  },
+  {
+   "start": 408.617,
+   "end": 408.879,
+   "word": " w250",
+   "probability": 0.9
+  },
+  {
+   "start": 409.202,
+   "end": 409.398,
+   "word": " w251",
+   "probability": 0.9
+  },
+  {
+   "start": 409.964,
+   "end": 410.528,
+   "word": " w252",
+   "probability": 0.9
+  },
+  {
+   "start": 412.222,
+   "end": 412.487,
+   "word": " w253",
+   "probability": 0.9
+  },
+  {
+   "start": 412.759,
+   "end": 412.917,
+   "word": " w254",
+   "probability": 0.9
+  },
+  {
+   "start": 414.357,
+   "end": 414.848,
+   "word": " w255",
+   "probability": 0.9
+  },
+  {
+   "start": 415.655,
+   "end": 416.227,
+   "word": " w256",
+   "probability": 0.9
+  },
+  {
+   "start": 416.263,
+   "end": 416.618,
+   "word": " w257",
+   "probability": 0.9
+  },
+  {
+   "start": 417.128,
+   "end": 417.276,
+   "word": " w258",
+   "probability": 0.9
+  },
+  {
+   "start": 418.554,
+   "end": 418.7,
+   "word": " w259",
+   "probability": 0.9
+  },
+  {
+   "start": 419.902,
+   "end": 419.992,
+   "word": " w260",
+   "probability": 0.9
+  },
+  {
+   "start": 421.188,
+   "end": 421.775,
+   "word": " w261",
+   "probability": 0.9
+  },
+  {
+   "start": 422.74,
+   "end": 422.92,
+   "word": " w262",
+   "probability": 0.9
+  },
+  {
+   "start": 423.304,
+   "end": 423.636,
+   "word": " w263",
+   "probability": 0.9
+  },
+  {
+   "start": 424.386,
+   "end": 424.693,
+   "word": " w264",
+   "probability": 0.9
+  },
+  {
+   "start": 425.453,
+   "end": 425.693,
+   "word": " w265",
+   "probability": 0.9
+  },
+  {
+   "start": 426.443,
+   "end": 426.597,
+   "word": " w266",
+   "probability": 0.9
+  },
+  {
+   "start": 427.244,
+   "end": 427.439,
+   "word": " w267",
+   "probability": 0.9
+  },
+  {
+   "start": 428.753,
+   "end": 428.983,
+   "word": " w268",
+   "probability": 0.9
+  },
+  {
+   "start": 430.446,
+   "end": 430.945,
+   "word": " w269",
+   "probability": 0.9
+  },
+  {
+   "start": 432.738,
+   "end": 433.037,
+   "word": " w270",
+   "probability": 0.9
+  },
+  {
+   "start": 433.587,
+   "end": 433.737,
+   "word": " w271",
+   "probability": 0.9
+  },
+  {
+   "start": 434.487,
+   "end": 434.984,
+   "word": " w272",
+   "probability": 0.9
+  },
+  {
+   "start": 436.275,
+   "end": 436.502,
+   "word": " w273",
+   "probability": 0.9
+  },
+  {
+   "start": 438.502,
+   "end": 438.606,
+   "word": " w274",
+   "probability": 0.9
+  },
+  {
+   "start": 439.795,
+   "end": 440.297,
+   "word": " w275",
+   "probability": 0.9
+  },
+  {
+   "start": 440.889,
+   "end": 441.304,
+   "word": " w276",
+   "probability": 0.9
+  },
+  {
+   "start": 444.955,
+   "end": 445.447,
+   "word": " w277",
+   "probability": 0.9
+  },
+  {
+   "start": 447.447,
+   "end": 447.861,
+   "word": " w278",
+   "probability": 0.9
+  },
+  {
+   "start": 448.267,
+   "end": 448.376,
+   "word": " w279",
+   "probability": 0.9
+  },
+  {
+   "start": 448.72,
+   "end": 449.252,
+   "word": " w280",
+   "probability": 0.9
+  },
+  {
+   "start": 450.729,
+   "end": 451.271,
+   "word": " w281",
+   "probability": 0.9
+  },
+  {
+   "start": 451.783,
+   "end": 452.312,
+   "word": " w282",
+   "probability": 0.9
+  },
+  {
+   "start": 452.343,
+   "end": 452.746,
+   "word": " w283",
+   "probability": 0.9
+  },
+  {
+   "start": 452.942,
+   "end": 453.451,
+   "word": " w284",
+   "probability": 0.9
+  },
+  {
+   "start": 455.216,
+   "end": 455.415,
+   "word": " w285",
+   "probability": 0.9
+  },
+  {
+   "start": 455.415,
+   "end": 455.533,
+   "word": " w286",
+   "probability": 0.9
+  },
+  {
+   "start": 463.432,
+   "end": 463.962,
+   "word": " w287",
+   "probability": 0.9
+  },
+  {
+   "start": 466.593,
+   "end": 466.943,
+   "word": " w288",
+   "probability": 0.9
+  },
+  {
+   "start": 466.943,
+   "end": 467.231,
+   "word": " w289",
+   "probability": 0.9
+  },
+  {
+   "start": 468.441,
+   "end": 468.609,
+   "word": " w290",
+   "probability": 0.9
+  },
+  {
+   "start": 469.724,
+   "end": 470.206,
+   "word": " w291",
+   "probability": 0.9
+  },
+  {
+   "start": 470.966,
+   "end": 471.447,
+   "word": " w292",
+   "probability": 0.9
+  },
+  {
+   "start": 472.042,
+   "end": 472.241,
+   "word": " w293",
+   "probability": 0.9
+  },
+  {
+   "start": 473.22,
+   "end": 473.372,
+   "word": " w294",
+   "probability": 0.9
+  },
+  {
+   "start": 475.157,
+   "end": 475.554,
+   "word": " w295",
+   "probability": 0.9
+  },
+  {
+   "start": 477.06,
+   "end": 477.512,
+   "word": " w296",
+   "probability": 0.9
+  },
+  {
+   "start": 477.774,
+   "end": 478.253,
+   "word": " w297",
+   "probability": 0.9
+  },
+  {
+   "start": 478.265,
+   "end": 478.639,
+   "word": " w298",
+   "probability": 0.9
+  },
+  {
+   "start": 479.744,
+   "end": 480.235,
+   "word": " w299",
+   "probability": 0.9
+  },
+  {
+   "start": 481.669,
+   "end": 482.179,
+   "word": " w300",
+   "probability": 0.9
+  },
+  {
+   "start": 483.55,
+   "end": 483.895,
+   "word": " w301",
+   "probability": 0.9
+  },
+  {
+   "start": 484.191,
+   "end": 484.751,
+   "word": " w302",
+   "probability": 0.9
+  },
+  {
+   "start": 486.584,
+   "end": 486.862,
+   "word": " w303",
+   "probability": 0.9
+  },
+  {
+   "start": 487.612,
+   "end": 488.026,
+   "word": " w304",
+   "probability": 0.9
+  },
+  {
+   "start": 488.872,
+   "end": 489.265,
+   "word": " w305",
+   "probability": 0.9
+  },
+  {
+   "start": 491.265,
+   "end": 491.391,
+   "word": " w306",
+   "probability": 0.9
+  },
+  {
+   "start": 492.144,
+   "end": 492.406,
+   "word": " w307",
+   "probability": 0.9
+  },
+  {
+   "start": 492.707,
+   "end": 493.143,
+   "word": " w308",
+   "probability": 0.9
+  },
+  {
+   "start": 493.893,
+   "end": 494.333,
+   "word": " w309",
+   "probability": 0.9
+  },
+  {
+   "start": 495.53,
+   "end": 495.896,
+   "word": " w310",
+   "probability": 0.9
+  },
+  {
+   "start": 496.646,
+   "end": 496.918,
+   "word": " w311",
+   "probability": 0.9
+  },
+  {
+   "start": 497.607,
+   "end": 497.955,
+   "word": " w312",
+   "probability": 0.9
+  },
+  {
+   "start": 499.325,
+   "end": 499.622,
+   "word": " w313",
+   "probability": 0.9
+  },
+  {
+   "start": 500.221,
+   "end": 500.579,
+   "word": " w314",
+   "probability": 0.9
+  },
+  {
+   "start": 501.443,
+   "end": 502.037,
+   "word": " w315",
+   "probability": 0.9
+  },
+  {
+   "start": 502.787,
+   "end": 503.311,
+   "word": " w316",
+   "probability": 0.9
+  },
+  {
+   "start": 503.978,
+   "end": 504.304,
+   "word": " w317",
+   "probability": 0.9
+  },
+  {
+   "start": 504.78,
+   "end": 505.019,
+   "word": " w318",
+   "probability": 0.9
+  },
+  {
+   "start": 505.079,
+   "end": 505.54,
+   "word": " w319",
+   "probability": 0.9
+  },
+  {
+   "start": 505.54,
+   "end": 505.907,
+   "word": " w320",
+   "probability": 0.9
+  },
+  {
+   "start": 506.874,
+   "end": 507.363,
+   "word": " w321",
+   "probability": 0.9
+  },
+  {
+   "start": 508.055,
+   "end": 508.337,
+   "word": " w322",
+   "probability": 0.9
+  },
+  {
+   "start": 509.662,
+   "end": 510.2,
+   "word": " w323",
+   "probability": 0.9
+  },
+  {
+   "start": 511.03,
+   "end": 511.32,
+   "word": " w324",
+   "probability": 0.9
+  },
+  {
+   "start": 511.485,
+   "end": 511.811,
+   "word": " w325",
+   "probability": 0.9
+  },
+  {
+   "start": 512.192,
+   "end": 512.338,
+   "word": " w326",
+   "probability": 0.9
+  },
+  {
+   "start": 512.635,
+   "end": 512.828,
+   "word": " w327",
+   "probability": 0.9
+  },
+  {
+   "start": 514.828,
+   "end": 515.187,
+   "word": " w328",
+   "probability": 0.9
+  },
+  {
+   "start": 515.937,
+   "end": 516.454,
+   "word": " w329",
+   "probability": 0.9
+  },
+  {
+   "start": 524.428,
+   "end": 524.511,
+   "word": " w330",
+   "probability": 0.9
+  },
+  {
+   "start": 524.767,
+   "end": 525.252,
+   "word": " w331",
+   "probability": 0.9
+  },
+  {
+   "start": 525.252,
+   "end": 525.647,
+   "word": " w332",
+   "probability": 0.9
+  },
+  {
+   "start": 525.916,
+   "end": 526.466,
+   "word": " w333",
+   "probability": 0.9
+  },
+  {
+   "start": 528.466,
+   "end": 529.041,
+   "word": " w334",
+   "probability": 0.9
+  },
+  {
+   "start": 530.899,
+   "end": 531.082,
+   "word": " w335",
+   "probability": 0.9
+  },
+  {
+   "start": 532.861,
+   "end": 532.97,
+   "word": " w336",
+   "probability": 0.9
+  },
+  {
+   "start": 534.395,
+   "end": 534.568,
+   "word": " w337",
+   "probability": 0.9
+  },
+  {
+   "start": 536.242,
+   "end": 536.365,
+   "word": " w338",
+   "probability": 0.9
+  },
+  {
+   "start": 536.365,
+   "end": 536.828,
+   "word": " w339",
+   "probability": 0.9
+  },
+  {
+   "start": 538.667,
+   "end": 539.19,
+   "word": " w340",
+   "probability": 0.9
+  },
+  {
+   "start": 539.802,
+   "end": 540.016,
+   "word": " w341",
+   "probability": 0.9
+  },
+  {
+   "start": 541.609,
+   "end": 542.144,
+   "word": " w342",
+   "probability": 0.9
+  },
+  {
+   "start": 543.905,
+   "end": 544.417,
+   "word": " w343",
+   "probability": 0.9
+  },
+  {
+   "start": 544.571,
+   "end": 545.148,
+   "word": " w344",
+   "probability": 0.9
+  },
+  {
+   "start": 546.23,
+   "end": 546.402,
+   "word": " w345",
+   "probability": 0.9
+  },
+  {
+   "start": 547.949,
+   "end": 548.35,
+   "word": " w346",
+   "probability": 0.9
+  },
+  {
+   "start": 549.247,
+   "end": 549.607,
+   "word": " w347",
+   "probability": 0.9
+  },
+  {
+   "start": 550.472,
+   "end": 550.618,
+   "word": " w348",
+   "probability": 0.9
+  },
+  {
+   "start": 551.571,
+   "end": 552.167,
+   "word": " w349",
+   "probability": 0.9
+  },
+  {
+   "start": 552.643,
+   "end": 552.747,
+   "word": " w350",
+   "probability": 0.9
+  },
+  {
+   "start": 554.574,
+   "end": 554.798,
+   "word": " w351",
+   "probability": 0.9
+  },
+  {
+   "start": 554.798,
+   "end": 554.97,
+   "word": " w352",
+   "probability": 0.9
+  },
+  {
+   "start": 555.669,
+   "end": 556.001,
+   "word": " w353",
+   "probability": 0.9
+  },
+  {
+   "start": 558.001,
+   "end": 558.524,
+   "word": " w354",
+   "probability": 0.9
+  },
+  {
+   "start": 558.986,
+   "end": 559.19,
+   "word": " w355",
+   "probability": 0.9
+  },
+  {
+   "start": 560.798,
+   "end": 561.073,
+   "word": " w356",
+   "probability": 0.9
+  },
+  {
+   "start": 561.641,
+   "end": 561.779,
+   "word": " w357",
+   "probability": 0.9
+  },
+  {
+   "start": 567.457,
+   "end": 567.896,
+   "word": " w358",
+   "probability": 0.9
+  },
+  {
+   "start": 571.354,
+   "end": 571.94,
+   "word": " w359",
+   "probability": 0.9
+  },
+  {
+   "start": 572.619,
+   "end": 573.172,
+   "word": " w360",
+   "probability": 0.9
+  },
+  {
+   "start": 574.153,
+   "end": 574.409,
+   "word": " w361",
+   "probability": 0.9
+  },
+  {
+   "start": 574.815,
+   "end": 575.179,
+   "word": " w362",
+   "probability": 0.9
+  },
+  {
+   "start": 575.179,
+   "end": 575.35,
+   "word": " w363",
+   "probability": 0.9
+  },
+  {
+   "start": 577.054,
+   "end": 577.209,
+   "word": " w364",
+   "probability": 0.9
+  },
+  {
+   "start": 578.635,
+   "end": 578.83,
+   "word": " w365",
+   "probability": 0.9
+  },
+  {
+   "start": 578.83,
+   "end": 579.399,
+   "word": " w366",
+   "probability": 0.9
+  },
+  {
+   "start": 580.859,
+   "end": 581.153,
+   "word": " w367",
+   "probability": 0.9
+  },
+  {
+   "start": 581.176,
+   "end": 581.605,
+   "word": " w368",
+   "probability": 0.9
+  },
+  {
+   "start": 583.605,
+   "end": 583.856,
+   "word": " w369",
+   "probability": 0.9
+  },
+  {
+   "start": 584.324,
+   "end": 584.607,
+   "word": " w370",
+   "probability": 0.9
+  },
+  {
+   "start": 585.322,
+   "end": 585.782,
+   "word": " w371",
+   "probability": 0.9
+  },
+  {
+   "start": 592.787,
+   "end": 593.22,
+   "word": " w372",
+   "probability": 0.9
+  },
+  {
+   "start": 593.22,
+   "end": 593.459,
+   "word": " w373",
+   "probability": 0.9
+  },
+  {
+   "start": 594.357,
+   "end": 594.818,
+   "word": " w374",
+   "probability": 0.9
+  },
+  {
+   "start": 595.425,
+   "end": 595.505,
+   "word": " w375",
+   "probability": 0.9
+  },
+  {
+   "start": 597.365,
+   "end": 597.71,
+   "word": " w376",
+   "probability": 0.9
+  },
+  {
+   "start": 599.71,
+   "end": 600.116,
+   "word": " w377",
+   "probability": 0.9
+  },
+  {
+   "start": 601.79,
+   "end": 602.08,
+   "word": " w378",
+   "probability": 0.9
+  },
+  {
+   "start": 602.917,
+   "end": 603.127,
+   "word": " w379",
+   "probability": 0.9
+  },
+  {
+   "start": 603.723,
+   "end": 603.834,
+   "word": " w380",
+   "probability": 0.9
+  },
+  {
+   "start": 605.462,
+   "end": 605.756,
+   "word": " w381",
+   "probability": 0.9
+  },
+  {
+   "start": 605.756,
+   "end": 605.924,
+   "word": " w382",
+   "probability": 0.9
+  },
+  {
+   "start": 609.009,
+   "end": 609.555,
+   "word": " w383",
+   "probability": 0.9
+  },
+  {
+   "start": 610.305,
+   "end": 610.758,
+   "word": " w384",
+   "probability": 0.9
+  },
+  {
+   "start": 610.793,
+   "end": 611.062,
+   "word": " w385",
+   "probability": 0.9
+  },
+  {
+   "start": 613.062,
+   "end": 613.582,
+   "word": " w386",
+   "probability": 0.9
+  },
+  {
+   "start": 617.558,
+   "end": 617.861,
+   "word": " w387",
+   "probability": 0.9
+  },
+  {
+   "start": 619.861,
+   "end": 620.194,
+   "word": " w388",
+   "probability": 0.9
+  },
+  {
+   "start": 620.801,
+   "end": 621.209,
+   "word": " w389",
+   "probability": 0.9
+  },
+  {
+   "start": 621.227,
+   "end": 621.752,
+   "word": " w390",
+   "probability": 0.9
+  },
+  {
+   "start": 622.899,
+   "end": 623.182,
+   "word": " w391",
+   "probability": 0.9
+  },
+  {
+   "start": 623.781,
+   "end": 623.894,
+   "word": " w392",
+   "probability": 0.9
+  },
+  {
+   "start": 624.897,
+   "end": 625.389,
+   "word": " w393",
+   "probability": 0.9
+  },
+  {
+   "start": 625.812,
+   "end": 626.396,
+   "word": " w394",
+   "probability": 0.9
+  },
+  {
+   "start": 627.548,
+   "end": 628.127,
+   "word": " w395",
+   "probability": 0.9
+  },
+  {
+   "start": 629.555,
+   "end": 629.771,
+   "word": " w396",
+   "probability": 0.9
+  },
+  {
+   "start": 630.521,
+   "end": 630.712,
+   "word": " w397",
+   "probability": 0.9
+  },
+  {
+   "start": 631.462,
+   "end": 631.709,
+   "word": " w398",
+   "probability": 0.9
+  },
+  {
+   "start": 631.787,
+   "end": 632.01,
+   "word": " w399",
+   "probability": 0.9
+  },
+  {
+   "start": 637.01,
+   "end": 637.5095,
+   "word": " edge0",
+   "probability": 0.9
+  },
+  {
+   "start": 640.0105,
+   "end": 640.5115,
+   "word": " edge1",
+   "probability": 0.9
+  }
+ ],
+ "cases": [
+  {
+   "threshold": 2.0,
+   "ranges": [
+    [
+     0.25,
+     8.38
+    ],
+    [
+     15.027,
+     17.586
+    ],
+    [
+     25.826,
+     36.647
+    ],
+    [
+     38.647,
+     53.505
+    ],
+    [
+     57.27,
+     59.17
+    ],
+    [
+     68.019,
+     82.853
+    ],
+    [
+     85.645,
+     88.673
+    ],
+    [
+     90.673,
+     103.465
+    ],
+    [
+     111.352,
+     126.739
+    ],
+    [
+     130.789,
+     136.941
+    ],
+    [
+     144.276,
+     147.386
+    ],
+    [
+     149.386,
+     150.507
+    ],
+    [
+     152.507,
+     161.381
+    ],
+    [
+     163.744,
+     165.624
+    ],
+    [
+     171.008,
+     178.993
+    ],
+    [
+     180.993,
+     194.858
+    ],
+    [
+     202.41,
+     207.896
+    ],
+    [
+     209.896,
+     218.889
+    ],
+    [
+     227.09,
+     232.489
+    ],
+    [
+     239.212,
+     249.384
+    ],
+    [
+     256.36,
+     273.453
+    ],
+    [
+     275.453,
+     291.38
+    ],
+    [
+     295.239,
+     297.469
+    ],
+    [
+     299.469,
+     302.502
+    ],
+    [
+     304.502,
+     307.147
+    ],
+    [
+     312.142,
+     313.575
+    ],
+    [
+     316.009,
+     330.517
+    ],
+    [
+     332.517,
+     335.96
+    ],
+    [
+     342.317,
+     353.424
+    ],
+    [
+     355.424,
+     360.142
+    ],
+    [
+     362.142,
+     366.036
+    ],
+    [
+     368.89,
+     379.907
+    ],
+    [
+     381.907,
+     382.022
+    ],
+    [
+     384.022,
+     387.071
+    ],
+    [
+     394.803,
+     436.502
+    ],
+    [
+     438.502,
+     441.304
+    ],
+    [
+     444.955,
+     445.447
+    ],
+    [
+     447.447,
+     455.533
+    ],
+    [
+     463.432,
+     463.962
+    ],
+    [
+     466.593,
+     489.265
+    ],
+    [
+     491.265,
+     512.828
+    ],
+    [
+     514.828,
+     516.454
+    ],
+    [
+     524.428,
+     526.466
+    ],
+    [
+     528.466,
+     556.001
+    ],
+    [
+     558.001,
+     561.779
+    ],
+    [
+     567.457,
+     567.896
+    ],
+    [
+     571.354,
+     581.605
+    ],
+    [
+     583.605,
+     585.782
+    ],
+    [
+     592.787,
+     597.71
+    ],
+    [
+     599.71,
+     605.924
+    ],
+    [
+     609.009,
+     611.062
+    ],
+    [
+     613.062,
+     613.582
+    ],
+    [
+     617.558,
+     617.861
+    ],
+    [
+     619.861,
+     632.01
+    ],
+    [
+     637.01,
+     637.5095
+    ],
+    [
+     640.0105,
+     640.5115
+    ]
+   ],
+   "clip_ids": [
+    "golden__00-00-00.250__00-00-08.380",
+    "golden__00-00-15.027__00-00-17.586",
+    "golden__00-00-25.826__00-00-36.647",
+    "golden__00-00-38.647__00-00-53.505",
+    "golden__00-00-57.270__00-00-59.170",
+    "golden__00-01-08.019__00-01-22.853",
+    "golden__00-01-25.645__00-01-28.673",
+    "golden__00-01-30.673__00-01-43.465",
+    "golden__00-01-51.352__00-02-06.739",
+    "golden__00-02-10.789__00-02-16.941",
+    "golden__00-02-24.276__00-02-27.386",
+    "golden__00-02-29.386__00-02-30.507",
+    "golden__00-02-32.507__00-02-41.381",
+    "golden__00-02-43.744__00-02-45.624",
+    "golden__00-02-51.008__00-02-58.993",
+    "golden__00-03-00.993__00-03-14.858",
+    "golden__00-03-22.410__00-03-27.896",
+    "golden__00-03-29.896__00-03-38.889",
+    "golden__00-03-47.090__00-03-52.489",
+    "golden__00-03-59.212__00-04-09.384",
+    "golden__00-04-16.360__00-04-33.453",
+    "golden__00-04-35.453__00-04-51.380",
+    "golden__00-04-55.239__00-04-57.469",
+    "golden__00-04-59.469__00-05-02.502",
+    "golden__00-05-04.502__00-05-07.147",
+    "golden__00-05-12.142__00-05-13.575",
+    "golden__00-05-16.009__00-05-30.517",
+    "golden__00-05-32.517__00-05-35.960",
+    "golden__00-05-42.317__00-05-53.424",
+    "golden__00-05-55.424__00-06-00.142",
+    "golden__00-06-02.142__00-06-06.036",
+    "golden__00-06-08.890__00-06-19.907",
+    "golden__00-06-21.907__00-06-22.022",
+    "golden__00-06-24.022__00-06-27.071",
+    "golden__00-06-34.803__00-07-16.502",
+    "golden__00-07-18.502__00-07-21.304",
+    "golden__00-07-24.955__00-07-25.447",
+    "golden__00-07-27.447__00-07-35.533",
+    "golden__00-07-43.432__00-07-43.962",
+    "golden__00-07-46.593__00-08-09.265",
+    "golden__00-08-11.265__00-08-32.828",
+    "golden__00-08-34.828__00-08-36.454",
+    "golden__00-08-44.428__00-08-46.466",
+    "golden__00-08-48.466__00-09-16.001",
+    "golden__00-09-18.001__00-09-21.779",
+    "golden__00-09-27.457__00-09-27.896",
+    "golden__00-09-31.354__00-09-41.605",
+    "golden__00-09-43.605__00-09-45.782",
+    "golden__00-09-52.787__00-09-57.710",
+    "golden__00-09-59.710__00-10-05.924",
+    "golden__00-10-09.009__00-10-11.062",
+    "golden__00-10-13.062__00-10-13.582",
+    "golden__00-10-17.558__00-10-17.861",
+    "golden__00-10-19.861__00-10-32.010",
+    "golden__00-10-37.010__00-10-37.510",
+    "golden__00-10-40.010__00-10-40.512"
+   ],
+   "texts": [
+    "w0 w1 w2 w3 w4 w5 w6 w7",
+    "w8 w9",
+    "w10 w11 w12 w13 w14 w15 w16 w17 w18",
+    "w19 w20 w21 w22 w23 w24 w25 w26 w27 w28 w29",
+    "w30 w31",
+    "w32 w33 w34 w35 w36 w37 w38 w39 w40 w41 w42 w43 w44",
+    "w45 w46 w47",
+    "w48 w49 w50 w51 w52 w53 w54 w55 w56 w57 w58",
+    "w59 w60 w61 w62 w63 w64 w65 w66 w67 w68 w69 w70 w71 w72 w73 w74",
+    "w75 w76 w77 w78 w79 w80",
+    "w81 w82 w83",
+    "w84 w85",
+    "w86 w87 w88 w89 w90 w91 w92 w93 w94",
+    "w95 w96",
+    "w97 w98 w99 w100 w101 w102 w103",
+    "w104 w105 w106 w107 w108 w109 w110 w111 w112 w113 w114 w115",
+    "w116 w117 w118 w119 w120 w121 w122 w123",
+    "w124 w125 w126 w127 w128 w129 w130 w131",
+    "w132 w133 w134 w135 w136",
+    "w137 w138 w139 w140 w141 w142 w143 w144 w145 w146",
+    "w147 w148 w149 w150 w151 w152 w153 w154 w155 w156 w157 w158 w159 w160 w161 w162 w163",
+    "w164 w165 w166 w167 w168 w169 w170 w171 w172 w173 w174 w175 w176 w177 w178",
+    "w179 w180 w181",
+    "w182 w183 w184 w185",
+    "w186 w187",
+    "w188 w189",
+    "w190 w191 w192 w193 w194 w195 w196 w197 w198 w199 w200 w201",
+    "w202 w203 w204 w205",
+    "w206 w207 w208 w209 w210 w211 w212 w213 w214",
+    "w215 w216 w217 w218 w219",
+    "w220 w221 w222 w223 w224",
+    "w225 w226 w227 w228 w229 w230 w231 w232 w233 w234",
+    "w235",
+    "w236 w237 w238",
+    "w239 w240 w241 w242 w243 w244 w245 w246 w247 w248 w249 w250 w251 w252 w253 w254 w255 w256 w257 w258 w259 w260 w261 w262 w263 w264 w265 w266 w267 w268 w269 w270 w271 w272 w273",
+    "w274 w275 w276",
+    "w277",
+    "w278 w279 w280 w281 w282 w283 w284 w285 w286",
+    "w287",
+    "w288 w289 w290 w291 w292 w293 w294 w295 w296 w297 w298 w299 w300 w301 w302 w303 w304 w305",
+    "w306 w307 w308 w309 w310 w311 w312 w313 w314 w315 w316 w317 w318 w319 w320 w321 w322 w323 w324 w325 w326 w327",
+    "w328 w329",
+    "w330 w331 w332 w333",
+    "w334 w335 w336 w337 w338 w339 w340 w341 w342 w343 w344 w345 w346 w347 w348 w349 w350 w351 w352 w353",
+    "w354 w355 w356 w357",
+    "w358",
+    "w359 w360 w361 w362 w363 w364 w365 w366 w367 w368",
+    "w369 w370 w371",
+    "w372 w373 w374 w375 w376",
+    "w377 w378 w379 w380 w381 w382",
+    "w383 w384 w385",
+    "w386",
+    "w387",
+    "w388 w389 w390 w391 w392 w393 w394 w395 w396 w397 w398 w399",
+    "edge0",
+    "edge1"
+   ]
+  },
+  {
+   "threshold": 0.75,
+   "ranges": [
+    [
+     0.25,
+     0.342
+    ],
+    [
+     1.906,
+     2.331
+    ],
+    [
+     4.171,
+     6.322
+    ],
+    [
+     7.816,
+     8.38
+    ],
+    [
+     15.027,
+     15.345
+    ],
+    [
+     17.345,
+     17.586
+    ],
+    [
+     25.826,
+     27.129
+    ],
+    [
+     28.536,
+     30.077
+    ],
+    [
+     31.634,
+     32.13
+    ],
+    [
+     33.012,
+     33.16
+    ],
+    [
+     34.148,
+     34.602
+    ],
+    [
+     36.308,
+     36.647
+    ],
+    [
+     38.647,
+     39.008
+    ],
+    [
+     40.78,
+     41.368
+    ],
+    [
+     42.55,
+     42.66
+    ],
+    [
+     44.528,
+     46.135
+    ],
+    [
+     46.885,
+     47.231
+    ],
+    [
+     48.838,
+     49.275
+    ],
+    [
+     50.595,
+     51.184
+    ],
+    [
+     52.348,
+     53.505
+    ],
+    [
+     57.27,
+     57.364
+    ],
+    [
+     58.68,
+     59.17
+    ],
+    [
+     68.019,
+     68.503
+    ],
+    [
+     69.253,
+     69.676
+    ],
+    [
+     71.482,
+     71.723
+    ],
+    [
+     72.997,
+     73.557
+    ],
+    [
+     74.375,
+     75.415
+    ],
+    [
+     76.821,
+     77.186
+    ],
+    [
+     77.951,
+     78.241
+    ],
+    [
+     78.991,
+     79.228
+    ],
+    [
+     80.762,
+     81.696
+    ],
+    [
+     82.491,
+     82.853
+    ],
+    [
+     85.645,
+     85.795
+    ],
+    [
+     87.364,
+     88.673
+    ],
+    [
+     90.673,
+     92.539
+    ],
+    [
+     94.175,
+     94.332
+    ],
+    [
+     95.082,
+     95.676
+    ],
+    [
+     96.426,
+     96.563
+    ],
+    [
+     97.555,
+     97.762
+    ],
+    [
+     99.311,
+     99.851
+    ],
+    [
+     101.668,
+     103.465
+    ],
+    [
+     111.352,
+     112.799
+    ],
+    [
+     113.673,
+     115.316
+    ],
+    [
+     116.066,
+     117.25
+    ],
+    [
+     118.071,
+     118.562
+    ],
+    [
+     119.506,
+     120.147
+    ],
+    [
+     120.931,
+     121.363
+    ],
+    [
+     122.292,
+     122.673
+    ],
+    [
+     123.423,
+     123.571
+    ],
+    [
+     124.331,
+     124.435
+    ],
+    [
+     126.174,
+     126.739
+    ],
+    [
+     130.789,
+     132.553
+    ],
+    [
+     133.496,
+     133.85
+    ],
+    [
+     134.891,
+     135.452
+    ],
+    [
+     136.422,
+     136.941
+    ],
+    [
+     144.276,
+     144.633
+    ],
+    [
+     145.634,
+     146.185
+    ],
+    [
+     147.079,
+     147.386
+    ],
+    [
+     149.386,
+     150.507
+    ],
+    [
+     152.507,
+     152.84
+    ],
+    [
+     154.132,
+     154.312
+    ],
+    [
+     155.636,
+     156.131
+    ],
+    [
+     157.172,
+     161.381
+    ],
+    [
+     163.744,
+     164.261
+    ],
+    [
+     165.506,
+     165.624
+    ],
+    [
+     171.008,
+     172.466
+    ],
+    [
+     173.546,
+     174.34
+    ],
+    [
+     175.947,
+     176.827
+    ],
+    [
+     178.618,
+     178.993
+    ],
+    [
+     180.993,
+     181.455
+    ],
+    [
+     182.39,
+     182.871
+    ],
+    [
+     184.681,
+     184.98
+    ],
+    [
+     185.898,
+     186.049
+    ],
+    [
+     186.873,
+     187.206
+    ],
+    [
+     188.476,
+     190.361
+    ],
+    [
+     191.357,
+     193.421
+    ],
+    [
+     194.46,
+     194.858
+    ],
+    [
+     202.41,
+     203.785
+    ],
+    [
+     204.871,
+     205.396
+    ],
+    [
+     206.146,
+     206.234
+    ],
+    [
+     207.343,
+     207.896
+    ],
+    [
+     209.896,
+     210.486
+    ],
+    [
+     211.915,
+     212.463
+    ],
+    [
+     213.685,
+     214.092
+    ],
+    [
+     215.96,
+     216.536
+    ],
+    [
+     217.357,
+     218.889
+    ],
+    [
+     227.09,
+     228.95
+    ],
+    [
+     230.239,
+     230.447
+    ],
+    [
+     232.131,
+     232.489
+    ],
+    [
+     239.212,
+     240.581
+    ],
+    [
+     241.331,
+     242.669
+    ],
+    [
+     243.807,
+     244.253
+    ],
+    [
+     246.12,
+     246.637
+    ],
+    [
+     247.73,
+     248.512
+    ],
+    [
+     249.276,
+     249.384
+    ],
+    [
+     256.36,
+     256.458
+    ],
+    [
+     258.074,
+     260.15
+    ],
+    [
+     260.9,
+     262.454
+    ],
+    [
+     263.538,
+     264.023
+    ],
+    [
+     265.393,
+     267.298
+    ],
+    [
+     268.072,
+     268.879
+    ],
+    [
+     270.574,
+     273.453
+    ],
+    [
+     275.453,
+     275.736
+    ],
+    [
+     276.877,
+     277.04
+    ],
+    [
+     278.192,
+     278.631
+    ],
+    [
+     279.381,
+     281.405
+    ],
+    [
+     282.571,
+     282.856
+    ],
+    [
+     284.007,
+     284.786
+    ],
+    [
+     285.98,
+     286.268
+    ],
+    [
+     287.771,
+     288.085
+    ],
+    [
+     289.17,
+     289.632
+    ],
+    [
+     290.382,
+     291.38
+    ],
+    [
+     295.239,
+     296.266
+    ],
+    [
+     297.184,
+     297.469
+    ],
+    [
+     299.469,
+     300.977
+    ],
+    [
+     302.398,
+     302.502
+    ],
+    [
+     304.502,
+     305.031
+    ],
+    [
+     306.786,
+     307.147
+    ],
+    [
+     312.142,
+     312.389
+    ],
+    [
+     313.27,
+     313.575
+    ],
+    [
+     316.009,
+     316.781
+    ],
+    [
+     317.803,
+     319.096
+    ],
+    [
+     320.788,
+     321.045
+    ],
+    [
+     322.654,
+     322.983
+    ],
+    [
+     323.733,
+     323.924
+    ],
+    [
+     325.291,
+     325.881
+    ],
+    [
+     327.716,
+     328.806
+    ],
+    [
+     330.316,
+     330.517
+    ],
+    [
+     332.517,
+     333.236
+    ],
+    [
+     334.853,
+     335.96
+    ],
+    [
+     342.317,
+     343.526
+    ],
+    [
+     344.569,
+     344.859
+    ],
+    [
+     345.687,
+     346.164
+    ],
+    [
+     347.64,
+     348.208
+    ],
+    [
+     349.192,
+     349.69
+    ],
+    [
+     350.455,
+     350.636
+    ],
+    [
+     352.113,
+     352.292
+    ],
+    [
+     353.294,
+     353.424
+    ],
+    [
+     355.424,
+     356.427
+    ],
+    [
+     358.132,
+     360.142
+    ],
+    [
+     362.142,
+     363.189
+    ],
+    [
+     364.903,
+     366.036
+    ],
+    [
+     368.89,
+     370.339
+    ],
+    [
+     371.294,
+     372.558
+    ],
+    [
+     373.925,
+     374.74
+    ],
+    [
+     375.501,
+     376.535
+    ],
+    [
+     378.391,
+     378.563
+    ],
+    [
+     379.313,
+     379.907
+    ],
+    [
+     381.907,
+     382.022
+    ],
+    [
+     384.022,
+     384.333
+    ],
+    [
+     385.238,
+     385.814
+    ],
+    [
+     386.724,
+     387.071
+    ],
+    [
+     394.803,
+     395.167
+    ],
+    [
+     395.929,
+     396.055
+    ],
+    [
+     397.619,
+     398.77
+    ],
+    [
+     400.053,
+     400.449
+    ],
+    [
+     401.199,
+     401.61
+    ],
+    [
+     403.159,
+     403.691
+    ],
+    [
+     404.441,
+     404.992
+    ],
+    [
+     406.24,
+     406.65
+    ],
+    [
+     408.054,
+     410.528
+    ],
+    [
+     412.222,
+     412.917
+    ],
+    [
+     414.357,
+     414.848
+    ],
+    [
+     415.655,
+     417.276
+    ],
+    [
+     418.554,
+     418.7
+    ],
+    [
+     419.902,
+     419.992
+    ],
+    [
+     421.188,
+     421.775
+    ],
+    [
+     422.74,
+     423.636
+    ],
+    [
+     424.386,
+     424.693
+    ],
+    [
+     425.453,
+     425.693
+    ],
+    [
+     426.443,
+     427.439
+    ],
+    [
+     428.753,
+     428.983
+    ],
+    [
+     430.446,
+     430.945
+    ],
+    [
+     432.738,
+     433.737
+    ],
+    [
+     434.487,
+     434.984
+    ],
+    [
+     436.275,
+     436.502
+    ],
+    [
+     438.502,
+     438.606
+    ],
+    [
+     439.795,
+     441.304
+    ],
+    [
+     444.955,
+     445.447
+    ],
+    [
+     447.447,
+     449.252
+    ],
+    [
+     450.729,
+     453.451
+    ],
+    [
+     455.216,
+     455.533
+    ],
+    [
+     463.432,
+     463.962
+    ],
+    [
+     466.593,
+     467.231
+    ],
+    [
+     468.441,
+     468.609
+    ],
+    [
+     469.724,
+     470.206
+    ],
+    [
+     470.966,
+     472.241
+    ],
+    [
+     473.22,
+     473.372
+    ],
+    [
+     475.157,
+     475.554
+    ],
+    [
+     477.06,
+     478.639
+    ],
+    [
+     479.744,
+     480.235
+    ],
+    [
+     481.669,
+     482.179
+    ],
+    [
+     483.55,
+     484.751
+    ],
+    [
+     486.584,
+     486.862
+    ],
+    [
+     487.612,
+     488.026
+    ],
+    [
+     488.872,
+     489.265
+    ],
+    [
+     491.265,
+     491.391
+    ],
+    [
+     492.144,
+     493.143
+    ],
+    [
+     493.893,
+     494.333
+    ],
+    [
+     495.53,
+     495.896
+    ],
+    [
+     496.646,
+     497.955
+    ],
+    [
+     499.325,
+     500.579
+    ],
+    [
+     501.443,
+     502.037
+    ],
+    [
+     502.787,
+     505.907
+    ],
+    [
+     506.874,
+     508.337
+    ],
+    [
+     509.662,
+     510.2
+    ],
+    [
+     511.03,
+     512.828
+    ],
+    [
+     514.828,
+     515.187
+    ],
+    [
+     515.937,
+     516.454
+    ],
+    [
+     524.428,
+     526.466
+    ],
+    [
+     528.466,
+     529.041
+    ],
+    [
+     530.899,
+     531.082
+    ],
+    [
+     532.861,
+     532.97
+    ],
+    [
+     534.395,
+     534.568
+    ],
+    [
+     536.242,
+     536.828
+    ],
+    [
+     538.667,
+     540.016
+    ],
+    [
+     541.609,
+     542.144
+    ],
+    [
+     543.905,
+     545.148
+    ],
+    [
+     546.23,
+     546.402
+    ],
+    [
+     547.949,
+     548.35
+    ],
+    [
+     549.247,
+     549.607
+    ],
+    [
+     550.472,
+     550.618
+    ],
+    [
+     551.571,
+     552.747
+    ],
+    [
+     554.574,
+     556.001
+    ],
+    [
+     558.001,
+     559.19
+    ],
+    [
+     560.798,
+     561.779
+    ],
+    [
+     567.457,
+     567.896
+    ],
+    [
+     571.354,
+     573.172
+    ],
+    [
+     574.153,
+     575.35
+    ],
+    [
+     577.054,
+     577.209
+    ],
+    [
+     578.635,
+     579.399
+    ],
+    [
+     580.859,
+     581.605
+    ],
+    [
+     583.605,
+     585.782
+    ],
+    [
+     592.787,
+     593.459
+    ],
+    [
+     594.357,
+     595.505
+    ],
+    [
+     597.365,
+     597.71
+    ],
+    [
+     599.71,
+     600.116
+    ],
+    [
+     601.79,
+     602.08
+    ],
+    [
+     602.917,
+     603.834
+    ],
+    [
+     605.462,
+     605.924
+    ],
+    [
+     609.009,
+     609.555
+    ],
+    [
+     610.305,
+     611.062
+    ],
+    [
+     613.062,
+     613.582
+    ],
+    [
+     617.558,
+     617.861
+    ],
+    [
+     619.861,
+     621.752
+    ],
+    [
+     622.899,
+     623.894
+    ],
+    [
+     624.897,
+     626.396
+    ],
+    [
+     627.548,
+     628.127
+    ],
+    [
+     629.555,
+     629.771
+    ],
+    [
+     630.521,
+     630.712
+    ],
+    [
+     631.462,
+     632.01
+    ],
+    [
+     637.01,
+     637.5095
+    ],
+    [
+     640.0105,
+     640.5115
+    ]
+   ],
+   "clip_ids": [
+    "golden__00-00-00.250__00-00-00.342",
+    "golden__00-00-01.906__00-00-02.331",
+    "golden__00-00-04.171__00-00-06.322",
+    "golden__00-00-07.816__00-00-08.380",
+    "golden__00-00-15.027__00-00-15.345",
+    "golden__00-00-17.345__00-00-17.586",
+    "golden__00-00-25.826__00-00-27.129",
+    "golden__00-00-28.536__00-00-30.077",
+    "golden__00-00-31.634__00-00-32.130",
+    "golden__00-00-33.012__00-00-33.160",
+    "golden__00-00-34.148__00-00-34.602",
+    "golden__00-00-36.308__00-00-36.647",
+    "golden__00-00-38.647__00-00-39.008",
+    "golden__00-00-40.780__00-00-41.368",
+    "golden__00-00-42.550__00-00-42.660",
+    "golden__00-00-44.528__00-00-46.135",
+    "golden__00-00-46.885__00-00-47.231",
+    "golden__00-00-48.838__00-00-49.275",
+    "golden__00-00-50.595__00-00-51.184",
+    "golden__00-00-52.348__00-00-53.505",
+    "golden__00-00-57.270__00-00-57.364",
+    "golden__00-00-58.680__00-00-59.170",
+    "golden__00-01-08.019__00-01-08.503",
+    "golden__00-01-09.253__00-01-09.676",
+    "golden__00-01-11.482__00-01-11.723",
+    "golden__00-01-12.997__00-01-13.557",
+    "golden__00-01-14.375__00-01-15.415",
+    "golden__00-01-16.821__00-01-17.186",
+    "golden__00-01-17.951__00-01-18.241",
+    "golden__00-01-18.991__00-01-19.228",
+    "golden__00-01-20.762__00-01-21.696",
+    "golden__00-01-22.491__00-01-22.853",
+    "golden__00-01-25.645__00-01-25.795",
+    "golden__00-01-27.364__00-01-28.673",
+    "golden__00-01-30.673__00-01-32.539",
+    "golden__00-01-34.175__00-01-34.332",
+    "golden__00-01-35.082__00-01-35.676",
+    "golden__00-01-36.426__00-01-36.563",
+    "golden__00-01-37.555__00-01-37.762",
+    "golden__00-01-39.311__00-01-39.851",
+    "golden__00-01-41.668__00-01-43.465",
+    "golden__00-01-51.352__00-01-52.799",
+    "golden__00-01-53.673__00-01-55.316",
+    "golden__00-01-56.066__00-01-57.250",
+    "golden__00-01-58.071__00-01-58.562",
+    "golden__00-01-59.506__00-02-00.147",
+    "golden__00-02-00.931__00-02-01.363",
+    "golden__00-02-02.292__00-02-02.673",
+    "golden__00-02-03.423__00-02-03.571",
+    "golden__00-02-04.331__00-02-04.435",
+    "golden__00-02-06.174__00-02-06.739",
+    "golden__00-02-10.789__00-02-12.553",
+    "golden__00-02-13.496__00-02-13.850",
+    "golden__00-02-14.891__00-02-15.452",
+    "golden__00-02-16.422__00-02-16.941",
+    "golden__00-02-24.276__00-02-24.633",
+    "golden__00-02-25.634__00-02-26.185",
+    "golden__00-02-27.079__00-02-27.386",
+    "golden__00-02-29.386__00-02-30.507",
+    "golden__00-02-32.507__00-02-32.840",
+    "golden__00-02-34.132__00-02-34.312",
+    "golden__00-02-35.636__00-02-36.131",
+    "golden__00-02-37.172__00-02-41.381",
+    "golden__00-02-43.744__00-02-44.261",
+    "golden__00-02-45.506__00-02-45.624",
+    "golden__00-02-51.008__00-02-52.466",
+    "golden__00-02-53.546__00-02-54.340",
+    "golden__00-02-55.947__00-02-56.827",
+    "golden__00-02-58.618__00-02-58.993",
+    "golden__00-03-00.993__00-03-01.455",
+    "golden__00-03-02.390__00-03-02.871",
+    "golden__00-03-04.681__00-03-04.980",
+    "golden__00-03-05.898__00-03-06.049",
+    "golden__00-03-06.873__00-03-07.206",
+    "golden__00-03-08.476__00-03-10.361",
+    "golden__00-03-11.357__00-03-13.421",
+    "golden__00-03-14.460__00-03-14.858",
+    "golden__00-03-22.410__00-03-23.785",
+    "golden__00-03-24.871__00-03-25.396",
+    "golden__00-03-26.146__00-03-26.234",
+    "golden__00-03-27.343__00-03-27.896",
+    "golden__00-03-29.896__00-03-30.486",
+    "golden__00-03-31.915__00-03-32.463",
+    "golden__00-03-33.685__00-03-34.092",
+    "golden__00-03-35.960__00-03-36.536",
+    "golden__00-03-37.357__00-03-38.889",
+    "golden__00-03-47.090__00-03-48.950",
+    "golden__00-03-50.239__00-03-50.447",
+    "golden__00-03-52.131__00-03-52.489",
+    "golden__00-03-59.212__00-04-00.581",
+    "golden__00-04-01.331__00-04-02.669",
+    "golden__00-04-03.807__00-04-04.253",
+    "golden__00-04-06.120__00-04-06.637",
+    "golden__00-04-07.730__00-04-08.512",
+    "golden__00-04-09.276__00-04-09.384",
+    "golden__00-04-16.360__00-04-16.458",
+    "golden__00-04-18.074__00-04-20.150",
+    "golden__00-04-20.900__00-04-22.454",
+    "golden__00-04-23.538__00-04-24.023",
+    "golden__00-04-25.393__00-04-27.298",
+    "golden__00-04-28.072__00-04-28.879",
+    "golden__00-04-30.574__00-04-33.453",
+    "golden__00-04-35.453__00-04-35.736",
+    "golden__00-04-36.877__00-04-37.040",
+    "golden__00-04-38.192__00-04-38.631",
+    "golden__00-04-39.381__00-04-41.405",
+    "golden__00-04-42.571__00-04-42.856",
+    "golden__00-04-44.007__00-04-44.786",
+    "golden__00-04-45.980__00-04-46.268",
+    "golden__00-04-47.771__00-04-48.085",
+    "golden__00-04-49.170__00-04-49.632",
+    "golden__00-04-50.382__00-04-51.380",
+    "golden__00-04-55.239__00-04-56.266",
+    "golden__00-04-57.184__00-04-57.469",
+    "golden__00-04-59.469__00-05-00.977",
+    "golden__00-05-02.398__00-05-02.502",
+    "golden__00-05-04.502__00-05-05.031",
+    "golden__00-05-06.786__00-05-07.147",
+    "golden__00-05-12.142__00-05-12.389",
+    "golden__00-05-13.270__00-05-13.575",
+    "golden__00-05-16.009__00-05-16.781",
+    "golden__00-05-17.803__00-05-19.096",
+    "golden__00-05-20.788__00-05-21.045",
+    "golden__00-05-22.654__00-05-22.983",
+    "golden__00-05-23.733__00-05-23.924",
+    "golden__00-05-25.291__00-05-25.881",
+    "golden__00-05-27.716__00-05-28.806",
+    "golden__00-05-30.316__00-05-30.517",
+    "golden__00-05-32.517__00-05-33.236",
+    "golden__00-05-34.853__00-05-35.960",
+    "golden__00-05-42.317__00-05-43.526",
+    "golden__00-05-44.569__00-05-44.859",
+    "golden__00-05-45.687__00-05-46.164",
+    "golden__00-05-47.640__00-05-48.208",
+    "golden__00-05-49.192__00-05-49.690",
+    "golden__00-05-50.455__00-05-50.636",
+    "golden__00-05-52.113__00-05-52.292",
+    "golden__00-05-53.294__00-05-53.424",
+    "golden__00-05-55.424__00-05-56.427",
+    "golden__00-05-58.132__00-06-00.142",
+    "golden__00-06-02.142__00-06-03.189",
+    "golden__00-06-04.903__00-06-06.036",
+    "golden__00-06-08.890__00-06-10.339",
+    "golden__00-06-11.294__00-06-12.558",
+    "golden__00-06-13.925__00-06-14.740",
+    "golden__00-06-15.501__00-06-16.535",
+    "golden__00-06-18.391__00-06-18.563",
+    "golden__00-06-19.313__00-06-19.907",
+    "golden__00-06-21.907__00-06-22.022",
+    "golden__00-06-24.022__00-06-24.333",
+    "golden__00-06-25.238__00-06-25.814",
+    "golden__00-06-26.724__00-06-27.071",
+    "golden__00-06-34.803__00-06-35.167",
+    "golden__00-06-35.929__00-06-36.055",
+    "golden__00-06-37.619__00-06-38.770",
+    "golden__00-06-40.053__00-06-40.449",
+    "golden__00-06-41.199__00-06-41.610",
+    "golden__00-06-43.159__00-06-43.691",
+    "golden__00-06-44.441__00-06-44.992",
+    "golden__00-06-46.240__00-06-46.650",
+    "golden__00-06-48.054__00-06-50.528",
+    "golden__00-06-52.222__00-06-52.917",
+    "golden__00-06-54.357__00-06-54.848",
+    "golden__00-06-55.655__00-06-57.276",
+    "golden__00-06-58.554__00-06-58.700",
+    "golden__00-06-59.902__00-06-59.992",
+    "golden__00-07-01.188__00-07-01.775",
+    "golden__00-07-02.740__00-07-03.636",
+    "golden__00-07-04.386__00-07-04.693",
+    "golden__00-07-05.453__00-07-05.693",
+    "golden__00-07-06.443__00-07-07.439",
+    "golden__00-07-08.753__00-07-08.983",
+    "golden__00-07-10.446__00-07-10.945",
+    "golden__00-07-12.738__00-07-13.737",
+    "golden__00-07-14.487__00-07-14.984",
+    "golden__00-07-16.275__00-07-16.502",
+    "golden__00-07-18.502__00-07-18.606",
+    "golden__00-07-19.795__00-07-21.304",
+    "golden__00-07-24.955__00-07-25.447",
+    "golden__00-07-27.447__00-07-29.252",
+    "golden__00-07-30.729__00-07-33.451",
+    "golden__00-07-35.216__00-07-35.533",
+    "golden__00-07-43.432__00-07-43.962",
+    "golden__00-07-46.593__00-07-47.231",
+    "golden__00-07-48.441__00-07-48.609",
+    "golden__00-07-49.724__00-07-50.206",
+    "golden__00-07-50.966__00-07-52.241",
+    "golden__00-07-53.220__00-07-53.372",
+    "golden__00-07-55.157__00-07-55.554",
+    "golden__00-07-57.060__00-07-58.639",
+    "golden__00-07-59.744__00-08-00.235",
+    "golden__00-08-01.669__00-08-02.179",
+    "golden__00-08-03.550__00-08-04.751",
+    "golden__00-08-06.584__00-08-06.862",
+    "golden__00-08-07.612__00-08-08.026",
+    "golden__00-08-08.872__00-08-09.265",
+    "golden__00-08-11.265__00-08-11.391",
+    "golden__00-08-12.144__00-08-13.143",
+    "golden__00-08-13.893__00-08-14.333",
+    "golden__00-08-15.530__00-08-15.896",
+    "golden__00-08-16.646__00-08-17.955",
+    "golden__00-08-19.325__00-08-20.579",
+    "golden__00-08-21.443__00-08-22.037",
+    "golden__00-08-22.787__00-08-25.907",
+    "golden__00-08-26.874__00-08-28.337",
+    "golden__00-08-29.662__00-08-30.200",
+    "golden__00-08-31.030__00-08-32.828",
+    "golden__00-08-34.828__00-08-35.187",
+    "golden__00-08-35.937__00-08-36.454",
+    "golden__00-08-44.428__00-08-46.466",
+    "golden__00-08-48.466__00-08-49.041",
+    "golden__00-08-50.899__00-08-51.082",
+    "golden__00-08-52.861__00-08-52.970",
+    "golden__00-08-54.395__00-08-54.568",
+    "golden__00-08-56.242__00-08-56.828",
+    "golden__00-08-58.667__00-09-00.016",
+    "golden__00-09-01.609__00-09-02.144",
+    "golden__00-09-03.905__00-09-05.148",
+    "golden__00-09-06.230__00-09-06.402",
+    "golden__00-09-07.949__00-09-08.350",
+    "golden__00-09-09.247__00-09-09.607",
+    "golden__00-09-10.472__00-09-10.618",
+    "golden__00-09-11.571__00-09-12.747",
+    "golden__00-09-14.574__00-09-16.001",
+    "golden__00-09-18.001__00-09-19.190",
+    "golden__00-09-20.798__00-09-21.779",
+    "golden__00-09-27.457__00-09-27.896",
+    "golden__00-09-31.354__00-09-33.172",
+    "golden__00-09-34.153__00-09-35.350",
+    "golden__00-09-37.054__00-09-37.209",
+    "golden__00-09-38.635__00-09-39.399",
+    "golden__00-09-40.859__00-09-41.605",
+    "golden__00-09-43.605__00-09-45.782",
+    "golden__00-09-52.787__00-09-53.459",
+    "golden__00-09-54.357__00-09-55.505",
+    "golden__00-09-57.365__00-09-57.710",
+    "golden__00-09-59.710__00-10-00.116",
+    "golden__00-10-01.790__00-10-02.080",
+    "golden__00-10-02.917__00-10-03.834",
+    "golden__00-10-05.462__00-10-05.924",
+    "golden__00-10-09.009__00-10-09.555",
+    "golden__00-10-10.305__00-10-11.062",
+    "golden__00-10-13.062__00-10-13.582",
+    "golden__00-10-17.558__00-10-17.861",
+    "golden__00-10-19.861__00-10-21.752",
+    "golden__00-10-22.899__00-10-23.894",
+    "golden__00-10-24.897__00-10-26.396",
+    "golden__00-10-27.548__00-10-28.127",
+    "golden__00-10-29.555__00-10-29.771",
+    "golden__00-10-30.521__00-10-30.712",
+    "golden__00-10-31.462__00-10-32.010",
+    "golden__00-10-37.010__00-10-37.510",
+    "golden__00-10-40.010__00-10-40.512"
+   ],
+   "texts": [
+    "w0",
+    "w1 w2",
+    "w3 w4 w5 w6",
+    "w7",
+    "w8",
+    "w9",
+    "w10 w11",
+    "w12 w13 w14",
+    "w15",
+    "w16",
+    "w17",
+    "w18",
+    "w19",
+    "w20",
+    "w21",
+    "w22 w23",
+    "w24",
+    "w25",
+    "w26 w27",
+    "w28 w29",
+    "w30",
+    "w31",
+    "w32",
+    "w33",
+    "w34",
+    "w35",
+    "w36 w37 w38",
+    "w39",
+    "w40",
+    "w41",
+    "w42 w43",
+    "w44",
+    "w45",
+    "w46 w47",
+    "w48 w49 w50 w51",
+    "w52",
+    "w53",
+    "w54",
+    "w55",
+    "w56",
+    "w57 w58",
+    "w59 w60 w61",
+    "w62 w63 w64",
+    "w65 w66",
+    "w67",
+    "w68 w69",
+    "w70",
+    "w71",
+    "w72",
+    "w73",
+    "w74",
+    "w75 w76 w77",
+    "w78",
+    "w79",
+    "w80",
+    "w81",
+    "w82",
+    "w83",
+    "w84 w85",
+    "w86",
+    "w87",
+    "w88 w89",
+    "w90 w91 w92 w93 w94",
+    "w95",
+    "w96",
+    "w97 w98",
+    "w99 w100",
+    "w101 w102",
+    "w103",
+    "w104",
+    "w105",
+    "w106",
+    "w107",
+    "w108",
+    "w109 w110 w111",
+    "w112 w113 w114",
+    "w115",
+    "w116 w117 w118 w119",
+    "w120 w121",
+    "w122",
+    "w123",
+    "w124",
+    "w125 w126",
+    "w127",
+    "w128",
+    "w129 w130 w131",
+    "w132 w133 w134",
+    "w135",
+    "w136",
+    "w137 w138",
+    "w139 w140",
+    "w141",
+    "w142",
+    "w143 w144 w145",
+    "w146",
+    "w147",
+    "w148 w149 w150",
+    "w151 w152",
+    "w153",
+    "w154 w155 w156",
+    "w157 w158 w159",
+    "w160 w161 w162 w163",
+    "w164",
+    "w165",
+    "w166",
+    "w167 w168 w169",
+    "w170",
+    "w171 w172",
+    "w173",
+    "w174",
+    "w175",
+    "w176 w177 w178",
+    "w179 w180",
+    "w181",
+    "w182 w183 w184",
+    "w185",
+    "w186",
+    "w187",
+    "w188",
+    "w189",
+    "w190 w191",
+    "w192 w193",
+    "w194",
+    "w195 w196",
+    "w197",
+    "w198",
+    "w199 w200",
+    "w201",
+    "w202 w203",
+    "w204 w205",
+    "w206 w207",
+    "w208",
+    "w209",
+    "w210",
+    "w211",
+    "w212",
+    "w213",
+    "w214",
+    "w215 w216",
+    "w217 w218 w219",
+    "w220 w221 w222",
+    "w223 w224",
+    "w225 w226",
+    "w227 w228",
+    "w229 w230",
+    "w231 w232",
+    "w233",
+    "w234",
+    "w235",
+    "w236",
+    "w237",
+    "w238",
+    "w239",
+    "w240",
+    "w241 w242",
+    "w243",
+    "w244",
+    "w245",
+    "w246 w247",
+    "w248",
+    "w249 w250 w251 w252",
+    "w253 w254",
+    "w255",
+    "w256 w257 w258",
+    "w259",
+    "w260",
+    "w261",
+    "w262 w263",
+    "w264",
+    "w265",
+    "w266 w267",
+    "w268",
+    "w269",
+    "w270 w271",
+    "w272",
+    "w273",
+    "w274",
+    "w275 w276",
+    "w277",
+    "w278 w279 w280",
+    "w281 w282 w283 w284",
+    "w285 w286",
+    "w287",
+    "w288 w289",
+    "w290",
+    "w291",
+    "w292 w293",
+    "w294",
+    "w295",
+    "w296 w297 w298",
+    "w299",
+    "w300",
+    "w301 w302",
+    "w303",
+    "w304",
+    "w305",
+    "w306",
+    "w307 w308",
+    "w309",
+    "w310",
+    "w311 w312",
+    "w313 w314",
+    "w315",
+    "w316 w317 w318 w319 w320",
+    "w321 w322",
+    "w323",
+    "w324 w325 w326 w327",
+    "w328",
+    "w329",
+    "w330 w331 w332 w333",
+    "w334",
+    "w335",
+    "w336",
+    "w337",
+    "w338 w339",
+    "w340 w341",
+    "w342",
+    "w343 w344",
+    "w345",
+    "w346",
+    "w347",
+    "w348",
+    "w349 w350",
+    "w351 w352 w353",
+    "w354 w355",
+    "w356 w357",
+    "w358",
+    "w359 w360",
+    "w361 w362 w363",
+    "w364",
+    "w365 w366",
+    "w367 w368",
+    "w369 w370 w371",
+    "w372 w373",
+    "w374 w375",
+    "w376",
+    "w377",
+    "w378",
+    "w379 w380",
+    "w381 w382",
+    "w383",
+    "w384 w385",
+    "w386",
+    "w387",
+    "w388 w389 w390",
+    "w391 w392",
+    "w393 w394",
+    "w395",
+    "w396",
+    "w397",
+    "w398 w399",
+    "edge0",
+    "edge1"
+   ]
+  }
+ ]
+}

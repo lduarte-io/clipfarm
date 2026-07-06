@@ -96,6 +96,9 @@ let package = Package(
         .testTarget(
             name: "CFDomainTests",
             dependencies: ["CFDomain", "CFTestSupport"],
+            // segmentation-golden.json: reference-implementation output for
+            // the cross-implementation golden master (scripts/gen_segmentation_golden.py).
+            resources: [.copy("Resources")],
             swiftSettings: kitSwiftSettings
         ),
         .testTarget(
