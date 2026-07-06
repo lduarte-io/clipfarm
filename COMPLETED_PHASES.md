@@ -4,6 +4,68 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 ---
 
+## Phase N0 — Toolchain & skeleton (native rewrite)
+
+**Manual verify: DEFERRED** (N0 tier = auto-continue; queue for the next hard stop). Checklist for Lillian:
+
+1. `open mac/ClipFarm.xcodeproj` → Run: app launches, shows the six-item sidebar (Library / Project / Script / Attempts / Brief / Settings) and the right-side inspector pane with a "Preview" placeholder + toolbar toggle.
+2. `cd mac/ClipFarmKit && swift test` → 6 tests green.
+3. `cd mac && xcodebuild -scheme ClipFarm -configuration Debug build | xcbeautify -q` → clean.
+4. Drop any stray `.swift` file under `mac/ClipFarm/`, rebuild — it compiles with zero pbxproj edits (pre-verified programmatically; see below).
+
+**Built (2026-07-05):** the native stack end-to-end, no features — plan `NATIVE_REWRITE_PLAN.md` §4/N0.
+
+- **`mac/ClipFarmKit`** — local SPM package, swift-tools 6.2, platform macOS 26. Five source targets (CFDomain / CFStore / CFMedia / CFLLM / CFExport, each a one-file module marker documenting its future contents) + five Swift Testing test targets. **Isolation policy per mac/CLAUDE.md (SE-0466):** every target (source *and* test) gets `kitSwiftSettings = [.defaultIsolation(nil), .enableUpcomingFeature("NonisolatedNonsendingByDefault"), .enableUpcomingFeature("InferIsolatedConformances")]` — explicit nonisolated default; the two upcoming features are the Approachable Concurrency deltas not already implied by Swift 6 language mode, keeping SE-0461 symmetric with the app target. GRDB dependency `from: "7.0.0"`, **resolved and committed at 7.11.1** (`Package.resolved` is the pin).
+- **`mac/ClipFarm/`** (app sources, buildable folder) — `App/` (ClipFarmApp with a `precondition(CFDomainModule.name == "CFDomain")` proving Kit linkage; RootView = NavigationSplitView with the six nav items; InspectorPane placeholder per D30 with a toolbar toggle; NavigationItem enum), `Features/<Page>/<Page>View.swift` × 6 (ContentUnavailableView placeholders only), minimal `Assets.xcassets` (AppIcon/AccentColor stubs). No `Shared/` yet — it appears with its first real file.
+- **`mac/ClipFarm.xcodeproj`** — **hand-authored pbxproj succeeded on the first build**; the File→New-Project fallback was not needed. objectVersion 77; `PBXFileSystemSynchronizedRootGroup` for `ClipFarm/` wired via `fileSystemSynchronizedGroups` (buildable folder — empty Sources/Resources phases, files discovered from disk); `XCLocalSwiftPackageReference` → `ClipFarmKit` + one `XCSwiftPackageProductDependency` in Frameworks. Shared scheme `ClipFarm` committed (`xcshareddata/xcschemes/`) so headless `xcodebuild -scheme ClipFarm` works in a fresh clone.
+- **Target settings:** `PRODUCT_BUNDLE_IDENTIFIER=org.duartes.clipfarm`, `MACOSX_DEPLOYMENT_TARGET=26.0`, `CODE_SIGN_STYLE=Automatic` + `DEVELOPMENT_TEAM=384925MZJ6` (bound to the real cert `Apple Development: lil@duartes.org (3Z7KXSJP8G)` — the N0 START cert-assist contingency was not needed; TCC grants will persist per finding 19f/D24), **non-sandboxed** (no entitlements file; verified post-build: the only entitlement is debug `get-task-allow`), `ENABLE_HARDENED_RUNTIME=YES`, `GENERATE_INFOPLIST_FILE=YES`, `SWIFT_VERSION=6.0`, `SWIFT_APPROACHABLE_CONCURRENCY=YES`, `SWIFT_DEFAULT_ACTOR_ISOLATION=MainActor` (app target only, per policy).
+- **`.gitignore`** — added `mac/ClipFarmKit/.build/`, `xcuserdata/`, `*.xcuserstate`, `DerivedData/`. Both `Package.resolved` files (Kit + xcodeproj workspace) are committed deliberately.
+- **`mac/CLAUDE.md`** — commands section updated: scheme name verified as `ClipFarm`, xcbeautify 3.2.1 installed (Homebrew), benign "multiple matching destinations" note documented.
+
+**Verification performed in-session (all green):**
+
+- `swift test` from `mac/ClipFarmKit`: **6/6 tests pass** (~9s cold build) — one module-marker test per target + `grdbOpensAnInMemoryDatabase` (in-memory `DatabaseQueue`, `SELECT 1`) proving the GRDB link.
+- `xcodebuild -scheme ClipFarm -configuration Debug build`: **BUILD SUCCEEDED**, zero compile warnings; signs with the real Apple Development identity; re-verified through `| xcbeautify -q`.
+- `codesign -dv --entitlements -`: Identifier `org.duartes.clipfarm`, TeamIdentifier `384925MZJ6`, hardened-runtime flag set, no sandbox entitlement.
+- **Buildable-folder proof:** a throwaway `Shared/BuildProbe.swift` was created, compiled into the target by the very next `xcodebuild` run with **zero pbxproj edits** (`SwiftCompile … BuildProbe.swift` in the log), then deleted.
+- **Launch smoke:** built binary launched headless, process stayed alive >3s with empty stderr, then killed (SIGTERM).
+
+**Environment recorded:** Xcode 26.3 (17C519), Swift 6.2.4, macOS 26.4.1, GRDB 7.11.1, xcbeautify 3.2.1.
+
+**PROVISIONAL calls (all logged in `QUESTIONS.md`, options in the PHASES.md N0 plan entry):** (1) GRDB pin = `from: "7.0.0"` + committed Package.resolved rather than `exact:`; (2) one umbrella `ClipFarmKit` product rather than five products; (3) minimal intra-Kit dependency graph (everything → CFDomain only; CFStore also → GRDB) — edges added when a phase needs them; (4) app-target Swift language mode 6.0 for app/package symmetry.
+
+**Deviations from plan:** none of substance. xcbeautify was missing from the machine and installed via Homebrew — treated as executing the documented CLI loop (dev tooling named in mac/CLAUDE.md), not as a new third-party dependency; flagged here for transparency. `swift test` output shows the toolchain's testing library targeting `arm64e-apple-macos14.0` — that is the prebuilt Swift Testing runtime's own deployment floor, not the package's (platform macOS 26 is enforced at compile time).
+
+**Test counts:** 6 smoke tests (baseline for N1; no ported tests yet by design).
+
+**Next-phase delta (N1, per the closeout ritual):** read in full; **no amendment to the N1 plan entry required.** Reality anchors for N1: GRDB is 7.11.1; `kitSwiftSettings` in `Package.swift` already applies the isolation policy to any new code in existing targets (N1 adds files, not targets); the five module-marker enums (`CFDomainModule` etc.) are placeholders N1 may keep or delete; smoke tests sit in `Tests/<Target>Tests/` ready to grow; the `swift test` loop is fast (~9s cold, sub-second incremental) so the ~90 N1 tests ride it comfortably. One sequencing note: N1's "close→swap→reopen" path touches UndoManager, which is an AppKit-side object — keep the CFStore surface a protocol-friendly seam (e.g. an `onReopen` hook) so the Kit target stays UI-free; resolve at N1 planning time.
+
+**Files:**
+
+```
+NEW:
+  mac/ClipFarm.xcodeproj/project.pbxproj
+  mac/ClipFarm.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+  mac/ClipFarm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+  mac/ClipFarm.xcodeproj/xcshareddata/xcschemes/ClipFarm.xcscheme
+  mac/ClipFarm/App/{ClipFarmApp,RootView,InspectorPane,NavigationItem}.swift
+  mac/ClipFarm/Features/{Library/LibraryView,Project/ProjectView,ScriptTOC/ScriptTOCView,
+                         Attempts/AttemptsView,Brief/BriefView,Settings/SettingsView}.swift
+  mac/ClipFarm/Assets.xcassets/{Contents.json,AppIcon.appiconset/,AccentColor.colorset/}
+  mac/ClipFarmKit/{Package.swift,Package.resolved}
+  mac/ClipFarmKit/Sources/{CFDomain,CFStore,CFMedia,CFLLM,CFExport}/<Module>.swift
+  mac/ClipFarmKit/Tests/{CFDomain,CFStore,CFMedia,CFLLM,CFExport}Tests/<Module>SmokeTests.swift
+
+MODIFIED:
+  .gitignore                 — Xcode/SPM artifacts
+  mac/CLAUDE.md              — scheme + xcbeautify verified note
+  PHASES.md                  — N0 plan entry → closeout pointer
+  KICKOFF_MESSAGES.md        — N0 marked used; N1 kickoff queued
+  QUESTIONS.md               — 4 PROVISIONAL items
+```
+
+---
+
 ## Phase 9.5 — Tagging provider toggle (Ollama / Anthropic API)
 
 **Verified by Lillian:** ⏳ pending (live verify in progress as of 2026-05-26).

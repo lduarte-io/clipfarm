@@ -161,4 +161,4 @@ xcodebuild test -scheme ClipFarm -destination 'platform=macOS'
 xcodebuild clean -scheme ClipFarm
 ```
 
-(Verify the scheme name at N0 and correct here if it differs.)
+(Verified at N0: the scheme is `ClipFarm`, shared in the repo (`xcodebuild` commands run from `mac/`); `xcbeautify` 3.2.1 installed via Homebrew. The bare `xcodebuild build` emits a benign "multiple matching destinations" note — arm64 is picked automatically.)

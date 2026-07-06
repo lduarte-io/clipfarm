@@ -17,6 +17,12 @@ __pycache__/
 web/node_modules/
 web/dist/
 
+# Xcode / Swift (mac/)
+mac/ClipFarmKit/.build/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
 # Editors
 .vscode/
 .idea/

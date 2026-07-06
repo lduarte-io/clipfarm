@@ -31,7 +31,24 @@
 >
 > Human setup for the first stretch: be on call for the N0 Xcode/cert assist (~5 min, only if pbxproj hand-authoring fails); expect a TCC folder prompt around N3 ingest; plan a watch session at the N2 hard stop. Open questions accumulate in `QUESTIONS.md` and surface at checkpoints.
 
-### Phase N0: toolchain & skeleton (dispositions committed; consumed by the coordinator — or paste manually into a fresh session)
+### Phase N1: domain models + persistence core (written at N0 closeout — consumed by the coordinator, or paste manually into a fresh session)
+
+> You are the **implementer** starting phase **N1 (domain models + persistence core)** of ClipFarm's native macOS rewrite. N0 is complete: `mac/ClipFarm.xcodeproj` + `ClipFarmKit` (CFDomain / CFStore / CFMedia / CFLLM / CFExport, five Swift Testing smoke targets) build green; `swift test` runs 6 smoke tests from `mac/ClipFarmKit`; GRDB is pinned at **7.11.1** via the committed `Package.resolved`; the isolation policy is already encoded as `kitSwiftSettings` in `Package.swift` (nonisolated default + SE-0461/SE-0470 upcoming features) — new N1 code inherits it, and Kit targets are never flipped to MainActor-default.
+>
+> Read first: `mac/CLAUDE.md` (binding rules — invariants, isolation policy, testing expectations, closeout ritual), `NATIVE_REWRITE_PLAN.md` §2.3 (persistence schema) / §2.4 (time policy) / §2.7 (state, undo, concurrency) and the **N1 phase entry**, `NATIVE_REWRITE_DECISIONS.md` (D6, D7, D8, D9, D12, D23, D28 at minimum), and `COMPLETED_PHASES.md` → Phase N0 (what exists, PROVISIONAL calls, next-phase delta). `clipfarm-spec.md` is canonical for product behavior — data-model invariants, clip-ID encoding, snapshot ritual.
+>
+> Execute N1 per the plan — the data layer exists, tested, before anything sits on it:
+> - **Port map:** `clipfarm/models.py` → CFDomain structs, field-for-field (including `Source.unavailable`, `Attempt.needs_review`, `TagKind.tag`, plus new `Clip.boundary_edited`; adopt the `script` naming). `clipfarm/store.py` → CFStore: GRDB schema exactly per plan §2.3 (FTS5 external-content table + sync triggers; `attempt_clips.clip_id` deliberately NOT an FK — tombstones dangle by design), `DatabaseMigrator` with v1 registered from day one, snapshot service (`VACUUM INTO`, prune to 50 — snapshot runs in its own barrier access *immediately before* the mutating transaction, partial-file cleanup on failure), uniqueness via a NULL-proof unique index (`COALESCE(project_tag_id, '')` or generated column) **plus** domain validation as the enforcer (finding 10), source-integrity check on open. `resolver.py` + `continuity.py` → CFDomain pure functions (N2 consumes them).
+> - **ID rules:** all IDs strings; clip IDs encode `source__start__end` at creation (`HH-MM-SS.mmm`, `int(round(t*1000))`, `__` separator, filename constraint) and are opaque afterward; allocators are monotonic max+1 over all existing keys, never reusing freed slots. Time at rest is `Double` seconds (D12).
+> - **Settings scaffolding:** per-library settings table in the DB (they travel with the library); app-level prefs → `UserDefaults`; API key → Keychain (D23).
+> - **Library close→swap→reopen path** (clears the UndoManager stack, restarts ValueObservations) — snapshot-restore, backup-restore, and library switching reuse it later. N0 delta note: UndoManager is an AppKit-side object — keep the CFStore surface a protocol-friendly seam (e.g. an `onReopen`/delegate hook) so the Kit target stays UI-free.
+> - **Tests (~90):** models round-trip, uniqueness, store/snapshot/migrations, source integrity, settings, resolver (14), continuity (9 + 5 refresh), fixture builders for everything downstream. Ported Python tests follow the adjudication rule — the Python implementation is the *reference, not the oracle*; investigate against the spec before changing Swift, record divergences in the phase entry. Store mutations land with register→undo→redo tests per mac/CLAUDE.md (where UndoManager applies at this layer, honor the seam note above).
+>
+> Workflow (binding): write the N1 plan entry into `PHASES.md` *before* code; one phase only; N1 tier = auto-continue at end, manual verify **DEFERRED** (checklist for the closeout entry: create a scratch library; snapshot fires before a destructive op and prunes correctly; `sqlite3` on the library DB shows the §2.3 schema). Schema/model changes get their own commit before dependent feature work. At closeout: `COMPLETED_PHASES.md` entry (detailed enough for the cold reviewer), read the N2 plan entry in full and record a next-phase delta, write the N2 kickoff message into `KICKOFF_MESSAGES.md`, update pointers, commit per convention.
+>
+> **Autonomous mode.** Non-gating ambiguity → document 2–3 options in the phase entry, implement the most spec-defensible, mark it **PROVISIONAL**, log it in `QUESTIONS.md`. Core-gating ambiguity → stop and ask. Never: add a third-party dependency (GRDB is the only sanctioned one), contradict a LOCKED/RESOLVED decision, invent product behavior, or touch footage folders (strictly read-only).
+
+### [USED 2026-07-05] Phase N0: toolchain & skeleton (executed same day — closeout in `COMPLETED_PHASES.md` → Phase N0; manual verify deferred)
 
 > You are the **implementer** starting phase **N0 (toolchain & skeleton)** of ClipFarm's native macOS rewrite.
 >
@@ -51,4 +68,5 @@
 
 ## Used
 
+- **Phase N0 kickoff** — used 2026-07-05 (kept inline above, marked USED). Output: `mac/` skeleton built and verified; closeout in `COMPLETED_PHASES.md` → Phase N0; manual verify deferred per tier.
 - **Pre-build decision review** — used 2026-07-05 (kept inline above, marked USED). Output: `PREBUILD_REVIEW_FINDINGS.md`; all 19 findings dispositioned the same day (D20 flipped, D32/D33 added, N2 gates expanded).
