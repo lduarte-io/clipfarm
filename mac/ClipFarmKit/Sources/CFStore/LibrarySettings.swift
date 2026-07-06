@@ -30,21 +30,29 @@ public struct LibrarySettings: Equatable, Sendable {
     /// 2026-07-06 — resolved the N1 PROVISIONAL); N3's segmentation UI can
     /// revisit once results are audible.
     public var tailPaddingSec: Double
+    /// D31 "smooth cut audio": ~10ms audio micro-fades at cut boundaries,
+    /// default ON. WYSIWYG rule — the SAME setting governs preview (N2
+    /// CompositionBuilder audio mix) and export (N12 hybrid writer);
+    /// preview and file always match.
+    public var smoothCutAudio: Bool
 
     public init(
         silenceThresholdSec: Double = 2.0,
         tailPolicy: SegmentationTailPolicy = .extendToNextWordStart,
-        tailPaddingSec: Double = 0.25
+        tailPaddingSec: Double = 0.25,
+        smoothCutAudio: Bool = true
     ) {
         self.silenceThresholdSec = silenceThresholdSec
         self.tailPolicy = tailPolicy
         self.tailPaddingSec = tailPaddingSec
+        self.smoothCutAudio = smoothCutAudio
     }
 
     enum Keys {
         static let silenceThresholdSec = "segmentation.silence_threshold_sec"
         static let tailPolicy = "segmentation.tail_policy"
         static let tailPaddingSec = "segmentation.tail_padding_sec"
+        static let smoothCutAudio = "playback.smooth_cut_audio"
     }
 }
 
@@ -65,6 +73,10 @@ extension LibraryStore {
             if let raw = values[LibrarySettings.Keys.tailPaddingSec],
                let parsed = Double(raw) {
                 settings.tailPaddingSec = parsed
+            }
+            if let raw = values[LibrarySettings.Keys.smoothCutAudio],
+               let parsed = Bool(raw) {
+                settings.smoothCutAudio = parsed
             }
             return settings
         }
@@ -87,6 +99,10 @@ extension LibraryStore {
             try SettingRecord(
                 key: LibrarySettings.Keys.tailPaddingSec,
                 value: String(settings.tailPaddingSec)
+            ).save(db)
+            try SettingRecord(
+                key: LibrarySettings.Keys.smoothCutAudio,
+                value: String(settings.smoothCutAudio)
             ).save(db)
         }
     }

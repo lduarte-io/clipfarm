@@ -15,6 +15,7 @@ import Testing
         #expect(settings.silenceThresholdSec == 2.0)
         #expect(settings.tailPolicy == .extendToNextWordStart)
         #expect(settings.tailPaddingSec == 0.25)  // Lillian, 2026-07-06
+        #expect(settings.smoothCutAudio == true)  // D31: default ON
     }
 }
 
@@ -24,6 +25,7 @@ import Testing
         settings.silenceThresholdSec = 1.5
         settings.tailPolicy = .fixedPadding
         settings.tailPaddingSec = 0.4  // non-default, so the round-trip is meaningful
+        settings.smoothCutAudio = false
         try store.updateLibrarySettings(settings)
         #expect(try store.librarySettings() == settings)
     }
@@ -50,12 +52,14 @@ import Testing
             try db.execute(sql: """
                 INSERT INTO settings(key, value) VALUES
                     ('segmentation.silence_threshold_sec', 'not-a-number'),
-                    ('segmentation.tail_policy', 'no-such-policy')
+                    ('segmentation.tail_policy', 'no-such-policy'),
+                    ('playback.smooth_cut_audio', 'maybe')
                 """)
         }
         let settings = try store.librarySettings()
         #expect(settings.silenceThresholdSec == 2.0)
         #expect(settings.tailPolicy == .extendToNextWordStart)
+        #expect(settings.smoothCutAudio == true)
     }
 }
 
