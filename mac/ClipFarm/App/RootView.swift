@@ -33,6 +33,12 @@ struct RootView: View {
         .task {
             appStore.openDefaultLibraryIfNeeded(undoManager: undoManager)
         }
+        // The environment's undo manager can materialize after the first
+        // task fires; re-binding lets an already-open store adopt it
+        // (cold-review finding 4).
+        .onChange(of: undoManager) {
+            appStore.openDefaultLibraryIfNeeded(undoManager: undoManager)
+        }
     }
 
     @ViewBuilder

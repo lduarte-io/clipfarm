@@ -127,6 +127,9 @@ struct LibraryView: View {
             statusCapsule { ProgressView().controlSize(.small); Text("Ingesting…") }
         } else if let error = appStore.lastActionError {
             statusCapsule { Text(error).foregroundStyle(.orange) }
+        } else if let info = appStore.lastActionInfo {
+            // Informational, not an error — secondary styling.
+            statusCapsule { Text(info).foregroundStyle(.secondary) }
         } else if let result = appStore.lastIngestResult {
             statusCapsule {
                 Text(Self.summary(of: result))

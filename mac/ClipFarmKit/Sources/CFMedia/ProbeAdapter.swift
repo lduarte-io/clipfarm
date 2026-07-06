@@ -11,8 +11,9 @@ extension SourceMetadata {
         return ProbedSourceInfo(
             durationSec: durationSec.isFinite && durationSec > 0 ? durationSec : nil,
             // Display fps only (N2 delta): nominalFrameRate, never anything
-            // derived from minFrameDuration.
-            fps: video.map { Double($0.nominalFrameRate) },
+            // derived from minFrameDuration. Tracks can report 0 — that's
+            // "unknown", not a rate (cold-review finding 7).
+            fps: video.flatMap { $0.nominalFrameRate > 0 ? Double($0.nominalFrameRate) : nil },
             isHDR: video?.isHDR,
             naturalWidth: video.map { Int($0.naturalSize.width.rounded()) },
             naturalHeight: video.map { Int($0.naturalSize.height.rounded()) }

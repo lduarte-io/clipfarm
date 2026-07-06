@@ -338,6 +338,68 @@ func withIngestFixture<T>(
     }
 }
 
+@MainActor @Test func hiddenFilesAreNeverScanned() async throws {
+    // Cold-review finding 2: a crash-orphaned remux temp
+    // (`.stem.remux-*.mp4`) or AppleDouble `._*.mov` litter must never
+    // ingest as a garbage source.
+    try await withIngestFixture { store, media in
+        try touchVideo(in: media, name: "real.mov")
+        try writeSidecar(in: media, stem: "real")
+        try touchVideo(in: media, name: ".orphan.remux-abcd1234.mp4")
+        try touchVideo(in: media, name: "._real.mov")
+
+        let result = try await store.ingestFolder(at: media, probe: stubProbe, remux: unusedRemux)
+
+        #expect(result.sourcesAdded == ["real.mov"])
+        #expect(result.rejected.isEmpty)
+        #expect(try store.fetchState().sources.count == 1)
+    }
+}
+
+@MainActor @Test func adoptingAPreexistingSiblingMP4IsWarnedNotSilent() async throws {
+    // Cold-review finding 3: skip-if-exists ADOPTS a same-stem sibling
+    // .mp4 as "an earlier remux" — the assumption is recorded in the
+    // result, never silent.
+    try await withIngestFixture { store, media in
+        try touchVideo(in: media, name: "take.mkv")
+        try touchVideo(in: media, name: "take.mp4")  // pre-existing sibling
+
+        let result = try await store.ingestFolder(at: media, probe: stubProbe, remux: copyingRemux)
+
+        let warning = try #require(
+            result.warnings.first { $0.contains("adopted existing sibling") })
+        #expect(warning.contains("take.mkv"))
+        #expect(warning.contains("take.mp4"))
+        // A fresh remux (no pre-existing sibling) stays warning-free.
+        try touchVideo(in: media, name: "fresh.mkv")
+        let second = try await store.ingestFolder(at: media, probe: stubProbe, remux: copyingRemux)
+        #expect(!second.warnings.contains { $0.contains("adopted existing sibling") })
+    }
+}
+
+@MainActor @Test func lateUndoManagerAdoptionCoversSubsequentMutations() throws {
+    // Cold-review finding 4: a store opened without an UndoManager can
+    // adopt one later; mutations after adoption register normally.
+    let undoManager = UndoManager()
+    try withScratchStore(undoManager: nil) { store in
+        try store.addSource(Source(filename: "pre.mov", path: "/x/pre.mov", addedAt: "t"))
+        #expect(!undoManager.canUndo)
+
+        store.adoptUndoManager(undoManager)
+        let id = try store.addSource(Source(filename: "post.mov", path: "/x/post.mov", addedAt: "t"))
+        #expect(undoManager.canUndo)
+        undoManager.undo()
+        #expect(try store.source(id: id) == nil)
+
+        // First adoption wins — a second manager is ignored.
+        let other = UndoManager()
+        store.adoptUndoManager(other)
+        try store.addSource(Source(filename: "third.mov", path: "/x/third.mov", addedAt: "t"))
+        #expect(!other.canUndo)
+        #expect(undoManager.canUndo)
+    }
+}
+
 @MainActor @Test func probeFailureStillIngestsWithNilFields() async throws {
     try await withIngestFixture { store, media in
         try touchVideo(in: media, name: "unprobeable.mov")

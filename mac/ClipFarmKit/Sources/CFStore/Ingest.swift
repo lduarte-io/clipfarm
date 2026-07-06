@@ -107,8 +107,14 @@ extension LibraryStore {
         var planned: [PlannedAction] = []
         var plannedPaths: Set<String> = []
 
+        // .skipsHiddenFiles (cold-review finding 2): keeps AppleDouble
+        // `._*.mov` litter out AND makes the remuxer's dot-prefixed-temp
+        // contract true — a crash-orphaned `.stem.remux-*.mp4` must never
+        // ingest as a garbage source.
         let files = (try FileManager.default.contentsOfDirectory(
-            at: folderURL, includingPropertiesForKeys: [.isRegularFileKey]
+            at: folderURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
         ))
         .filter { url in
             (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
@@ -135,7 +141,15 @@ extension LibraryStore {
             // anything else looks at the file.
             var playableURL = scannedURL
             var originalPath: String?
+            var adoptedPreexistingSibling = false
             if scannedURL.pathExtension.lowercased() == "mkv" {
+                // Skip-if-exists means a same-stem sibling .mp4 is ADOPTED
+                // as "an earlier remux" — if it's actually an unrelated
+                // file, the adoption is wrong. Never silent (cold-review
+                // finding 3): record the assumption in the result.
+                adoptedPreexistingSibling = FileManager.default.fileExists(
+                    atPath: scannedURL.deletingPathExtension()
+                        .appendingPathExtension("mp4").path)
                 do {
                     playableURL = try await remux(scannedURL)
                     originalPath = scannedURL.path
@@ -153,6 +167,15 @@ extension LibraryStore {
             let known = knownByPath[resolved]
             let alreadyPlanned = plannedPaths.contains(resolved)
             let playableName = playableURL.lastPathComponent
+
+            // Warn once, when the adopted file first becomes a source — not
+            // again on every idempotent re-ingest.
+            if adoptedPreexistingSibling, known == nil, !alreadyPlanned {
+                result.warnings.append(
+                    "\(scannedName): adopted existing sibling \(playableName) "
+                        + "as its remuxed copy (assumed to be an earlier remux — if it "
+                        + "is an unrelated file, delete or rename it and re-ingest)")
+            }
 
             // Sidecar pairing: `<stem>.whisper.json` next to the SCANNED
             // file (same stem serves an .mkv and its remuxed sibling).

@@ -85,13 +85,20 @@ private let burstSpec = MediaFixtureSpec(
     #expect(first == second)
     #expect(firstStamp == secondStamp)
 
-    // A truncated cache (killed run) is treated as absent and regenerated.
+    // A truncated cache (killed run) is treated as absent and regenerated —
+    // by the SAME service instance (cold-review finding 5: the in-flight
+    // memo must not outlive the generation, or a damaged cache would stay
+    // dead until app restart).
     let truncated = try Data(contentsOf: first).prefix(WaveformService.headerSize + 10)
     try truncated.write(to: first)
     #expect(!WaveformService.cacheFileIsValid(at: first))
-    let regenerated = try await WaveformService(cacheDirectory: scratch)
-        .generateIfNeeded(forSourceID: "s", sourceURL: source)
+    let regenerated = try await service.generateIfNeeded(forSourceID: "s", sourceURL: source)
     #expect(try WaveformService.read(from: regenerated) == waveform)
+
+    // Same for a deleted cache file.
+    try FileManager.default.removeItem(at: first)
+    let recreated = try await service.generateIfNeeded(forSourceID: "s", sourceURL: source)
+    #expect(try WaveformService.read(from: recreated) == waveform)
 }
 
 // MARK: - Real-material leg (skips when the inbox lacks the file)

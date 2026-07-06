@@ -75,13 +75,12 @@ public actor WaveformService {
             return destination
         }
         inFlight[sourceID] = task
-        do {
-            return try await task.value
-        } catch {
-            // Failed generations don't poison the memo — a retry re-decodes.
-            inFlight[sourceID] = nil
-            throw error
-        }
+        // The memo covers only the in-flight window (cold-review finding 5):
+        // once the task settles — success or failure — subsequent calls go
+        // back through the cache-file check, so a deleted/truncated cache or
+        // a repointed source regenerates without an app restart.
+        defer { inFlight[sourceID] = nil }
+        return try await task.value
     }
 
     // MARK: - Decode (off-actor: @concurrent so the CPU loop never
@@ -183,7 +182,10 @@ public actor WaveformService {
 
     // MARK: - Cache file format
     // "CFWV" | UInt32 version=1 | UInt32 bucketsPerSecond | UInt32 count |
-    // count x Float32 — all little-endian.
+    // count x Float32. Header integers are explicitly little-endian; the
+    // Float32 payload is a native-endian memcpy (LE on every platform this
+    // app supports — cold-review finding 8: a local cache file, not an
+    // interchange format; bump `cacheVersion` if that ever changes).
 
     static let cacheMagic = Data("CFWV".utf8)
     static let cacheVersion: UInt32 = 1

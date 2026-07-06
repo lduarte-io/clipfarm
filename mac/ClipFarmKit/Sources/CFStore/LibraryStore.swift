@@ -25,7 +25,11 @@ public final class LibraryStore {
 
     public let folderURL: URL
     public let databaseURL: URL
-    public let undoManager: UndoManager?
+    /// Read at every undo registration, so a late adoption (see
+    /// `adoptUndoManager`) covers all subsequent mutations. Written only
+    /// from `@MainActor` contexts (init-time injection or adoption); every
+    /// reader is a `@MainActor` undo path.
+    public private(set) var undoManager: UndoManager?
 
     let dbPool: DatabasePool
     let now: @Sendable () -> Date
@@ -94,6 +98,16 @@ public final class LibraryStore {
     /// the undo stack (its closures capture this store).
     public func close() throws {
         try dbPool.close()
+    }
+
+    /// Adopts a window `UndoManager` when the store was opened without one
+    /// (SwiftUI's environment value can materialize after the first view
+    /// task — cold-review finding 4). First adoption wins; mutations made
+    /// before it simply aren't undoable, and later ones all are.
+    @MainActor
+    public func adoptUndoManager(_ manager: UndoManager) {
+        guard undoManager == nil else { return }
+        undoManager = manager
     }
 
     // MARK: - Open-time rituals

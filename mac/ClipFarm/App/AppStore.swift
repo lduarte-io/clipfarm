@@ -27,6 +27,9 @@ final class AppStore {
     private(set) var isIngesting = false
     private(set) var lastIngestResult: IngestResult?
     private(set) var lastActionError: String?
+    /// Informational outcomes (e.g. a no-op re-apply) — never the error
+    /// channel (cold-review finding 6).
+    private(set) var lastActionInfo: String?
 
     private var waveformService: WaveformService?
 
@@ -40,9 +43,20 @@ final class AppStore {
 
     /// Opens the default library (D28 `~/ClipFarm/`) with the window's
     /// UndoManager so the system Edit menu drives store undo directly.
+    ///
+    /// Safe to call again when the environment's undo manager materializes
+    /// late (cold-review finding 4): an already-open store adopts it.
     func openDefaultLibraryIfNeeded(undoManager: UndoManager?) {
-        guard library == nil else { return }
+        if let library {
+            if let undoManager { library.adoptUndoManager(undoManager) }
+            return
+        }
         print("clipfarm: opening library at \(LibraryStore.defaultLibraryFolderURL.path)")
+        if undoManager == nil {
+            // Store undo silently no-ops without one; leave a breadcrumb so
+            // a dead Cmd+Z at the manual verify has a diagnosis.
+            print("clipfarm: WARNING — opening with a nil UndoManager (environment not ready?)")
+        }
         do {
             try FileManager.default.createDirectory(
                 at: Self.footageInboxURL, withIntermediateDirectories: true)
@@ -82,6 +96,7 @@ final class AppStore {
         guard let library, !isIngesting else { return }
         isIngesting = true
         lastActionError = nil
+        lastActionInfo = nil
         defer { isIngesting = false }
         do {
             let result = try await library.ingestFolder(
@@ -127,10 +142,10 @@ final class AppStore {
         guard let library else { return }
         do {
             let result = try library.reapplySegmentation(forSourceID: sourceID)
-            lastActionError = nil
-            if !result.changed {
-                lastActionError = "Re-apply: no boundary changes under the current settings."
-            }
+            lastActionInfo = result.changed
+                ? "Re-apply: \(result.clipsAdded) added, \(result.clipsRemoved) removed, "
+                    + "\(result.clipsKept) kept, \(result.skippedBoundaryEdited) hand-corrected skipped."
+                : "Re-apply: no boundary changes under the current settings."
             refresh()
         } catch {
             lastActionError = String(describing: error)

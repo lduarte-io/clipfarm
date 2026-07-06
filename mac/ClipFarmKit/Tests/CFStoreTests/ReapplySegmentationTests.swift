@@ -243,6 +243,37 @@ private func seedIngestedSource(
     }
 }
 
+@MainActor @Test func insertionsOnlyDiffAppliesCleanlyAndUndoes() async throws {
+    // Cold-review finding 1 regression: EVERY existing clip hand-corrected
+    // (boundary_edited), then a settings change -> zero deletions, pure
+    // insertions. Must apply (snapshot + undo) — not throw on an empty
+    // undo-capture IN () query.
+    let undoManager = UndoManager()
+    try await withIngestFixture(undoManager: undoManager) { store, _ in
+        let (sourceID, transcript) = try await seedIngestedSource(store)
+        try await store.dbPool.write { db in
+            try db.execute(sql: "UPDATE clips SET boundary_edited = 1")
+        }
+        undoManager.removeAllActions()
+
+        var settings = try store.librarySettings()
+        settings.tailPolicy = .extendToNextWordStart
+        try store.updateLibrarySettings(settings)
+
+        let result = try store.reapplySegmentation(forSourceID: sourceID, transcript: transcript)
+        #expect(result.clipsRemoved == 0)
+        #expect(result.clipsAdded == 2)
+        #expect(result.skippedBoundaryEdited == 2)
+        #expect(try store.fetchState().clips.count == 4)
+        #expect(undoManager.undoActionName == "Re-apply Segmentation")
+
+        undoManager.undo()
+        #expect(try store.fetchState().clips.count == 2)
+        undoManager.redo()
+        #expect(try store.fetchState().clips.count == 4)
+    }
+}
+
 @MainActor @Test func reapplyErrorsAreTyped() async throws {
     try await withIngestFixture { store, _ in
         #expect(throws: ReapplySegmentationError.unknownSource("404")) {

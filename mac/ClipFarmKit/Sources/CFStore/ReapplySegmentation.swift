@@ -113,28 +113,36 @@ extension LibraryStore {
         )
         guard result.changed else { return result }
 
-        // Capture everything the undo needs BEFORE mutating.
+        // Capture everything the undo needs BEFORE mutating. A pure-insertion
+        // diff (every existing clip boundary_edited or kept) deletes nothing,
+        // so there is nothing to capture — and an IN () query with zero bound
+        // arguments would throw (cold-review finding 1).
         let deletedIDs = deletions.map(\.id)
-        let (deletedTagRows, flaggedAttempts) = try dbPool.read { db in
-            let tags = try ClipProjectTagRecord.fetchAll(
-                db,
-                sql: "SELECT * FROM clip_project_tags WHERE clip_id IN "
-                    + Self.placeholderList(deletedIDs.count) + " ORDER BY rowid",
-                arguments: StatementArguments(deletedIDs)
-            )
-            // Attempts referencing a deleted clip get needs_review (the
-            // spec's delete-propagation rule); capture before-values so
-            // undo restores them exactly.
-            let attempts = try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT DISTINCT a.id AS id, a.needs_review AS needs_review
-                    FROM attempts a JOIN attempt_clips ac ON ac.attempt_id = a.id
-                    WHERE ac.clip_id IN \(Self.placeholderList(deletedIDs.count))
-                    """,
-                arguments: StatementArguments(deletedIDs)
-            ).map { (id: $0["id"] as String, needsReviewBefore: $0["needs_review"] as Bool) }
-            return (tags, attempts)
+        let (deletedTagRows, flaggedAttempts): ([ClipProjectTagRecord], [(id: String, needsReviewBefore: Bool)])
+        if deletedIDs.isEmpty {
+            (deletedTagRows, flaggedAttempts) = ([], [])
+        } else {
+            (deletedTagRows, flaggedAttempts) = try dbPool.read { db in
+                let tags = try ClipProjectTagRecord.fetchAll(
+                    db,
+                    sql: "SELECT * FROM clip_project_tags WHERE clip_id IN "
+                        + Self.placeholderList(deletedIDs.count) + " ORDER BY rowid",
+                    arguments: StatementArguments(deletedIDs)
+                )
+                // Attempts referencing a deleted clip get needs_review (the
+                // spec's delete-propagation rule); capture before-values so
+                // undo restores them exactly.
+                let attempts = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT DISTINCT a.id AS id, a.needs_review AS needs_review
+                        FROM attempts a JOIN attempt_clips ac ON ac.attempt_id = a.id
+                        WHERE ac.clip_id IN \(Self.placeholderList(deletedIDs.count))
+                        """,
+                    arguments: StatementArguments(deletedIDs)
+                ).map { (id: $0["id"] as String, needsReviewBefore: $0["needs_review"] as Bool) }
+                return (tags, attempts)
+            }
         }
 
         let apply: (Database) throws -> Void = { db in
@@ -176,7 +184,11 @@ extension LibraryStore {
         _ = try ClipRecord.deleteAll(db, keys: clipIDs)
     }
 
+    /// `(?, ?, …)` for an `IN` clause. Zero placeholders is a programmer
+    /// error — every call site guards empty ID lists before building SQL
+    /// (an `IN ()` with no bound arguments throws at bind time).
     static func placeholderList(_ count: Int) -> String {
-        "(" + Array(repeating: "?", count: max(count, 1)).joined(separator: ", ") + ")"
+        precondition(count > 0, "placeholderList requires at least one value")
+        return "(" + Array(repeating: "?", count: count).joined(separator: ", ") + ")"
     }
 }
