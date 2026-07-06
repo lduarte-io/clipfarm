@@ -61,15 +61,27 @@ let package = Package(
             dependencies: ["CFDomain"],
             swiftSettings: kitSwiftSettings
         ),
+        // Fixture builders shared by test targets. Not part of the library
+        // product — never ships in the app.
+        .target(
+            name: "CFTestSupport",
+            dependencies: ["CFDomain"],
+            swiftSettings: kitSwiftSettings
+        ),
 
         .testTarget(
             name: "CFDomainTests",
-            dependencies: ["CFDomain"],
+            dependencies: ["CFDomain", "CFTestSupport"],
             swiftSettings: kitSwiftSettings
         ),
         .testTarget(
             name: "CFStoreTests",
-            dependencies: ["CFStore"],
+            dependencies: [
+                "CFStore",
+                "CFTestSupport",
+                // Raw-SQL schema assertions (pragmas, index backstops).
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
             swiftSettings: kitSwiftSettings
         ),
         .testTarget(
