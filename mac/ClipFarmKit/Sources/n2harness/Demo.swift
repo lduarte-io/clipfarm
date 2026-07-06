@@ -46,7 +46,7 @@ func runDemo(env: HarnessEnv, realOnly: Bool) async throws {
     app.setActivationPolicy(.regular)
 
     let engine = PlayerEngine()
-    try await engine.load(ranges: ranges)
+    try await engine.load(ranges: ranges, smoothCutAudio: true)
 
     let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 1280, height: 720),
@@ -98,12 +98,15 @@ final class PlayerHostView: NSView {
         case "r":
             Task { @MainActor in
                 let at = engine.currentTimeSec
-                try? await engine.load(ranges: ranges, at: at)
+                try? await engine.load(ranges: ranges, smoothCutAudio: true, at: at)
                 engine.play()
             }
         case "l":
+            // Clamp inside the composition (finding 10): a window end past
+            // the duration never fires and the loop silently no-ops.
             let at = engine.currentTimeSec
-            engine.loop(windowStartSec: max(0, at - 0.75), windowEndSec: at + 0.75)
+            let end = min(at + 0.75, max(0.1, engine.durationSec - 0.05))
+            engine.loop(windowStartSec: max(0, end - 1.5), windowEndSec: end)
             engine.play()
         case "q", "\u{1b}":
             NSApplication.shared.terminate(nil)

@@ -46,6 +46,14 @@ public final class PlayerEngine {
     private var periodicObserver: Any?
     private var loopWindow: CMTimeRange?
     private var loopSeekInFlight = false
+    /// Stale-swap protection: `load` suspends (build, pre-seek) off the
+    /// actor; overlapping loads — the N10/N11 rebuild-per-keystroke
+    /// pattern — must never let an OLDER composition win the swap.
+    /// Internal read is a test hook (ordering the race deterministically).
+    private(set) var loadGeneration = 0
+
+    /// Test hook: whether the loop boundary observer is currently armed.
+    var isLoopArmed: Bool { boundaryObserver != nil }
 
     public init(assetCache: AssetCache = AssetCache()) {
         self.assetCache = assetCache
@@ -61,18 +69,31 @@ public final class PlayerEngine {
     /// Build → pre-seek (awaited, zero tolerance) → swap → re-arm.
     /// Also the edit path: callers re-`load` with the changed ranges and
     /// the current position; playback state (playing/paused) is preserved.
+    ///
+    /// `smoothCutAudio` is REQUIRED — pass `LibrarySettings.smoothCutAudio`
+    /// (D31 WYSIWYG: the same value must govern export; a defaulted call
+    /// site is a silent preview ≠ file divergence).
+    ///
+    /// Overlapping calls are safe: each load takes a generation ticket and
+    /// only the newest generation may swap — an older build finishing late
+    /// is dropped without touching the player.
     public func load(
         ranges: [PlayableRange],
-        smoothCutAudio: Bool = true,
+        smoothCutAudio: Bool,
         at seconds: Double = 0
     ) async throws {
+        loadGeneration += 1
+        let generation = loadGeneration
+
         let result = try await builder.build(ranges: ranges, smoothCutAudio: smoothCutAudio)
+        guard generation == loadGeneration else { return }
         let item = result.makePlayerItem()
         itemConfigurator?(item)
 
         let target = MediaTime.time(seconds)
         if target > .zero {
             await item.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+            guard generation == loadGeneration else { return }
         }
 
         let wasPlaying = isPlaying
@@ -103,6 +124,11 @@ public final class PlayerEngine {
 
     // MARK: - Trim-mode loop (D13)
 
+    /// Contract note (cold-review finding 9): the periodic-observer
+    /// overshoot recovery acts only while PLAYING — a paused `step` or
+    /// user seek past the window end must never snap the playhead back.
+    /// Trim mode (N11) mixes stepping and looping on one window; paused
+    /// exploration outside the window is legal.
     public func loop(windowStartSec: Double, windowEndSec: Double) {
         loopWindow = CMTimeRange(
             start: MediaTime.time(windowStartSec),
@@ -159,8 +185,11 @@ public final class PlayerEngine {
                 guard let self else { return }
                 self.currentTimeSec = MediaTime.seconds(time)
                 // Belt-and-suspenders: a missed boundary fire may leave the
-                // playhead past the loop window — recover.
-                if let loopWindow = self.loopWindow,
+                // playhead past the loop window — recover. Only while
+                // playing: a paused overshoot can only be a deliberate
+                // step/seek (finding 9) — never snap it back.
+                if self.isPlaying,
+                   let loopWindow = self.loopWindow,
                    !self.loopSeekInFlight,
                    time > loopWindow.end + CMTime(value: 30, timescale: 600) {
                     self.loopDidHitEnd()

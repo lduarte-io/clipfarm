@@ -79,6 +79,15 @@ private func builder() -> CompositionBuilder {
     CompositionBuilder(assetCache: AssetCache())
 }
 
+/// Test-file convenience only: `smoothCutAudio` is deliberately required
+/// on the public API (D31 — call sites must pass the library setting);
+/// tests that don't exercise the audio mix pin the default-ON value here.
+extension CompositionBuilder {
+    fileprivate func build(ranges: [PlayableRange]) async throws -> CompositionBuildResult {
+        try await build(ranges: ranges, smoothCutAudio: true)
+    }
+}
+
 @Test func singleTrackPairAndBackToBackInsertion() async throws {
     let a = try await TestFixtures.shared.url(for: TinySpec.h264)
     let b = try await TestFixtures.shared.url(for: TinySpec.h264B)

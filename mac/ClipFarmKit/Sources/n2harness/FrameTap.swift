@@ -101,11 +101,17 @@ final class FrameTap: @unchecked Sendable {
                     )
                     lock.lock()
                     samples.append(sample)
+                    var pngDestination: URL?
                     if let request = pngRequest, display.seconds >= request.time {
                         pngRequest = nil
-                        try? PixelProbe.writePNG(pixelBuffer, to: request.url)
+                        pngDestination = request.url
                     }
                     lock.unlock()
+                    // File I/O outside the lock (finding 16) — snapshot()
+                    // callers must never block on a PNG encode.
+                    if let pngDestination {
+                        try? PixelProbe.writePNG(pixelBuffer, to: pngDestination)
+                    }
                 }
             }
             usleep(500)  // 2 kHz — ±0.5 ms timing resolution

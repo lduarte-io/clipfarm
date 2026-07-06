@@ -45,14 +45,20 @@ func runBlink(env: HarnessEnv, cycles: Int, forceFixture: Bool = false) async th
     let engine = PlayerEngine()
     var currentTap: FrameTap?
     var previousTap: FrameTap?
+    // decode: true — black-frame detection must actually run (cold-review
+    // finding 1: decode:false hardcodes isBlack=false, making the black
+    // counts vacuous evidence). On real footage a genuinely dark scene can
+    // false-positive, so black only folds into the blink count on fixture
+    // material; on real material it is reported informationally.
+    let blackIsMeaningful = file.lastPathComponent.hasPrefix("n2-")
     engine.itemConfigurator = { item in
         previousTap = currentTap
-        let tap = FrameTap(item: item, decode: false)
+        let tap = FrameTap(item: item, decode: true)
         tap.start()
         currentTap = tap
     }
 
-    try await engine.load(ranges: makeRanges(0))
+    try await engine.load(ranges: makeRanges(0), smoothCutAudio: true)
     engine.player.isMuted = true
     engine.play()
     try await Task.sleep(for: .seconds(1))
@@ -63,7 +69,7 @@ func runBlink(env: HarnessEnv, cycles: Int, forceFixture: Bool = false) async th
     for cycle in 1...cycles {
         let position = engine.currentTimeSec
         let lastBefore = currentTap?.snapshot().last
-        try await engine.load(ranges: makeRanges(cycle), at: min(position, 9.0))
+        try await engine.load(ranges: makeRanges(cycle), smoothCutAudio: true, at: min(position, 9.0))
         previousTap?.stop()
         guard let tap = currentTap else { continue }
         let first = await awaitSample(tap, timeoutSec: 2.0) { _ in true }
@@ -73,7 +79,7 @@ func runBlink(env: HarnessEnv, cycles: Int, forceFixture: Bool = false) async th
             let early = tap.snapshot().prefix(15)
             let sawBlack = early.contains { $0.isBlack && $0.hostTime - first.hostTime < 0.5 }
             if sawBlack { blackA += 1 }
-            if gap > 0.25 || sawBlack { blinksA += 1 }
+            if gap > 0.25 || (sawBlack && blackIsMeaningful) { blinksA += 1 }
         } else {
             blinksA += 1
             swapGapsMs.append(2.0)
@@ -123,7 +129,7 @@ func runBlink(env: HarnessEnv, cycles: Int, forceFixture: Bool = false) async th
     player.automaticallyWaitsToMinimizeStalling = false
     player.isMuted = true
     let item = AVPlayerItem(asset: mutable)
-    let tapB = FrameTap(item: item, decode: false)
+    let tapB = FrameTap(item: item, decode: true)
     tapB.start()
     player.replaceCurrentItem(with: item)
     player.play()
@@ -143,7 +149,7 @@ func runBlink(env: HarnessEnv, cycles: Int, forceFixture: Bool = false) async th
             let post = tapB.snapshot().filter { $0.hostTime > t0 }.prefix(15)
             let sawBlack = post.contains { $0.isBlack && $0.hostTime - first.hostTime < 0.5 }
             if sawBlack { blackB += 1 }
-            if gap > 0.25 || sawBlack { blinksB += 1 }
+            if gap > 0.25 || (sawBlack && blackIsMeaningful) { blinksB += 1 }
         } else {
             blinksB += 1
             mutateGapsMs.append(2.0)
@@ -164,6 +170,6 @@ func runBlink(env: HarnessEnv, cycles: Int, forceFixture: Bool = false) async th
     let winner = blinksA <= blinksB ? "A (rebuild+swap — the §2.5 rule 4 default)" : "B (mutate-in-place — the designed fallback)"
     report.append("- winner: \(winner)")
     report.append("- GATE (zero blinks on winner): \(min(blinksA, blinksB) == 0 ? "PASS" : "FAIL")")
-    report.append("- note: programmatic blink = decode-level black frame or >250ms delivery stall; layer-level confirmation is Lillian's watch-session demo (PROVISIONAL 2)")
+    report.append("- note: programmatic blink = >250ms delivery stall\(blackIsMeaningful ? " or decode-level black frame" : "") ; black counts \(blackIsMeaningful ? "fold into blinks (fixture content)" : "are informational only (real footage can be legitimately dark)"); layer-level confirmation is Lillian's watch-session demo (PROVISIONAL 2)")
     env.report("blink", report)
 }

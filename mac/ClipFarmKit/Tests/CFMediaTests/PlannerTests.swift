@@ -174,6 +174,39 @@ private func segment(_ start: Double, _ end: Double) -> BuiltSegment {
     #expect(inRamp.timeRange.end <= outRamp.timeRange.start)
 }
 
+// MARK: - Compositor cadence (cold-review finding 2)
+
+private func infoWithTiming(
+    minFrameDuration: CMTime, nominalFrameRate: Float
+) -> VideoTrackInfo {
+    VideoTrackInfo(
+        naturalSize: CGSize(width: 1920, height: 1080), preferredTransform: .identity,
+        minFrameDuration: minFrameDuration, nominalFrameRate: nominalFrameRate,
+        timeRange: range(0, 10), codec: "avc1",
+        colorPrimaries: nil, transferFunction: nil, isHDR: false
+    )
+}
+
+@Test func compositorCadenceUsesNominalRateNotMinFrameDuration() {
+    // A VFR file: min-ever sample gap 1/120, real (nominal) cadence ~44 fps.
+    let vfr = infoWithTiming(
+        minFrameDuration: CMTime(value: 1, timescale: 120), nominalFrameRate: 44.1)
+    let sdr30 = infoWithTiming(
+        minFrameDuration: CMTime(value: 1, timescale: 30), nominalFrameRate: 30)
+    let tick = CompositionPlanner.compositorFrameDuration([sdr30, vfr])
+    // Highest nominal rate wins (44.1) — NOT 120 from minFrameDuration.
+    // Tolerance = one 1/600 tick: CMTime(seconds:) truncates fractional
+    // ticks (observed platform behavior, same as the seam trace at run 4).
+    #expect(abs(tick.seconds - 1.0 / 44.1) <= 1.0 / 600 + 1e-9)
+}
+
+@Test func compositorCadenceClampsGarbageRates() {
+    let zeroRate = infoWithTiming(minFrameDuration: .invalid, nominalFrameRate: 0)
+    #expect(abs(CompositionPlanner.compositorFrameDuration([zeroRate]).seconds - 1.0 / 30.0) < 0.001)
+    let absurd = infoWithTiming(minFrameDuration: .invalid, nominalFrameRate: 960)
+    #expect(abs(CompositionPlanner.compositorFrameDuration([absurd]).seconds - 1.0 / 120.0) < 0.001)
+}
+
 // MARK: - PlayableRange from the resolver (N1 delta #1)
 
 @Test func playableRangeFromResolvedRange() {
@@ -183,4 +216,8 @@ private func segment(_ start: Double, _ end: Double) -> BuiltSegment {
     #expect(range.url == url)
     #expect(range.startSec == 3.25)
     #expect(range.endSec == 7.5)
+    // Finding 8: clipID rides through for UI correlation (which attempt
+    // slot is playing); hand-built ranges leave it nil.
+    #expect(range.clipID == "src__00-00-03.250__00-00-07.500")
+    #expect(PlayableRange(url: url, startSec: 0, endSec: 1).clipID == nil)
 }

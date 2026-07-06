@@ -28,8 +28,16 @@ struct HarnessEnv {
         var iterator = arguments.makeIterator()
         while let arg = iterator.next() {
             switch arg {
-            case "--workdir": workdir = URL(fileURLWithPath: iterator.next() ?? "")
-            case "--footage": footage = URL(fileURLWithPath: iterator.next() ?? "")
+            case "--workdir":
+                guard let value = iterator.next(), !value.isEmpty else {
+                    throw HarnessError.usage("--workdir needs a path")
+                }
+                workdir = URL(fileURLWithPath: value)
+            case "--footage":
+                guard let value = iterator.next(), !value.isEmpty else {
+                    throw HarnessError.usage("--footage needs a path")
+                }
+                footage = URL(fileURLWithPath: value)
             default: break
             }
         }
@@ -74,10 +82,26 @@ struct HarnessEnv {
         return url
     }
 
+    /// iCloud-daemon CPU sample (incident-note rule): embedded in every
+    /// report so the measurement-environment guard is reproducible from
+    /// `swift run n2harness …` alone (cold-review finding 17).
+    func daemonLine() -> String {
+        let out = shell("/bin/ps", ["axo", "%cpu,comm"])
+        let hits = out.split(separator: "\n")
+            .filter { $0.hasSuffix("/fileproviderd") || $0.hasSuffix("/cloudd") }
+            .compactMap { line -> String? in
+                let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+                guard let cpu = parts.first,
+                      let name = parts.last?.split(separator: "/").last else { return nil }
+                return "\(name)=\(cpu)%"
+            }
+        return "daemon-check: " + (hits.isEmpty ? "daemons not found" : hits.joined(separator: " "))
+    }
+
     /// Append a gate's findings to its report file AND stdout — the
     /// closeout gate table copies from these.
     func report(_ gate: String, _ lines: [String]) {
-        let text = lines.joined(separator: "\n")
+        let text = ([daemonLine()] + lines).joined(separator: "\n")
         print(text)
         let url = workdir.appendingPathComponent("reports/\(gate).md")
         let stamped = "## \(gate) — \(ISO8601DateFormatter().string(from: Date()))\n\n\(text)\n\n"

@@ -97,7 +97,7 @@ private func rotationRenderProbe(
 ) async throws -> (lines: [String], pass: Bool, built: CompositionBuildResult) {
     var lines: [String] = []
     let cache = AssetCache()
-    let built = try await CompositionBuilder(assetCache: cache).build(ranges: ranges)
+    let built = try await CompositionBuilder(assetCache: cache).build(ranges: ranges, smoothCutAudio: true)
     lines.append("  - videoComposition attached: \(built.videoComposition != nil ? "yes (D32 conditional path)" : "NO — BUG")")
     guard built.videoComposition != nil else { return (lines, false, built) }
 
@@ -110,7 +110,7 @@ private func rotationRenderProbe(
     let canvas = firstVideo.orientedSize
 
     let engine = PlayerEngine()
-    try await engine.load(ranges: ranges)
+    try await engine.load(ranges: ranges, smoothCutAudio: true)
     engine.player.isMuted = true
     let portraitMid = MediaTime.seconds(built.segments[1].compositionStart)
         + MediaTime.seconds(built.segments[1].duration) / 2
@@ -170,7 +170,7 @@ func runHDRSeam(env: HarnessEnv) async throws {
         PlayableRange(url: hdr, startSec: 20.0, endSec: 22.0),
     ]
     let builder = CompositionBuilder(assetCache: AssetCache())
-    let managed = try await builder.build(ranges: ranges)  // color-managed (D29 enforced)
+    let managed = try await builder.build(ranges: ranges, smoothCutAudio: true)  // color-managed (D29 enforced)
     var report: [String] = ["**hdrseam** — SDR(709) and HLG(2020) segments, matched nominal content (gray 118)"]
     report.append("- material: synthetic SDR + synthetic HLG (the inbox holds no HDR material — PROVISIONAL 1); re-run with a real iPhone HDR clip in the inbox at the watch session if one exists")
     report.append("- builder attached videoComposition with 709 color properties: \(managed.videoComposition?.colorPrimaries != nil ? "yes" : "NO — BUG")")

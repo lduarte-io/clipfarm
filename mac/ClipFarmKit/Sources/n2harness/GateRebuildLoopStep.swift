@@ -43,17 +43,17 @@ func runRebuild(env: HarnessEnv) async throws {
 
     let cache = AssetCache()
     let builder = CompositionBuilder(assetCache: cache)
-    _ = try await builder.build(ranges: makeRanges(0, mixed: false))  // warm the cache
-    _ = try await builder.build(ranges: makeRanges(0, mixed: true))
+    _ = try await builder.build(ranges: makeRanges(0, mixed: false), smoothCutAudio: true)  // warm the cache
+    _ = try await builder.build(ranges: makeRanges(0, mixed: true), smoothCutAudio: true)
 
     var rebuildMs: [Double] = []
     var rebuildMixedMs: [Double] = []
     for i in 0..<100 {
         let t0 = CACurrentMediaTime()
-        _ = try await builder.build(ranges: makeRanges(i, mixed: false))
+        _ = try await builder.build(ranges: makeRanges(i, mixed: false), smoothCutAudio: true)
         rebuildMs.append(CACurrentMediaTime() - t0)
         let t1 = CACurrentMediaTime()
-        _ = try await builder.build(ranges: makeRanges(i, mixed: true))
+        _ = try await builder.build(ranges: makeRanges(i, mixed: true), smoothCutAudio: true)
         rebuildMixedMs.append(CACurrentMediaTime() - t1)
     }
 
@@ -66,7 +66,7 @@ func runRebuild(env: HarnessEnv) async throws {
         tap.start()
         currentTap = tap
     }
-    try await engine.load(ranges: makeRanges(0, mixed: true))
+    try await engine.load(ranges: makeRanges(0, mixed: true), smoothCutAudio: true)
     engine.player.isMuted = true
     await engine.seek(toCompositionSeconds: 8.0)
     engine.pause()
@@ -75,7 +75,7 @@ func runRebuild(env: HarnessEnv) async throws {
     var editToReadyMs: [Double] = []
     for i in 0..<30 {
         let t0 = CACurrentMediaTime()
-        try await engine.load(ranges: makeRanges(i + 1, mixed: true), at: 8.0)
+        try await engine.load(ranges: makeRanges(i + 1, mixed: true), smoothCutAudio: true, at: 8.0)
         let ready = CACurrentMediaTime()
         if let tap = currentTap,
            let first = await awaitSample(tap, timeoutSec: 3.0, where: { $0.hostTime > t0 }) {
@@ -173,9 +173,11 @@ private func measurePrerolledAlternateLoop(
 ) async throws {
     let cache = AssetCache()
     let builder = CompositionBuilder(assetCache: cache)
-    let built = try await builder.build(ranges: [
-        PlayableRange(url: url, startSec: compositionRange.start, endSec: compositionRange.end)
-    ])
+    let built = try await builder.build(
+        ranges: [
+            PlayableRange(url: url, startSec: compositionRange.start, endSec: compositionRange.end)
+        ],
+        smoothCutAudio: true)
 
     struct Lane {
         let player: AVPlayer
@@ -273,9 +275,11 @@ private func measureLoopRestart(
         tap = FrameTap(item: item, decode: false)
         tap?.start()
     }
-    try await engine.load(ranges: [
-        PlayableRange(url: url, startSec: compositionRange.start, endSec: compositionRange.end)
-    ])
+    try await engine.load(
+        ranges: [
+            PlayableRange(url: url, startSec: compositionRange.start, endSec: compositionRange.end)
+        ],
+        smoothCutAudio: true)
     engine.player.isMuted = true
 
     // Harness-side boundary observer timestamps the fire; the engine's own
@@ -369,7 +373,7 @@ func runFrameAccuracy(env: HarnessEnv) async throws {
         tap = FrameTap(item: item, decode: true)
         tap?.start()
     }
-    try await engine.load(ranges: ranges)
+    try await engine.load(ranges: ranges, smoothCutAudio: true)
     engine.player.isMuted = true
     engine.pause()
     guard let tap, let built = engine.built else {

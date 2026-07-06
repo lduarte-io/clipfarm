@@ -12,18 +12,25 @@ public struct PlayableRange: Sendable, Equatable {
     public let url: URL
     public let startSec: Double
     public let endSec: Double
+    /// Which library clip this range plays — carried through to
+    /// `BuiltSegment` so the UI can answer "which attempt slot is
+    /// playing" (the resolver emits clipID for exactly this correlation).
+    /// Nil for hand-specified ranges (harness, ad-hoc previews).
+    public let clipID: String?
 
-    public init(url: URL, startSec: Double, endSec: Double) {
+    public init(url: URL, startSec: Double, endSec: Double, clipID: String? = nil) {
         self.url = url
         self.startSec = startSec
         self.endSec = endSec
+        self.clipID = clipID
     }
 
     public init(resolved: ResolvedRange, url: URL) {
         self.init(
             url: url,
             startSec: resolved.effectiveStartSec,
-            endSec: resolved.effectiveEndSec
+            endSec: resolved.effectiveEndSec,
+            clipID: resolved.clipID
         )
     }
 }
@@ -88,6 +95,7 @@ public struct CompositionBuildResult {
 
 public enum CompositionBuildError: Error, Equatable {
     case emptyRangeList
+    case trackCreationFailed
     case missingVideoTrack(url: URL)
     /// Requested range clamped to nothing (start ≥ clamped end).
     case emptyClampedRange(url: URL, startSec: Double, endSec: Double)
@@ -104,13 +112,15 @@ public struct CompositionBuilder: Sendable {
     ///
     /// - Parameters:
     ///   - smoothCutAudio: D31 — ~10ms audio volume ramps at every internal
-    ///     cut boundary. The caller reads it from `LibrarySettings`; the
-    ///     same value must govern export (WYSIWYG).
+    ///     cut boundary. REQUIRED (no default): the value must come from
+    ///     `LibrarySettings.smoothCutAudio` and the same value must govern
+    ///     export — a silently-defaulted call site is exactly the
+    ///     preview ≠ file divergence the WYSIWYG rule forbids.
     ///   - renderSize: canvas for the mixed-geometry videoComposition
     ///     (D32). Defaults to the first segment's oriented size.
     public func build(
         ranges: [PlayableRange],
-        smoothCutAudio: Bool = true,
+        smoothCutAudio: Bool,
         renderSize: CGSize? = nil
     ) async throws -> CompositionBuildResult {
         guard !ranges.isEmpty else { throw CompositionBuildError.emptyRangeList }
@@ -126,7 +136,7 @@ public struct CompositionBuilder: Sendable {
                 withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         else {
             // addMutableTrack only fails on invalid media types; unreachable.
-            throw CompositionBuildError.emptyRangeList
+            throw CompositionBuildError.trackCreationFailed
         }
 
         var cursor = CMTime.zero
@@ -259,11 +269,7 @@ public struct CompositionBuilder: Sendable {
             colorPrimaries: enforceSDR ? String(kCMFormatDescriptionColorPrimaries_ITU_R_709_2) : nil,
             colorTransferFunction: enforceSDR ? String(kCMFormatDescriptionTransferFunction_ITU_R_709_2) : nil,
             colorYCbCrMatrix: enforceSDR ? String(kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2) : nil,
-            // Highest segment rate wins so no segment judders.
-            frameDuration: infos
-                .map(\.minFrameDuration)
-                .filter { $0.isNumeric && $0 > .zero }
-                .min() ?? CMTime(value: 1, timescale: 30),
+            frameDuration: CompositionPlanner.compositorFrameDuration(infos),
             instructions: instructions,
             renderSize: canvas
         ))
@@ -305,6 +311,23 @@ public enum CompositionPlanner {
     public static func dynamicRangesMix(_ infos: [VideoTrackInfo]) -> Bool {
         let flags = Set(infos.map(\.isHDR))
         return flags.count > 1
+    }
+
+    /// Compositor tick for the conditional videoComposition. This is a
+    /// CADENCE decision, not frame math: `minFrameDuration` is the
+    /// min-ever sample gap — on VFR files it reads far below the real
+    /// cadence and would inflate compositor invocations for nothing
+    /// (cold-review finding 2; the D17 rule cuts the other way here).
+    /// `nominalFrameRate` — the average display rate — is the honest
+    /// tick. Highest segment rate wins so no segment judders; clamped to
+    /// 24–120 fps against garbage metadata.
+    public static func compositorFrameDuration(_ infos: [VideoTrackInfo]) -> CMTime {
+        let maxRate = infos
+            .map { Double($0.nominalFrameRate) }
+            .filter { $0.isFinite && $0 > 0 }
+            .max() ?? 30
+        let clamped = min(max(maxRate, 24), 120)
+        return CMTime(seconds: 1.0 / clamped, preferredTimescale: 600)
     }
 
     /// Orientation + aspect-fit + centering (pillarbox/letterbox default

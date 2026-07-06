@@ -86,9 +86,11 @@ func runSeams(env: HarnessEnv, variant: String) async throws {
             try await env.ensureFixture(FixtureSet.hlg),
             try await env.ensureFixture(FixtureSet.portrait),
         ]
+        // Start phase decoupled from the source cycle (finding 13 — with
+        // both keyed to i % 5 the 22 ranges were 5 pairs repeated).
         let ranges = (0..<22).map { i in
             let source = sources[i % sources.count]
-            let start = 1.777 + Double(i % 5) * 2.113
+            let start = 1.777 + Double(i % 7) * 1.913
             return PlayableRange(url: source, startSec: start, endSec: start + 1.7)
         }
         try await seamAB(env: env, gate: "seams-mixed", material: material, ranges: ranges)
@@ -149,7 +151,7 @@ private func measureSeamRun(
     if twoTrack {
         built = try await buildAlternatingTracks(ranges: ranges, cache: cache)
     } else {
-        built = try await CompositionBuilder(assetCache: cache).build(ranges: ranges)
+        built = try await CompositionBuilder(assetCache: cache).build(ranges: ranges, smoothCutAudio: true)
     }
 
     let player = AVPlayer()
@@ -180,9 +182,12 @@ private func measureSeamRun(
     for (k, segment) in built.segments.dropFirst().enumerated() {
         let boundary = MediaTime.seconds(segment.compositionStart)
         let segmentEnd = MediaTime.seconds(segment.compositionEnd)
+        // 1µs classification tolerance (finding 12): delivered display
+        // times land exactly on frame boundaries; a partial outgoing edge
+        // frame within 1ms below the seam must count as OUTGOING.
         guard
-            let before = samples.last(where: { $0.itemTimeSec < boundary - 0.001 }),
-            let after = samples.first(where: { $0.itemTimeSec >= boundary - 0.001 })
+            let before = samples.last(where: { $0.itemTimeSec < boundary - 0.000001 }),
+            let after = samples.first(where: { $0.itemTimeSec >= boundary - 0.000001 })
         else {
             holes += 1
             continue
@@ -292,10 +297,7 @@ private func buildAlternatingTracks(
         colorPrimaries: enforceSDR ? String(kCMFormatDescriptionColorPrimaries_ITU_R_709_2) : nil,
         colorTransferFunction: enforceSDR ? String(kCMFormatDescriptionTransferFunction_ITU_R_709_2) : nil,
         colorYCbCrMatrix: enforceSDR ? String(kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2) : nil,
-        frameDuration: infos
-            .map(\.minFrameDuration)
-            .filter { $0.isNumeric && $0 > .zero }
-            .min() ?? CMTime(value: 1, timescale: 30),
+        frameDuration: CompositionPlanner.compositorFrameDuration(infos),
         instructions: instructions,
         renderSize: canvas
     ))

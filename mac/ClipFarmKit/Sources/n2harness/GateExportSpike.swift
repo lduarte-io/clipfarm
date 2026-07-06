@@ -120,7 +120,7 @@ private func analyzeSplice(
     lines.append("- Apple-side cut frames: \(frameChecks.joined(separator: "; "))")
 
     // libav-side view (VLC's demux path).
-    let ffprobe = shell("/opt/homebrew/bin/ffprobe", [
+    let ffprobe = ffprobeOutput([
         "-v", "error", "-count_frames", "-select_streams", "v:0",
         "-show_entries", "stream=nb_read_frames,start_time,duration",
         "-of", "default=noprint_wrappers=1", url.path,
@@ -326,7 +326,7 @@ private func elstABExperiment(env: HarnessEnv) async throws {
             try await realSession.export(to: realURL, as: .mov)
             let duration = try await AVURLAsset(url: realURL).load(.duration).seconds
             let edits = try MP4BoxParser.editLists(in: realURL)
-            let ffprobe = shell("/opt/homebrew/bin/ffprobe", [
+            let ffprobe = ffprobeOutput([
                 "-v", "error", "-select_streams", "v:0",
                 "-show_entries", "stream=start_time,duration,nb_frames",
                 "-of", "default=noprint_wrappers=1", realURL.path,
@@ -342,6 +342,26 @@ private func elstABExperiment(env: HarnessEnv) async throws {
 
 // MARK: - shell helper (harness measurement only)
 
+/// Locate a measurement tool without assuming Homebrew-on-Apple-Silicon
+/// paths (finding 14). Harness-only — the app-side ffmpeg path goes
+/// through FFmpegLocator at N3.
+func locateTool(_ name: String) -> String? {
+    let candidates = [
+        "/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)", "/usr/bin/\(name)",
+    ]
+    return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+}
+
+func ffprobeOutput(_ arguments: [String]) -> String {
+    guard let ffprobe = locateTool("ffprobe") else {
+        return "ffprobe not found (looked in /opt/homebrew/bin, /usr/local/bin, /usr/bin) — libav leg skipped"
+    }
+    return shell(ffprobe, arguments)
+}
+
+/// Small-output helper only (reads the pipe after exit — fine for
+/// ffprobe/ps one-liners, would deadlock on large output; noted at
+/// review, accepted for harness use).
 func shell(_ launchPath: String, _ arguments: [String]) -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: launchPath)

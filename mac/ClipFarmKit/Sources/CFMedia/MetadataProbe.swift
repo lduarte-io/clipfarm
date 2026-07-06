@@ -42,7 +42,12 @@ public struct SourceMetadata: Sendable, Equatable {
 }
 
 public enum MetadataProbeError: Error, Equatable {
-    case unreadable(url: URL)
+    /// One typed failure shape for every load that can go wrong inside the
+    /// probe (duration, track lists, per-track properties) — N3's ingest
+    /// consumes this and shouldn't have to catch raw AVFoundation errors
+    /// (cold-review finding 7). `detail` carries the underlying error text
+    /// for diagnostics.
+    case unreadable(url: URL, detail: String)
 }
 
 public enum MetadataProbe {
@@ -51,10 +56,19 @@ public enum MetadataProbe {
     }
 
     static func probe(asset: AVURLAsset) async throws -> SourceMetadata {
-        let url = asset.url
-        guard let duration = try? await asset.load(.duration) else {
-            throw MetadataProbeError.unreadable(url: url)
+        do {
+            return try await probeUnchecked(asset: asset)
+        } catch let error as MetadataProbeError {
+            throw error
+        } catch {
+            throw MetadataProbeError.unreadable(
+                url: asset.url, detail: String(describing: error))
         }
+    }
+
+    private static func probeUnchecked(asset: AVURLAsset) async throws -> SourceMetadata {
+        let url = asset.url
+        let duration = try await asset.load(.duration)
 
         var videoInfo: VideoTrackInfo?
         if let track = try await asset.loadTracks(withMediaType: .video).first {
