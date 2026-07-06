@@ -8,7 +8,7 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 **Manual verify: DEFERRED** (N1 tier = auto-continue; queue for the next hard stop — N2's by tier table, N4's combined verify covers N1 formally). Checklist for Lillian:
 
-1. `cd mac/ClipFarmKit && swift test` → 116 tests green (~30s cold build, <1s test run).
+1. `cd mac/ClipFarmKit && swift test` → 118 tests green (~30s cold build, <1s test run).
 2. `cd mac && xcodebuild -scheme ClipFarm -configuration Debug build | xcbeautify -q` → clean (the app no longer carries the N0 linkage probe).
 3. Schema check — pre-verified in-session against a scratch library (`sqlite3 <lib>/clipfarm.db .schema` matches plan §2.3 exactly: all ten tables + `clips_fts` + three sync triggers + the `COALESCE` unique index; `.snapshots/` pruned to exactly 50 after 56 snapshot calls; the pre-destructive snapshot held the pre-change rows while the main DB held the post-change state). To re-verify by hand, any CFStore test's temp library works, or ask a session to re-run the scratch-evidence drill.
 
@@ -45,11 +45,11 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 **Naming deviation:** the reference's `Category` type is **`ClipCategory`** in Swift — `Category` collides with an SDK type in any Foundation-importing file ("port semantics, not spellings").
 
-**Provisional calls (3) — logged in `QUESTIONS.md`:**
+**Provisional calls (3) — all RESOLVED (Lillian, 2026-07-06, live ahead of the checkpoint; `QUESTIONS.md` → Answered):**
 
-1. **Settings writes are not undo-registered.** mac/CLAUDE.md's blanket "every store mutation lands with a register→undo→redo test" vs the platform convention that config changes never sit on the document undo stack. Options: (a) undo-register settings too; (b) scope undo to library-content mutations; (c) defer settings to N3. Implemented **(b)** — D18's re-apply action (the thing that changes *data*) is snapshot-protected + undoable at N3 regardless. **PROVISIONAL.**
-2. **Snapshot filename token is a random 4-hex collision token, not a content hash.** The reference hashed file bytes; with `VACUUM INTO` the content isn't knowable pre-copy without reading the whole DB (+WAL). The spec's stated purpose is same-millisecond collision avoidance, which the token satisfies (tested under a frozen clock). Options: hash live file bytes / random token / meta counter. Implemented **token**. **PROVISIONAL.**
-3. **`tailPaddingSec` defaults to 0.0** (inert — equivalent to word-end until N3's UI exposes it). D18 names "fixed padding +N ms" without a default N; scaffolding must not invent a listening-behavior default. **PROVISIONAL.**
+1. **Settings writes are not undo-registered.** mac/CLAUDE.md's blanket "every store mutation lands with a register→undo→redo test" vs the platform convention that config changes never sit on the document undo stack. Options: (a) undo-register settings too; (b) scope undo to library-content mutations; (c) defer settings to N3. Implemented **(b)** — D18's re-apply action (the thing that changes *data*) is snapshot-protected + undoable at N3 regardless. **Answered: keep as implemented** — content-only undo is final.
+2. **Snapshot filename token is a random 4-hex collision token, not a content hash.** The reference hashed file bytes; with `VACUUM INTO` the content isn't knowable pre-copy without reading the whole DB (+WAL). The spec's stated purpose is same-millisecond collision avoidance, which the token satisfies (tested under a frozen clock). Options: hash live file bytes / random token / meta counter. Implemented **token**. **Answered: keep as implemented.**
+3. **`tailPaddingSec` default.** D18 names "fixed padding +N ms" without a default N. Options: 0.0 (inert until N3's UI exposes it) / ~0.25s / no default. Implemented 0.0. **Answered: CHANGED — Lillian picked 0.25s**; reworked in `LibrarySettings.swift` + tests at the adjudication pass. N3's segmentation UI can still revisit once results are audible.
 
 **Recorded divergences from the Python reference (adjudicated against spec/plan):**
 
@@ -65,7 +65,20 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 
 **Swift Testing gotcha (for future phases):** a closure whose only `try`s live inside `#expect` macros is inferred non-throwing (macro bodies are invisible to throws inference) — annotate such closures `{ (x) throws in … }`. Two tests carry the comment.
 
-**Test counts:** **116 green** (`swift test`, <1s run): CFDomainTests 51 (resolver 14, continuity 9, refresh 5, identifiers 11, model defaults + Codable + uniqueness rule 12), CFStoreTests 57 (open/schema 7, round-trip 8, uniqueness 7, integrity 3, snapshots 9, migrations 4, settings 5, FTS sync 3, undo 7, manager 4), CFLLMTests 6, smoke (CFMedia/CFExport markers) 2. Baseline for N2. `xcodebuild` app build clean.
+**Cold review (2026-07-06) — findings & dispositions** (review 2 of 2; reviewer ran with zero implementation context; all ten findings adjudicated implementer-vs-reviewer and ACCEPTED — the reviewer was right on every count; fixed the same day):
+
+1. **[MINOR] Failed-VACUUM cleanup could delete a pre-existing valid snapshot; the test pinned the hazard as the contract** → **ACCEPTED.** Correct and the sharpest finding: a same-ms + same-token filename collision (~1/65536 per same-ms pair) would have made the failure path destroy the *older good snapshot* — the crash-surviving belt. Fixed: `writeSnapshot` records `fileExists` before the VACUUM and removes the file on failure only if it did NOT pre-exist; the test is reworked (`failedSnapshotNeverDestroysAPreexistingFile`) to assert the pre-existing file survives byte-identical while the error still propagates.
+2. **[MINOR] FTS5 external-content index is keyed to `clips`' implicit rowid; `VACUUM INTO` is not documented to preserve implicit rowids → latent restore-time desync** → **ACCEPTED.** Nothing broken today (reviewer verified empirically on SQLite 3.51), but the guarantee is absent from the docs. Fixed as proposed: a RESTORE-TIME CAVEAT comment now sits on the trigger block in `LibrarySchema.swift` instructing the restore implementer (Settings→Restore / N13) to run `INSERT INTO clips_fts(clips_fts) VALUES('rebuild')` after opening a restored database. N13 owns the runtime fix.
+3. **[MINOR] ID allocation and uniqueness validation ran outside the write transaction (TOCTOU)** → **ACCEPTED.** Safe today (@MainActor + synchronous), but the closeout itself contemplates a future nonisolated bulk writer at N7 — check-then-act must not straddle accesses. Fixed: `addSource` allocates inside its `dbPool.write`; `addClipProjectTag` fetches + validates + inserts in one transaction. Zero behavior change; existing tests pass unchanged.
+4. **[MINOR] `LibraryManager.open` failure path violated the `storeDidChange` contract** → **ACCEPTED.** The outgoing store is already closed by then — exactly when observers need teardown. Fixed: the catch path fires `storeDidChange?(nil)` before rethrowing; failure semantics documented; new regression test `failedOpenFiresStoreDidChangeNilAndClearsState` (superseded-library folder → open throws → events `[true, false]`, store nil, undo cleared).
+5. **[MINOR] `LibraryStore.open` leaked the `DatabasePool` when migrate/stamp/integrity threw** → **ACCEPTED.** Only the superseded branch closed the pool. Fixed: all post-pool steps wrapped in one `do/catch { try? dbPool.close(); throw }` (the superseded branch folded into it).
+6. **[MINOR] `Project.name` min_length=1 validation dropped without being recorded** → **ACCEPTED.** Real reference divergence the divergence list missed. Fixed the stronger way: `StateValidationError.emptyProjectName` added to `ClipFarmState.validate()` (the import/load seam; struct construction stays unchecked — N6's project ops are the other enforcement seam, documented in code), + domain test `emptyProjectNameFailsValidation`.
+7. **[NIT] Model-options list mixed ID forms (dated Haiku ID vs aliases)** → **ACCEPTED.** `claude-haiku-4-5-20251001` → the canonical alias `claude-haiku-4-5` in `TaggingPreferences.anthropicModelOptions` + tests (reviewer verified all three against the current Anthropic catalog). Recorded as a deliberate deviation from the reference's dated ID.
+8. **[NIT] `importState` doc said "entire library content" but leaves `settings` untouched** → **ACCEPTED.** Doc now states the `settings`/`meta` tables are deliberately untouched (not part of the documented JSON shape) and names N13 as owner of the do-settings-travel-with-a-backup decision.
+9. **[NIT] `performDestructive` carries only half of the "snapshot AND undo — both, always" invariant with no reminder** → **ACCEPTED.** Doc sentence added: every call site (N5 onward) must pair it with `registerUndo(actionName:inverse:reapply:)`.
+10. **[NIT] `Overlay.type` silently widened from `Literal["blackout"]` to free `String`** → **ACCEPTED.** Constraint comment added at the field: make it an enum when N18 activates `tracks`.
+
+**Test counts:** **118 green** (`swift test`, <1s run; 116 at first closeout + 2 from the cold-review adjudication): CFDomainTests 52 (resolver 14, continuity 9, refresh 5, identifiers 11, model defaults + Codable + validation rules 13), CFStoreTests 58 (open/schema 7, round-trip 8, uniqueness 7, integrity 3, snapshots 9, migrations 4, settings 5, FTS sync 3, undo 7, manager 5), CFLLMTests 6, smoke (CFMedia/CFExport markers) 2. Baseline for N2. `xcodebuild` app build clean.
 
 **Next-phase delta (N2, per the closeout ritual — plan §4/N2 read in full):**
 
@@ -75,7 +88,7 @@ Phases move here from `PHASES.md` once Lillian has manually verified them. Each 
 4. **UndoManager is @MainActor in the macOS 26 SDK** (see platform discovery above) — N2 doesn't register undo, but any phase that does inherits the method-level-@MainActor pattern, and undo-driving tests are `@MainActor @Test`.
 5. **Marker cleanup continues:** delete `CFMediaModule` (+ smoke test) as N2's real CFMedia code lands; `CFExportModule` goes when the export mini-spike writes real CFExport code (or at N12, whichever first).
 6. **Footage stays read-only:** N2's gates run against real files in the dogfood folder — reads only, ever; no shell writes there (standing rule).
-7. `swift test` baseline is 116; N2 adds CFMedia tests where logic is testable without hardware timing (gate measurements are the harness's job, not unit tests).
+7. `swift test` baseline is 118 (post-adjudication); N2 adds CFMedia tests where logic is testable without hardware timing (gate measurements are the harness's job, not unit tests).
 
 **Files:**
 
@@ -109,6 +122,22 @@ MODIFIED:
   COMPLETED_PHASES.md                  — this entry
   KICKOFF_MESSAGES.md                  — N1 marked used; N2 kickoff queued
   QUESTIONS.md                         — 3 PROVISIONAL items
+
+ADJUDICATION FOLLOW-UP (2026-07-06, same-day commit):
+  mac/ClipFarmKit/Sources/CFStore/Snapshots.swift        — findings 1, 9
+  mac/ClipFarmKit/Sources/CFStore/LibrarySchema.swift    — finding 2
+  mac/ClipFarmKit/Sources/CFStore/StoreMutations.swift   — findings 3, 8
+  mac/ClipFarmKit/Sources/CFStore/LibraryManager.swift   — finding 4
+  mac/ClipFarmKit/Sources/CFStore/LibraryStore.swift     — finding 5
+  mac/ClipFarmKit/Sources/CFDomain/ClipFarmState.swift   — finding 6
+  mac/ClipFarmKit/Sources/CFDomain/Entities.swift        — finding 10
+  mac/ClipFarmKit/Sources/CFLLM/TaggingPreferences.swift — finding 7
+  mac/ClipFarmKit/Sources/CFStore/LibrarySettings.swift  — tailPaddingSec 0.25 (Lillian)
+  Tests: SnapshotTests (reworked), LibraryManagerTests (+1),
+         ModelDefaultsTests (+1), LibrarySettingsTests, TaggingPreferencesTests
+  .gitignore + .obsidian/ untracked    — authorized by Lillian (files stay on disk)
+  QUESTIONS.md                         — all 4 open items → Answered
+  COMPLETED_PHASES.md                  — dispositions block; provisionals flipped
 ```
 
 ---

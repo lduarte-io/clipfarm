@@ -59,26 +59,34 @@ public final class LibraryStore {
         let databaseURL = folderURL.appendingPathComponent(databaseFilename)
         let dbPool = try DatabasePool(path: databaseURL.path)
 
-        let migrator = LibrarySchema.migrator()
-        let superseded = try dbPool.read { db in
-            try migrator.hasBeenSuperseded(db)
-        }
-        guard !superseded else {
-            try? dbPool.close()
-            throw LibraryStoreError.librarySupersededByNewerApp(databaseURL: databaseURL)
-        }
-        try migrator.migrate(dbPool)
+        // Any throw past this point must close the pool — a leaked pool
+        // holds file handles until deinit, and the close→swap→reopen path
+        // exists precisely to make reopening the same folder reliable
+        // (cold-review finding 5).
+        do {
+            let migrator = LibrarySchema.migrator()
+            let superseded = try dbPool.read { db in
+                try migrator.hasBeenSuperseded(db)
+            }
+            guard !superseded else {
+                throw LibraryStoreError.librarySupersededByNewerApp(databaseURL: databaseURL)
+            }
+            try migrator.migrate(dbPool)
 
-        let store = LibraryStore(
-            folderURL: folderURL,
-            databaseURL: databaseURL,
-            dbPool: dbPool,
-            undoManager: undoManager,
-            now: now
-        )
-        try store.stampCreatedAtIfNeeded()
-        try store.runSourceIntegrityCheck()
-        return store
+            let store = LibraryStore(
+                folderURL: folderURL,
+                databaseURL: databaseURL,
+                dbPool: dbPool,
+                undoManager: undoManager,
+                now: now
+            )
+            try store.stampCreatedAtIfNeeded()
+            try store.runSourceIntegrityCheck()
+            return store
+        } catch {
+            try? dbPool.close()
+            throw error
+        }
     }
 
     /// Closes the underlying database. The store is unusable afterward;

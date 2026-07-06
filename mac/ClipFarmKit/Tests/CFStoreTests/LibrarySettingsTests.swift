@@ -14,6 +14,7 @@ import Testing
         #expect(settings == LibrarySettings())
         #expect(settings.silenceThresholdSec == 2.0)
         #expect(settings.tailPolicy == .extendToNextWordStart)
+        #expect(settings.tailPaddingSec == 0.25)  // Lillian, 2026-07-06
     }
 }
 
@@ -22,7 +23,7 @@ import Testing
         var settings = LibrarySettings()
         settings.silenceThresholdSec = 1.5
         settings.tailPolicy = .fixedPadding
-        settings.tailPaddingSec = 0.25
+        settings.tailPaddingSec = 0.4  // non-default, so the round-trip is meaningful
         try store.updateLibrarySettings(settings)
         #expect(try store.librarySettings() == settings)
     }

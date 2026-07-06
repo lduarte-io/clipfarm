@@ -30,12 +30,12 @@ private func makeSuite() -> (UserDefaults, String) {
     defer { defaults.removePersistentDomain(forName: name) }
     let prefs = TaggingPreferences(defaults: defaults)
     prefs.provider = .anthropic
-    prefs.anthropicModel = "claude-haiku-4-5-20251001"
+    prefs.anthropicModel = "claude-haiku-4-5"
     prefs.ollamaModel = "qwen2.5:14b"
 
     let reread = TaggingPreferences(defaults: defaults)
     #expect(reread.provider == .anthropic)
-    #expect(reread.anthropicModel == "claude-haiku-4-5-20251001")
+    #expect(reread.anthropicModel == "claude-haiku-4-5")
     #expect(reread.ollamaModel == "qwen2.5:14b")
 }
 
@@ -83,5 +83,5 @@ private func makeSuite() -> (UserDefaults, String) {
 @Test func anthropicModelOptionsExposeTheKnownGoodSet() {
     #expect(TaggingPreferences.anthropicModelOptions.contains("claude-sonnet-4-6"))
     #expect(TaggingPreferences.anthropicModelOptions.contains("claude-opus-4-7"))
-    #expect(TaggingPreferences.anthropicModelOptions.contains("claude-haiku-4-5-20251001"))
+    #expect(TaggingPreferences.anthropicModelOptions.contains("claude-haiku-4-5"))
 }

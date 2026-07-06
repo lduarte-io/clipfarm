@@ -99,10 +99,21 @@ public func validateClipProjectTagUniqueness(_ tags: [ClipProjectTag]) throws {
     }
 }
 
+public enum StateValidationError: Error, Equatable {
+    /// The reference model required `name: min_length=1`; empty-named
+    /// projects are rejected at the same seams (import/load + mutations).
+    case emptyProjectName(projectID: String)
+}
+
 extension ClipFarmState {
     /// Validates cross-entity domain rules. Called by CFStore on import and
-    /// by mutation paths before rows land.
+    /// by mutation paths before rows land. (Struct construction itself is
+    /// unchecked — this function is the enforcement seam, plus N6's
+    /// create/update-project ops.)
     public func validate() throws {
         try validateClipProjectTagUniqueness(clipProjectTags)
+        for (id, project) in projects where project.name.isEmpty {
+            throw StateValidationError.emptyProjectName(projectID: id)
+        }
     }
 }

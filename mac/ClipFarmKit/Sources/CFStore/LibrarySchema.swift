@@ -141,6 +141,16 @@ enum LibrarySchema {
                 -- text, kept in sync by triggers so search never surfaces
                 -- deleted clips or stale text — including through undo,
                 -- which replays ordinary INSERT/UPDATE/DELETE statements.
+                --
+                -- RESTORE-TIME CAVEAT (cold-review finding 2): the index is
+                -- keyed to clips' IMPLICIT rowid (TEXT primary key), and
+                -- SQLite does not document that VACUUM/VACUUM INTO preserves
+                -- implicit rowids (observed to hold on 3.51, guaranteed
+                -- nowhere). Whoever implements snapshot/backup restore
+                -- (Settings→Restore / N13) MUST run
+                --   INSERT INTO clips_fts(clips_fts) VALUES('rebuild')
+                -- after opening a restored database, or renumbered rowids
+                -- silently desync search from the clips table.
                 CREATE VIRTUAL TABLE clips_fts USING fts5(
                     transcript_text,
                     content='clips',

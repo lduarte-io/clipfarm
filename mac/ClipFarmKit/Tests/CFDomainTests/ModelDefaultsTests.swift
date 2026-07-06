@@ -169,3 +169,17 @@ import Testing
         ClipProjectTag(clipID: "c1", projectID: "p1", projectTagID: "t1", category: .standaloneIdea),
     ])
 }
+
+@Test func emptyProjectNameFailsValidation() {
+    // Reference parity: the Pydantic model required min_length=1 on
+    // Project.name — validate() is the Swift enforcement seam.
+    var state = ClipFarmState()
+    state.projects["1"] = Project(name: "", createdAt: Fixtures.timestamp)
+    #expect(throws: StateValidationError.emptyProjectName(projectID: "1")) {
+        try state.validate()
+    }
+    state.projects["1"] = Project(name: "named", createdAt: Fixtures.timestamp)
+    #expect(throws: Never.self) {
+        try state.validate()
+    }
+}

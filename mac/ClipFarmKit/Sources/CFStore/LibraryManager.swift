@@ -33,13 +33,24 @@ public final class LibraryManager {
     }
 
     /// Opens the library at `folderURL`, closing any current library first.
+    ///
+    /// Failure semantics: by the time `LibraryStore.open` can throw, the
+    /// outgoing store is already closed and the undo stack cleared — so the
+    /// failure path fires `storeDidChange?(nil)` before rethrowing.
+    /// Observers must hear about the dead store exactly when their
+    /// ValueObservations need tearing down (cold-review finding 4).
     @discardableResult
     public func open(at folderURL: URL) throws -> LibraryStore {
         try closeCurrentStore()
-        let opened = try LibraryStore.open(at: folderURL, undoManager: undoManager, now: now)
-        store = opened
-        storeDidChange?(opened)
-        return opened
+        do {
+            let opened = try LibraryStore.open(at: folderURL, undoManager: undoManager, now: now)
+            store = opened
+            storeDidChange?(opened)
+            return opened
+        } catch {
+            storeDidChange?(nil)
+            throw error
+        }
     }
 
     /// Alias for `open(at:)` that reads as intent at call sites

@@ -81,6 +81,10 @@ public struct VideoOverride: Equatable, Sendable {
 public struct Overlay: Equatable, Sendable {
     public var startSec: Double
     public var endSec: Double
+    /// The reference constrained this to `Literal["blackout"]`. Kept as a
+    /// free string only while the field is dead (`tracks` is NULL until
+    /// N18) — when N18 activates overlays, make this an enum to restore
+    /// the constraint.
     public var type: String
     public var color: String
 

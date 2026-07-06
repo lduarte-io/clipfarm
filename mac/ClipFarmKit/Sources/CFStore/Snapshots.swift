@@ -30,6 +30,12 @@ extension LibraryStore {
 
     /// Snapshot, then run `mutation` inside a transaction — one barrier
     /// access, so the snapshot is always the exact pre-change state.
+    ///
+    /// This is HALF of the destructive-op invariant. mac/CLAUDE.md: every
+    /// destructive operation takes a DB snapshot AND registers undo with a
+    /// named action — both, always. This helper provides the snapshot;
+    /// every call site (N5 boundary ops onward) must pair it with
+    /// `registerUndo(actionName:inverse:reapply:)`.
     @discardableResult
     public func performDestructive<T>(
         reason: String,
@@ -74,12 +80,17 @@ extension LibraryStore {
     }
 
     func writeSnapshot(_ db: Database, to url: URL) throws {
+        // Recorded BEFORE the VACUUM so the failure path can distinguish a
+        // genuinely partial file (ours — remove it) from a pre-existing
+        // snapshot that caused a filename collision (never destroy it:
+        // snapshots are the crash-surviving belt; cold-review finding 1).
+        let existedBefore = FileManager.default.fileExists(atPath: url.path)
         do {
             try db.execute(sql: "VACUUM INTO ?", arguments: [url.path])
         } catch {
-            // Partial-file cleanup: a failed VACUUM INTO can leave a
-            // half-written file behind.
-            try? FileManager.default.removeItem(at: url)
+            if !existedBefore {
+                try? FileManager.default.removeItem(at: url)
+            }
             throw error
         }
     }

@@ -49,11 +49,15 @@ extension LibraryStore {
     @MainActor
     @discardableResult
     public func addSource(_ source: Source, id explicitID: String? = nil) throws -> String {
-        let id = try explicitID ?? dbPool.read { db in
-            nextNumericID(over: try String.fetchAll(db, sql: "SELECT id FROM sources"))
-        }
-        try dbPool.write { db in
+        // Allocation happens INSIDE the write transaction (cold-review
+        // finding 3): check-then-act must never straddle two accesses, so a
+        // future nonisolated bulk writer can't race the allocator.
+        let id = try dbPool.write { db -> String in
+            let id = try explicitID ?? nextNumericID(
+                over: String.fetchAll(db, sql: "SELECT id FROM sources")
+            )
             try SourceRecord(id: id, source: source).insert(db)
+            return id
         }
         registerUndo(
             actionName: "Add Source",
@@ -110,11 +114,12 @@ extension LibraryStore {
     /// unique index is the backstop. Undoable ("Tag Clip").
     @MainActor
     public func addClipProjectTag(_ tag: ClipProjectTag) throws {
-        let existing = try dbPool.read { db in
-            try ClipProjectTagRecord.fetchAll(db).map(\.clipProjectTag)
-        }
-        try validateClipProjectTagUniqueness(existing + [tag])
+        // Validate-then-insert in ONE transaction (cold-review finding 3):
+        // otherwise a future nonisolated writer could interleave, demoting
+        // the typed domain error to the index backstop's DatabaseError.
         try dbPool.write { db in
+            let existing = try ClipProjectTagRecord.fetchAll(db).map(\.clipProjectTag)
+            try validateClipProjectTagUniqueness(existing + [tag])
             try ClipProjectTagRecord(tag).insert(db)
         }
         registerUndo(
@@ -143,11 +148,14 @@ extension LibraryStore {
         )
     }
 
-    /// Replaces the entire library content with `state` in one transaction —
-    /// the fixture/restore primitive (and the eventual N13 backup-restore
-    /// substrate). Deliberately NOT undo-registered: a whole-library replace
-    /// clears the undo stack by design (stale inverses must never fire
-    /// against replaced state).
+    /// Replaces the library's *domain content* with `state` in one
+    /// transaction — the fixture/restore primitive (and the eventual N13
+    /// backup-restore substrate). The `settings` and `meta` tables are
+    /// deliberately untouched: neither is part of the documented JSON
+    /// shape; whether settings travel with a backup is an N13 decision.
+    /// Deliberately NOT undo-registered: a whole-library replace clears the
+    /// undo stack by design (stale inverses must never fire against
+    /// replaced state).
     @MainActor
     public func importState(_ state: ClipFarmState) throws {
         try state.validate()

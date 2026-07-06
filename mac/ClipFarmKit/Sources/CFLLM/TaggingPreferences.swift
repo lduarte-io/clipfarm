@@ -15,11 +15,13 @@ public struct TaggingPreferences {
     public static let defaultOllamaModel = "llama3.1:8b"
     public static let defaultAnthropicModel = "claude-sonnet-4-6"
     /// Known-good models surfaced in the Settings UI; free-text entry stays
-    /// allowed so new models need no code change.
+    /// allowed so new models need no code change. Canonical aliases
+    /// throughout (the reference used the dated Haiku ID; the alias form is
+    /// the recommended one and consistent with the other entries).
     public static let anthropicModelOptions = [
         "claude-sonnet-4-6",
         "claude-opus-4-7",
-        "claude-haiku-4-5-20251001",
+        "claude-haiku-4-5",
     ]
 
     enum Keys {

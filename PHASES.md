@@ -19,7 +19,7 @@ Phase numbering matches the spec's build order (steps 0–11).
 
 ## Phase N1 — Built ✅ 2026-07-06 (manual verify DEFERRED per N1 tier)
 
-Domain models + persistence core for the native rewrite. Plan entry committed pre-implementation in `911c939` (per the N0 finding-1 process rule); closeout in [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase N1 — 116 tests green, three PROVISIONAL calls (`QUESTIONS.md`), one platform discovery (UndoManager is `NS_SWIFT_UI_ACTOR` in the macOS 26 SDK → method-level `@MainActor` on undo-registering mutations), N2 delta recorded. **Next phase: N2** (kickoff queued in `KICKOFF_MESSAGES.md`).
+Domain models + persistence core for the native rewrite. Plan entry committed pre-implementation in `911c939` (per the N0 finding-1 process rule); closeout in [`COMPLETED_PHASES.md`](./COMPLETED_PHASES.md) → Phase N1 — 118 tests green after the cold-review adjudication (10 findings, all accepted, fixed 2026-07-06), three PROVISIONAL calls **all resolved by Lillian 2026-07-06** (items 1–2 keep-as-implemented; tailPaddingSec reworked to 0.25s; `QUESTIONS.md` → Answered), one platform discovery (UndoManager is `NS_SWIFT_UI_ACTOR` in the macOS 26 SDK → method-level `@MainActor` on undo-registering mutations), N2 delta recorded. **Next phase: N2** (kickoff queued in `KICKOFF_MESSAGES.md`).
 
 ---
 

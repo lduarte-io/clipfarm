@@ -26,15 +26,15 @@ public struct LibrarySettings: Equatable, Sendable {
     /// `>=` this — the load-bearing comparison, tested by name at N3).
     public var silenceThresholdSec: Double
     public var tailPolicy: SegmentationTailPolicy
-    /// Padding used by `.fixedPadding`. Default 0.0 is deliberately inert
-    /// (equivalent to word-end); the real default is an N3 call —
-    /// PROVISIONAL, see QUESTIONS.md.
+    /// Padding used by `.fixedPadding`. Default 0.25s (Lillian,
+    /// 2026-07-06 — resolved the N1 PROVISIONAL); N3's segmentation UI can
+    /// revisit once results are audible.
     public var tailPaddingSec: Double
 
     public init(
         silenceThresholdSec: Double = 2.0,
         tailPolicy: SegmentationTailPolicy = .extendToNextWordStart,
-        tailPaddingSec: Double = 0.0
+        tailPaddingSec: Double = 0.25
     ) {
         self.silenceThresholdSec = silenceThresholdSec
         self.tailPolicy = tailPolicy
@@ -72,7 +72,8 @@ extension LibraryStore {
 
     /// Settings writes are deliberately NOT undo-registered — configuration
     /// changes don't sit on the document undo stack (platform convention;
-    /// PROVISIONAL call recorded in the N1 phase entry + QUESTIONS.md).
+    /// undo coverage is scoped to library-content mutations — resolved by
+    /// Lillian 2026-07-06, see QUESTIONS.md → Answered).
     public func updateLibrarySettings(_ settings: LibrarySettings) throws {
         try dbPool.write { db in
             try SettingRecord(

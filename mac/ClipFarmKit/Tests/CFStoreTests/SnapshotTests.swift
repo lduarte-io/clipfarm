@@ -103,22 +103,26 @@ private func clipCount(inSnapshot url: URL) throws -> Int {
     }
 }
 
-@MainActor @Test func failedSnapshotCleansUpThePartialFile() throws {
-    // VACUUM INTO refuses an existing target; the failure path must remove
-    // whatever half-written file is at the target and rethrow.
+@MainActor @Test func failedSnapshotNeverDestroysAPreexistingFile() throws {
+    // VACUUM INTO refuses an existing target. On that failure the cleanup
+    // must NOT remove the pre-existing file — a same-millisecond filename
+    // collision with an older good snapshot must never destroy it (the
+    // cleanup only removes a file the failed VACUUM itself created).
     try withScratchStore { store in
         try FileManager.default.createDirectory(
             at: store.snapshotsDirectoryURL, withIntermediateDirectories: true
         )
         let target = store.snapshotsDirectoryURL.appendingPathComponent("preexisting.db")
-        try Data("partial garbage".utf8).write(to: target)
+        let originalContents = Data("an older, still-good snapshot".utf8)
+        try originalContents.write(to: target)
 
         #expect(throws: DatabaseError.self) {
             try store.dbPool.writeWithoutTransaction { db in
                 try store.writeSnapshot(db, to: target)
             }
         }
-        #expect(!FileManager.default.fileExists(atPath: target.path))
+        // The error propagated AND the pre-existing file survived intact.
+        #expect(try Data(contentsOf: target) == originalContents)
     }
 }
 
