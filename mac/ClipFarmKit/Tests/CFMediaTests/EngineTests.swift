@@ -82,6 +82,23 @@ import Testing
 }
 
 @MainActor
+@Test func loadClampsPreservedPositionIntoTheNewComposition() async throws {
+    // Engine-contract clarification from the N2 watch session (binding
+    // for N4+): a preserved position at/past the new composition's end
+    // (playback ran to the end, or the edit shortened the assembly) must
+    // clamp to a displayable frame — never pre-seek past the last frame
+    // onto black.
+    let a = try await TestFixtures.shared.url(for: TinySpec.h264)
+    let engine = PlayerEngine()
+    let ranges = [PlayableRange(url: a, startSec: 0, endSec: 1.25)]
+    try await engine.load(ranges: ranges, smoothCutAudio: true, at: 999.0)
+    let item = try #require(engine.player.currentItem)
+    let position = item.currentTime().seconds
+    #expect(position <= 1.25)
+    #expect(position > 1.1)  // clamped near the end, not reset to zero
+}
+
+@MainActor
 @Test func clearLoopDisarmsTheObserver() async throws {
     let a = try await TestFixtures.shared.url(for: TinySpec.h264)
     let engine = PlayerEngine()

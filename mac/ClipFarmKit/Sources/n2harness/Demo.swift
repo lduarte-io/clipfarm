@@ -13,8 +13,9 @@ import QuartzCore
 /// Default assembly = footage-inbox files interleaved with the HLG-HDR and
 /// portrait fixtures (exercises D29 + D32 in one watch); `--real`
 /// restricts it to inbox files only. Space = play/pause, R = reload
-/// (swap-blink eyeball), L = 1.5s loop at the current position (trim-loop
-/// eyeball), Esc/Q = quit.
+/// (swap-blink eyeball; restarts from the top if playback ended), L =
+/// toggle a 1.5s loop at the playhead (trim-loop eyeball; L again
+/// clears), Esc/Q = quit.
 ///
 /// Presentation wiring (black-window incident, 2026-07-06): the original
 /// demo added the AVPlayerLayer as a sublayer of the view's lazily-created
@@ -170,7 +171,7 @@ func runDemo(env: HarnessEnv, realOnly: Bool, selfCheck: Bool = false) async thr
             window.makeFirstResponder(view)
             app.activate()
             engine.play()
-            print("demo: playing \(ranges.count) ranges. Space=pause  R=reload(swap)  L=loop-here  Esc/Q=quit  (if the window isn't frontmost, click it or use Cmd-Tab)")
+            print("demo: playing \(ranges.count) ranges. Space=pause  R=reload(swap; restarts if ended)  L=loop-toggle (1.5s at playhead; L again clears)  Esc/Q=quit  (if the window isn't frontmost, click it or use Cmd-Tab)")
             fflush(stdout)
             app.run()
         }
@@ -186,6 +187,10 @@ final class PlayerHostView: NSView {
     private let engine: PlayerEngine
     private let ranges: [PlayableRange]
     private let playerLayer: AVPlayerLayer
+    /// Demo-side loop state — L is a toggle (watch-session finding 2:
+    /// an armed loop was inescapable; R deliberately does NOT clear it —
+    /// loop-survives-swap is the engine contract).
+    private var loopArmed = false
 
     /// The AVPlayerLayer for self-check inspection.
     var presentationLayer: AVPlayerLayer { playerLayer }
@@ -215,16 +220,31 @@ final class PlayerHostView: NSView {
             engine.isPlaying ? engine.pause() : engine.play()
         case "r":
             Task { @MainActor in
+                // Reload after playback ENDED restarts from the top
+                // (watch-session finding 1); the engine additionally
+                // clamps any preserved position into the new
+                // composition's displayable range.
                 let at = engine.currentTimeSec
-                try? await engine.load(ranges: ranges, smoothCutAudio: true, at: at)
+                let resume = at >= engine.durationSec - 0.1 ? 0 : at
+                try? await engine.load(ranges: ranges, smoothCutAudio: true, at: resume)
                 engine.play()
             }
         case "l":
-            // Clamp inside the composition (finding 10): a window end past
-            // the duration never fires and the loop silently no-ops.
-            let at = engine.currentTimeSec
-            let end = min(at + 0.75, max(0.1, engine.durationSec - 0.05))
-            engine.loop(windowStartSec: max(0, end - 1.5), windowEndSec: end)
+            if loopArmed {
+                engine.clearLoop()
+                loopArmed = false
+                print("demo: loop cleared")
+                fflush(stdout)
+            } else {
+                // Clamp inside the composition (finding 10): a window end
+                // past the duration never fires — the loop would no-op.
+                let at = engine.currentTimeSec
+                let end = min(at + 0.75, max(0.1, engine.durationSec - 0.05))
+                engine.loop(windowStartSec: max(0, end - 1.5), windowEndSec: end)
+                loopArmed = true
+                print("demo: loop armed [\(fmt(max(0, end - 1.5), 2))–\(fmt(end, 2))] — press L again to clear")
+                fflush(stdout)
+            }
             engine.play()
         case "q", "\u{1b}":
             NSApplication.shared.terminate(nil)

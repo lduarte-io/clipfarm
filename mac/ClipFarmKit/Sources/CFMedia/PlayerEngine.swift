@@ -90,7 +90,14 @@ public final class PlayerEngine {
         let item = result.makePlayerItem()
         itemConfigurator?(item)
 
-        let target = MediaTime.time(seconds)
+        // Engine-contract clarification (N2 watch-session finding; binding
+        // for N4+ UI edits): the preserved position is clamped into the
+        // NEW composition's displayable range. Only the engine knows the
+        // new duration — a caller preserving "current time" across an
+        // edit, or reloading after playback ran to the end, would
+        // otherwise pre-seek past the last frame and swap onto black.
+        let lastDisplayable = max(0, MediaTime.seconds(result.duration) - 0.001)
+        let target = MediaTime.time(min(seconds, lastDisplayable))
         if target > .zero {
             await item.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
             guard generation == loadGeneration else { return }
