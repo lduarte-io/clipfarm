@@ -17,10 +17,10 @@ import Foundation
 ///   swift run n2harness looptest [--loops N]     # trim-loop restart, 4K HEVC
 ///   swift run n2harness fades                    # micro-fade pop/onset math
 ///   swift run n2harness exportspike a|b|c|all    # the half-day export spike
-///   swift run n2harness demo [--real]            # watch-session window
+///   swift run n2harness demo [--real] [--selfcheck]  # watch window (--selfcheck auto-quits ~6s)
 ///   swift run n2harness all                      # every headless gate
 ///
-/// Options: --workdir <dir> (default ~/Library/Caches/ClipFarm-N2Gates),
+/// Options: --workdir <dir> (default ~/ClipFarm/outputs — Lillian's one-visible-place rule),
 /// --footage <dir> (default ~/ClipFarm/Footage — the D34 inbox).
 enum HarnessError: Error {
     case usage(String)
@@ -85,7 +85,9 @@ struct N2Harness {
         case "exportspike":
             try await runExportSpike(env: env, experiment: arguments.first ?? "all")
         case "demo":
-            try await runDemo(env: env, realOnly: arguments.contains("--real"))
+            try await runDemo(
+                env: env, realOnly: arguments.contains("--real"),
+                selfCheck: arguments.contains("--selfcheck"))
         case "all":
             try await runSeams(env: env, variant: "uniform")
             try await runSeams(env: env, variant: "real")

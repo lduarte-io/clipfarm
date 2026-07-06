@@ -19,8 +19,11 @@ struct HarnessEnv {
     static let defaultFootage = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("ClipFarm/Footage")
 
+    /// Standing rule (Lillian, 2026-07-06): ALL harness/user-facing
+    /// outputs live in ONE visible place next to the footage inbox —
+    /// never scattered in hidden system paths.
     static let defaultWorkdir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Caches/ClipFarm-N2Gates")
+        .appendingPathComponent("ClipFarm/outputs")
 
     init(arguments: [String]) throws {
         var workdir = Self.defaultWorkdir
