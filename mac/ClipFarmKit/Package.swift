@@ -30,7 +30,11 @@ let package = Package(
     ],
     dependencies: [
         // Pinned via the committed Package.resolved (major locked to 7).
-        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0")
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
+        // Approved by Lillian 2026-07-06 (QUESTIONS.md → Answered): pinned
+        // EXACTLY to 1.0.0-beta.1 (pre-1.0 churn — D16); bumping to the 1.0
+        // GA tag is a deliberate reviewed step, never a float. Apache-2.0.
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "1.0.0-beta.1"),
     ],
     targets: [
         // CFDomain: pure logic, ZERO dependencies. Keep it that way.
@@ -58,7 +62,12 @@ let package = Package(
         ),
         .target(
             name: "CFExport",
-            dependencies: ["CFDomain"],
+            dependencies: [
+                "CFDomain",
+                // ffmpeg subprocess seam (D16): ffmpeg is reached ONLY via
+                // FFmpegLocator in this target — never from anywhere else.
+                .product(name: "Subprocess", package: "swift-subprocess"),
+            ],
             swiftSettings: kitSwiftSettings
         ),
         // Fixture builders shared by test targets. Not part of the library
