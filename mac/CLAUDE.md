@@ -97,7 +97,7 @@ Lillian can delegate phase execution to a coordinator session via the `/run-phas
 | N10–N11 | **HARD STOP** after N11: the Chipotle flow and trim mode are the product — Lillian drives both. |
 | N12 | **HARD STOP**: frame-check exports in QuickTime, A/B preview vs file. |
 | N13 | Run with Lillian by definition. |
-| Track 2 | Tiering decided with Lillian when Track 1 closes. |
+| Track 1.5 / Track 2 | Tiering decided with Lillian when Track 1 closes (Track 1.5 = N13.5 quality iteration + N13.6 ask-the-library, D40; N13.5 carries an early-pull trigger from the N9/N10 hard stops). |
 
 ## Testing expectations
 

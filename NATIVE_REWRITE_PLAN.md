@@ -14,7 +14,7 @@
 
 **Relationship to the spec:** `clipfarm-spec.md` remains canonical for *product behavior* — categories, propagation rules, provenance, views, the three-tier trim vision. This plan governs the *native implementation* and proposes deliberate spec amendments (§9) that land in the spec before construction. None are silent.
 
-**Workflow:** unchanged — plan per phase, one phase at a time, stop for Lillian's manual verify, entries move to `COMPLETED_PHASES.md`, two reviews per phase. Native phases are numbered **N0–N19** (Track 1: N0–N13 = v1; Track 2: N14–N19 = commercial).
+**Workflow:** unchanged — plan per phase, one phase at a time, stop for Lillian's manual verify, entries move to `COMPLETED_PHASES.md`, two reviews per phase. Native phases are numbered **N0–N19** (Track 1: N0–N13 = v1; Track 2: N14–N19 = commercial). **Track 1.5 (N13.5–N13.6, added 2026-07-11 — D40)** sits between them: product iteration (quality pass + ask-the-library), §4.5 below; its ordering vs N14 is decided when Track 1 closes.
 
 ---
 
@@ -187,7 +187,7 @@ Layer 3 exists because `.onKeyPress` is focus-dependent — a single stray click
 
 - Hand-rolled `URLSession` + `Codable` clients (~200 lines each), no third-party SDK. The provider-agnostic `chatWithJSONSchema(messages:schema:)` dispatcher contract ports verbatim.
 - **Ollama**: `POST /api/chat` with the JSON schema in `format`, `stream: false`, temp 0.2 — unchanged.
-- **Anthropic**: switch from forced-tool-use to **structured outputs** (`output_config` JSON schema) — simpler, guaranteed-parse; keep **prompt caching** (`cache_control: ephemeral`) on the shared brief block for the batched-tagging cost win. Verify the exact param shape against current API docs at implementation time (N7); forced-tool-use is the proven fallback.
+- **Anthropic**: switch from forced-tool-use to **structured outputs** — **param shape pinned (2026-07-11, verified against current API docs):** `output_config: {format: {type: "json_schema", schema: {…}}}` on `POST /v1/messages` (the older top-level `output_format` is deprecated; `strict: true` forced-tool-use remains the proven fallback). Schema rules that matter for tagging: every object needs `additionalProperties: false` + `required`; numeric range constraints (`minimum`/`maximum`) are NOT supported in the schema — the confidence clamp stays domain-side validation exactly as ported. Prompt caching (`cache_control: {type: "ephemeral"}` on the shared brief/system block) is kept, with a caveat: the minimum cacheable prefix is model-dependent (~1–4K tokens) — a short brief silently won't cache (harmless, just no cost win); the win appears on long briefs/scripts. Model dropdown at N7: use **current** model IDs (as of 2026-07: `claude-sonnet-5` default candidate, `claude-opus-4-8`, `claude-haiku-4-5` — the older "Sonnet 4.6 / Opus 4.7" list is stale) and prefer hydrating/validating the dropdown via `GET /v1/models` over hardcoding; final default is Lillian's call at the N7 hard stop.
 - **API key in Keychain** (D23); provider/model settings in `UserDefaults`.
 
 ---
@@ -300,7 +300,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Port map:** `transcripts.py` (mtime-keyed cache), whisper sidecar validation *(N3 delta: validation already landed in CFStore's `Sidecar.load` — typed rejections, schema-version gate; N4 wraps that seam with the mtime-keyed cache rather than re-implementing)*; `search.py` semantics superseded by FTS5 *(N3 delta: FTS rows are already written at ingest and tested — N4's search work is read-side UI only)*.
 
-**Scope:** source sidebar (unavailable greyed out; footage-only badge); transcript view as a **raw NSTextView / TextKit 2 wrapper** (D20 — flipped at the pre-build disposition: STTextView is GPLv3/commercial and Lillian chose zero license entanglement) — word-level ranges, inline clip-boundary highlighting, click-word, drag-select — still contained behind the **`TranscriptViewAdapter` seam** (set content / word hit-test / highlight ranges / selection events / scroll-to-word) as module hygiene; budget the few extra days of selection/highlight plumbing STTextView would have provided; FTS5 search UI with phrase + prefix support (upgrade over web, new tests); click clip → inspector pane plays it via PlayerEngine; deep-link plumbing (select source + scroll to word) for later grid → library navigation.
+**Scope:** source sidebar (unavailable greyed out; footage-only badge); transcript view as a **raw NSTextView / TextKit 2 wrapper** (D20 — flipped at the pre-build disposition: STTextView is GPLv3/commercial and Lillian chose zero license entanglement) — word-level ranges, inline clip-boundary highlighting, click-word, drag-select — still contained behind the **`TranscriptViewAdapter` seam** (set content / word hit-test / highlight ranges / selection events / scroll-to-word) as module hygiene; budget the few extra days of selection/highlight plumbing STTextView would have provided; FTS5 search UI with phrase + prefix support (upgrade over web, new tests); click clip → inspector pane plays it via PlayerEngine; deep-link plumbing (select source + scroll to word) for later grid → library navigation. **Residual fix (2026-07-11, Lillian):** the ingest summary warns specifically when an `.mkv` is skipped because its stem is already taken by an existing source (closes the N3 cold-review residual; QUESTIONS.md → Answered).
 
 **Verify:** browse btc.0.4 smoothly (30-min transcript, no typing/scroll lag); phrase-search `"self custody"` returns hits (web returned zero); click-to-play is instant.
 
@@ -322,9 +322,9 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Port map:** `brief.py` (28 tests — including all three dogfood tolerance hacks: dedent, preamble-before-frontmatter, loose-list rewrite), `projects.py` name-keyed tag merge (section=name; line=(section, text, occurrence); adhoc=name; surviving identities keep IDs), update-stales-all-rows, delete-hard-deletes-attempts.
 
-**Scope:** brief editor page (plain text editor is fine here), debounced live parse preview, create/update/delete with staling.
+**Scope:** brief editor page (plain text editor is fine here), debounced live parse preview, create/update/delete with staling. **Outline amendment (D37, 2026-07-11):** the brief format gains the assembly outline — an ordered list of beats, each referencing a script line or declaring a **free-text intent** (parsed into ordered `project_tags`; free beats reuse the ad-hoc tag kind). Absent an explicit outline section, the default outline = script lines in order (today's behavior; the wedge case writes no new syntax).
 
-**Verify:** paste the chrysalis brief verbatim — parses; edit it — tags stale correctly, IDs preserved for surviving lines.
+**Verify:** paste the chrysalis brief verbatim — parses; edit it — tags stale correctly, IDs preserved for surviving lines; a brief with an outline section (mixed line refs + free-text beats) parses into ordered beats.
 
 ---
 
@@ -332,7 +332,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Port map:** `tagging.py` (25 — every validation rule), `llm.py`, `llm_anthropic.py`, `settings.py`.
 
-**Scope:** CFLLM clients per §2.8; Settings page (provider radio, model dropdowns, key set/test/clear → Keychain, ping with specific error surfacing); tagging orchestrator with identical validation/retry/stale-drop semantics; `AsyncStream` progress panel (provider·model chip, per-batch N/M, ETA). The save-lock/dirty-flag race machinery from the web version dissolves — a long tag run writes rows transactionally at commit and never blocks reads (WAL).
+**Scope:** CFLLM clients per §2.8; Settings page (provider radio, model dropdowns, key set/test/clear → Keychain, ping with specific error surfacing); tagging orchestrator with identical validation/retry/stale-drop semantics; `AsyncStream` progress panel (provider·model chip, per-batch N/M, ETA). The save-lock/dirty-flag race machinery from the web version dissolves — a long tag run writes rows transactionally at commit and never blocks reads (WAL). **Outline amendment (D37, 2026-07-11):** the orchestrator also matches clips against **free-text outline beats** (semantic, in the same batched call, same validation rules — hallucinated-ID drop, confidence clamp, retry/partial-batch semantics).
 
 **Verify:** live tag run on a real project — Anthropic path ~30s, Ollama path works, progress panel live; kill the app mid-run → no partial rows.
 
@@ -342,7 +342,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Port map:** `take_grid.py` (sort orders: confidence DESC + start ASC in lines; start ASC in buckets; empty lines visible; summary counter semantics), deep-link behavior.
 
-**Scope:** `ThumbnailService` (AVAssetImageGenerator — wide tolerance for grid thumbs so it grabs cheap keyframes, `maximumSize` ~2× display, disk+NSCache keyed `(source, roundedTime, size)`); Take Grid page (LazyVGrid, per-line rows, thumbnail cards with provenance + category badge + confidence + stale dot, four buckets); Script TOC page (outline, collapsible, takes inline); side-panel detail with Open-in-Library deep-link; active-attempt "adding to" concept + `+` on cards.
+**Scope:** `ThumbnailService` (AVAssetImageGenerator — wide tolerance for grid thumbs so it grabs cheap keyframes, `maximumSize` ~2× display, disk+NSCache keyed `(source, roundedTime, size)`); Take Grid page (LazyVGrid, per-line rows, thumbnail cards with provenance + category badge + confidence + stale dot, four buckets); Script TOC page (outline, collapsible, takes inline); side-panel detail with Open-in-Library deep-link; active-attempt "adding to" concept + `+` on cards. **Outline amendment (D37, 2026-07-11):** the Script TOC renders the assembly outline's beats in order — line-beats expand to string-matched takes (confidence DESC, as speced); **free-text beats expand to their semantically-tagged clips**. The take grid itself is unchanged (per-line rows).
 
 **Verify:** scan 10 deliveries of one line side-by-side with thumbnails; grid scrolls smoothly at full library scale (6k clips).
 
@@ -352,7 +352,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Port map:** `strategies.py` (all 8 + `_detect_takes` with parameterized tolerance sets + caps + coverage constants), `premade.py` (dedup-first-wins, replace-only-ai-premade, ID allocation), `attempt_naming.py` (single batched call, per-name canned fallback, llm/canned/mixed), `attempts_ops.py` (create/fork/rename/replace-clips with the four tombstone rules/delete-with-dangling-parent).
 
-**Scope:** Attempts page — two buckets, continuity bar (green/amber/red thresholds as today), fork/rename/delete/set-active, drag-to-reorder (optimistic + undoable), regenerate with confirm; **golden-master test**: Swift strategies vs Python strategies on identical fixture state must produce identical clip lists (adjudicate divergences per §3).
+**Scope:** Attempts page — two buckets, continuity bar (green/amber/red thresholds as today), fork/rename/delete/set-active, drag-to-reorder (optimistic + undoable), regenerate with confirm; **golden-master test**: Swift strategies vs Python strategies on identical fixture state must produce identical clip lists (adjudicate divergences per §3). **Outline amendment (D37, Lillian 2026-07-11):** premade strategies follow the ASSEMBLY OUTLINE — "best-per-line in script order" generalizes to **best-per-beat in outline order** (line-beats: their string-matched takes; free-text beats: their highest-confidence semantically-tagged clip; beats with no tagged clips are skipped). A project without an explicit outline defaults to script-lines-in-order, so the golden-master comparison vs the Python reference holds unchanged on outline-less fixtures; outline-following behavior gets NEW named tests, not golden-mastered ones.
 
 **Verify:** generate premades on the real project; fork + reorder + undo works; watch a fork play through gapless.
 
@@ -362,7 +362,7 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 
 **Goal:** everything web Phase 10b was going to be, but native — greenfield, no port reference for the UI.
 
-**Scope:** replace-this-clip picker (siblings of same line tag, confidence DESC, one-click swap); tombstone replacement flow (pick replacement → swap in → clear `needs_review`); **"tighten internal pauses" toggle** per attempt-clip (`internal_pause_max_sec` = 0.5s default; resolver + engine honor it since N1/N2 — this is just the affordance); duplicate-clip-in-attempt allowed; live composition rebuild on every edit (edit → new composition → seamless swap); `needs_review` banner with jump-to-slot.
+**Scope:** replace-this-clip picker (siblings of the same BEAT per D37 — line-beats show string-matched takes, free-text beats their semantically-tagged clips; confidence DESC, one-click swap); tombstone replacement flow (pick replacement → swap in → clear `needs_review`); **"tighten internal pauses" toggle** per attempt-clip (`internal_pause_max_sec` = 0.5s default; resolver + engine honor it since N1/N2 — this is just the affordance); duplicate-clip-in-attempt allowed; live composition rebuild on every edit (edit → new composition → seamless swap); `needs_review` banner with jump-to-slot.
 
 **Verify:** the Chipotle-line flow end-to-end — pick takes top to bottom in Script TOC, tighten pauses on two clips, replace one clip from siblings, watch the result instantly.
 
@@ -380,7 +380,8 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 - **Direct numeric entry**: `-50ms`, `+0.5s`, `+2f`.
 - **Permissiveness buttons**: more-generous/tighter per side, configurable step (% or absolute).
 - Attempt context → writes `trim_*_offset` (per-attempt, base immutable); Library context → boundary correction with full propagation (+ `boundary_edited`). Same engine, two write targets — the spec's boundary-correction vs per-attempt-trim distinction made physical.
-- All nudges undoable, coalesced per burst (one undo step per "settled" adjustment).
+- All nudges undoable, coalesced per burst — **"settled" defined (D36, 2026-07-11)**: nudges on the same edge coalesce until ~1 s pause or switching edges; one Cmd+Z returns to the burst start.
+- **Edit-point display (D36, 2026-07-11):** parked exactly on a cut, the HUD shows the **incoming** clip's first frame (the first frame that survives) — PlayerEngine biases exact-boundary display to the incoming side, resolving the N2 gate-6 fencepost as design (matches NLE convention and the half-open `[s, e)` domain semantics).
 
 **Verify:** the spec's pitch, literally: enter trim mode, clip loops in your ear, two taps of `]`, perfect, next clip. Whole-attempt cleanup in minutes without touching the mouse.
 
@@ -399,7 +400,20 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 - **Export mode picker + per-cut analysis (D14)**: the dialog reports keyframe alignment per cut ("11 of 14 cuts are keyframe-aligned", from `KeyframeMapService`) and offers **Standard** (re-encode — WYSIWYG, universal; default for long-GOP sources) vs **Lossless** (passthrough — offered clean when all cuts are keyframe-aligned or sources are all-intra; otherwise carries the edit-list warning). **Smart** mode slots in with N16. Every mode and the per-cut report carries a hover-"?" plain-language explainer (spec UX requirement — outcomes, not codec jargon; "keyframe" terminology stays in trim mode's power-user ticks; Standard always cuts exactly on the chosen frame).
 - FCPXML lives in the N19 grab-bag; smart-cut is its own phase (N16).
 
-**Verify:** export the best real attempt; frame-check three cut points in QuickTime; A/B preview vs exported file at two cut points with fades on — identical; a ProRes passthrough export is bit-identical in a copied region; a mixed camera+iPhone export lands SDR by default and looks right.
+**N12 expansion (2026-07-11 gap pass — Fable session with Lillian; N2-spike consequences + D35/D36/D39 consolidated here so the phase starts with zero archaeology):**
+
+1. **Hybrid-writer architecture is decided** (N2 export spike, question b): sequential sample-writing sessions on one `AVAssetWriter` are API-impossible (error `-11862` — one session per writer, hard limit). The hybrid path is **per-segment writer outputs stitched with `AVMutableMovie`**: write each segment to its own file (video stream-copied or re-encoded as the tier demands; audio per D31), then `insertTimeRange(_:of:at:copySampleData: true)` into an `AVMutableMovie` with `defaultMediaDataStorage` set, finalized via `writeHeader(to:fileType:options: .addMovieHeaderToDestination)`. Verified mechanics + gotchas (2026-07-11 research pass — Apple docs / WWDC15-506 / dev forums): (a) do all insert/remove calls in the **movie's** timescale, not the source media's (a mismatch caused multi-minute insert times in the wild); (b) prefer `.mov` output when any segment carries a QuickTime-only codec (ProRes) — `.mp4`'s brand is stricter; (c) edit-list interaction at splice points and `.mp4`-brand safety are under-documented — verify empirically on the real fixture mix before trusting either; (d) a follow-up **passthrough `AVAssetExportSession` pass over the stitched movie is not documented as required but is cheap insurance** (forces one full re-parse/re-mux that surfaces subtle header issues) — keep it if it stream-copies in seconds, drop it if it re-encodes. The post-export verification pass (duration sum + boundary spot-check) already in scope is the acceptance check for all of this.
+2. **Sample-level audio fades** (N2 gate 8 design input): reader-path `AVAudioMix` ramps are too coarse to null the cut pop. The export fade path applies the ~10 ms ramps **in the PCM domain** during the audio decode→encode leg (vDSP multiply over boundary windows), then AAC-encodes with `TrimDurationAtStart` priming attachments (D31 — otherwise A/V drifts ~one frame). The backlog item "fades A/B listen on a longer real assembly" (Lillian, 2026-07-06) rides this work: assemble a real multi-minute edit and A/B fades ON/OFF before the WYSIWYG fade path finalizes.
+3. **Calibrated HDR preview==export re-verify** (N2 gate 4 follow-up): the watch-session PASS was by eyeball with an instrument caveat (video-output BGRA readback may include display tone mapping). Re-verify with a calibrated method — decode BOTH the preview composition and the exported file through the SAME `AVAssetReader` pixel pipeline and diff per-segment means. If a real delta survives the calibrated method, the tone-map fix happens here (D29's explicit color properties are the knob).
+4. **Proxy workflow (D35 — full sub-scope; the deferred decisions were settled 2026-07-11):**
+   - *Detection:* a source is "heavy" if 4K-class resolution OR high-rate VFR OR ≥10-bit — N2 run-6 evidence says 4K all-intra stalls too, so resolution is the primary signal, not codec.
+   - *Generation (both paths share detector + generator + cache):* on-demand offer at first edit of a heavy source + a per-source "Generate Proxy" Library action + a Settings toggle "auto-generate proxies for heavy sources at ingest," **default OFF** (no silent multi-GB background encodes).
+   - *Encoder:* `AVAssetWriter` + VideoToolbox, NOT an `AVAssetExportSession` preset — presets cannot control keyframe interval, and short GOPs are the point (scrub/loop-restart responsiveness). 1080p-class H.264 with `AVVideoMaxKeyFrameIntervalKey` / `AVVideoMaxKeyFrameIntervalDurationKey` at ~1 s GOP; `AVOutputSettingsAssistant` for baseline resolution/bitrate params; concurrent multi-input feeding (the N2 writer-deadlock lesson). Evidence for the profile: 1080p30 H.264 passes every §6 gate.
+   - *Storage/invalidation:* `<library>/cache/proxies/<sourceID>.mp4`; invalidate/regenerate when the source file changes (mtime/size); deleted with the source; the cache dir is disposable by definition.
+   - *Hard rules (D35):* the proxy swaps preview MATERIAL only — cut math, frame-nudge increments (`minFrameDuration`), and keyframe ticks / snap-to-keyframe ALWAYS derive from the ORIGINAL (`KeyframeMapService` reads originals only); export never touches proxies.
+5. **Staged-split contingency (D39, pre-authorized 2026-07-11):** if the phase balloons mid-flight — **N12a** = Standard tier + mode picker + post-export verification (fully WYSIWYG: Standard re-encodes audio, fades honored trivially; real videos ship from N12a) → **N12b** = Lossless passthrough + hybrid writer + proxies, immediately after. Contingency authority for the coordinator, not plan-of-record.
+
+**Verify:** export the best real attempt; frame-check three cut points in QuickTime; A/B preview vs exported file at two cut points with fades on — identical; a ProRes passthrough export is bit-identical in a copied region; a mixed camera+iPhone export lands SDR by default and looks right; generate a proxy for a heavy source, trim against it, export — the cut list is identical to the non-proxy path (cuts are times, not pixels) and keyframe ticks still reflect the original.
 
 ---
 
@@ -408,6 +422,38 @@ Each phase ends with Lillian's manual verify, per the standing workflow. "Port m
 **Scope:** full parity audit (one row per §1 pain point + one per spec "What the app must let me do" bullet); golden-master reruns; **`File → Back Up Library…`** (JSON export in the clipfarm.json v1 shape) + restore path with log-and-skip tolerance for unknown keys — **restore = replace the whole library** (confirm dialog + automatic pre-restore snapshot; never a merge); **Settings → Restore snapshot** (the spec's promise — reuses the N1 close→swap→reopen path, clears the undo stack, restarts observations); land the spec amendments (§9) in `clipfarm-spec.md` + rewrite CLAUDE.md's invariants/stack/structure sections for the native app; archive or delete the web implementation at Lillian's discretion (its reference job ends when golden-masters pass).
 
 **Verify:** one full real editing session — ingest a new recording, brief, tag, assemble, trim, export — native only, keyboard-heavy, and it feels *good*.
+
+---
+
+## 4.5 Track 1.5 — product iteration (N13.5–N13.6, added 2026-07-11 — D40)
+
+Two phases between the tracks; ordering vs N14 is decided when Track 1 closes (N14 keeps its first-in-Track-2 commercial-gating priority). Rationale: Track 1 hardens the *engine*; these harden the *judgment* — surfacing quality is the pain the product exists to kill ("watching the same thing over and over"), and it deserves dedicated iteration while Lillian is the only user. Both phases written to the same executable standard as Track 1/2.
+
+### N13.5 — Quality iteration (the surfacing-quality pass)
+
+**Goal:** premades and take ordering that actually feel like "the best takes," tuned against real projects with the full loop (ingest → tag → assemble → trim → export) available.
+
+**Early-pull trigger (standing rule):** if the N9 or N10 hard stop shows premade quality is mediocre, this phase pulls forward immediately — quality iteration does not wait for N13 if the product needs it sooner.
+
+**Scope (the levers, each tuned against real footage and A/B'd against pre-tuning output; golden-master fixtures guard against regressions where they apply):**
+- Take-detection tolerance sets (`_detect_takes` parameterization) tuned on real multi-take material.
+- Filler-word / false-start / restart detection improvements feeding fragment classification and strategy caps.
+- **Audio-energy analysis (promoted from the N19 grab-bag):** real loudness/pace signals from the N3 waveform strips; `energy_shift` stops proxying energy with words-per-second; energy becomes an available take-ranking signal.
+- LLM-ranked take ordering within a line (order candidates by signals the LLM can see — completeness, fluency, restarts; final judgment stays Lillian's per the AI-suggests-you-pick principle).
+- Tagging batch-size/quality experiments (batch size is already a setting; measure quality vs size on real briefs).
+- Per-strategy quality metrics recorded per generation run, so tuning is measurable rather than vibes.
+
+**Verify:** regenerate premades on a real project after tuning — Lillian adjudicates "these are actually my best takes" against the pre-tuning generation, side by side.
+
+### N13.6 — Ask the library + Duplicate Project
+
+**Goal:** the low-friction entry points the re-mining engine already deserves.
+
+**Scope:**
+- **Ask the library:** a natural-language query box over the whole library — query → LLM/semantic matching over transcripts and existing tags → ranked clip list with provenance → optional **"save as project"** (materializes a brief + tags from the query, entering the normal project flow). FTS5 handles the literal-phrase tier (live since N4); the LLM tier reuses the CFLLM dispatcher and the tagging validation rules.
+- **Duplicate Project (D37 companion):** clone a project — brief, outline, tags — with **zero re-mining**, so trying a different structure is instant ("a different structure is a different project"). Attempts are NOT cloned by default (they belong to the assembly, not the plan; a checkbox may offer it).
+
+**Verify:** ask a real question ("everything where I sound genuinely angry about custodial exchanges"), get usable ranked clips, save as a project; duplicate a real project, reorder its outline independently, confirm the original is untouched.
 
 ---
 
@@ -464,7 +510,7 @@ Deliberately basic per spec: assembly aids, not creative effects — Resolve kee
 - **First-run experience**: onboarding (pick library folder, TCC folder-access prompt with explanation, optional model download, sample project); empty states audited.
 - **User-remappable keys (D19 payoff)**: settings UI over the serializable KeyMap registry; conflict detection; reset-to-defaults.
 - **Reliability**: opt-in crash reporting; `sqlite3` integrity check on open; backup-on-update.
-- **Grab-bag** (schedule within N19 or as N19.x as energy allows): cross-project clip surfacing UI (badge + "also in…" popover — data model already supports it); FCPXML export; `energy_shift` upgrade from words-per-second proxy to real audio analysis (waveforms make this cheap); min-macOS floor revisit for the customer base.
+- **Grab-bag** (schedule within N19 or as N19.x as energy allows): cross-project clip surfacing UI (badge + "also in…" popover — data model already supports it); FCPXML export; ~~`energy_shift` upgrade from words-per-second proxy to real audio analysis~~ *(promoted to N13.5, 2026-07-11 — D40)*; min-macOS floor revisit for the customer base.
 
 **Verify:** a clean Mac (or fresh user account) with nothing installed: download DMG → open → onboard → ingest → transcribe → assemble → export, no terminal, no Homebrew, no prompts beyond the expected TCC one.
 
